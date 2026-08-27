@@ -142,7 +142,7 @@ GallaeApp
 - 모든 실패 상태에 사용자가 실행할 수 있는 다음 행동이 있다.
 - 조회 동작이 Git 상태를 바꾸지 않는다.
 
-접근성 트리와 대량 fixture는 사전 확인했지만, 빈 Repository Library가 창의 세로 공간을 채우지 않는 레이아웃 결함 수정과 실제 화면의 최종 시각 검수는 배포 전에 진행한다. 사용자 지정 애니메이션은 두지 않았다. 대량 경로는 임시 Library의 Repository 32개, 변경 파일 501개와 12,000행 diff fixture로 검증한다.
+빈 Repository Library와 깨끗한 Repository Workspace의 세로 확장 결함은 수정했고, 변경이 있는 Workspace를 포함해 기본·최소·확대 창의 접근성 frame과 Library에서 Return으로 여는 경로를 확인했다. 픽셀 단위의 최종 시각 검수는 배포 전에 진행한다. 사용자 지정 애니메이션은 두지 않았다. 대량 경로는 임시 Library의 Repository 32개, 변경 파일 501개와 12,000행 diff fixture로 검증한다.
 
 공식 Git 저장소 `f78ce2f7b6`의 4,850개 파일에 500 commit 전 tree를 적용한 실제 fixture에서는 tracked 1,335개와 untracked 47개를 합쳐 변경 1,382개가 나왔다. 전체 diff는 약 7.1MB, 가장 큰 단일 파일 diff는 약 283KB였고 `RepositoryInspector`가 모든 파일을 19.8초에 읽는 동안 2MB 기본 한계에 걸린 파일은 없었다. 기본 2MB와 사용자 요청 시 16MB 확장 한계를 유지한다.
 

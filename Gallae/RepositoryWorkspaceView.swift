@@ -16,6 +16,7 @@ struct RepositoryWorkspaceView: View {
                     systemImage: "checkmark.circle",
                     description: Text("There are no staged, unstaged, or untracked files.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let repository = model.repository {
                 HSplitView {
                     changeList(repository)

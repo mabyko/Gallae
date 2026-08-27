@@ -14,19 +14,22 @@ struct RepositoryLibraryView: View {
             libraryFolderColumn
                 .frame(
                     minWidth: theme.metrics.libraryFolderMinimumWidth,
-                    idealWidth: theme.metrics.libraryFolderIdealWidth
+                    idealWidth: theme.metrics.libraryFolderIdealWidth,
+                    maxHeight: .infinity
                 )
 
             repositoryColumn
                 .frame(
                     minWidth: theme.metrics.repositoryListMinimumWidth,
-                    idealWidth: theme.metrics.repositoryListIdealWidth
+                    idealWidth: theme.metrics.repositoryListIdealWidth,
+                    maxHeight: .infinity
                 )
 
             repositorySummaryColumn
                 .frame(
                     minWidth: theme.metrics.repositorySummaryMinimumWidth,
-                    idealWidth: theme.metrics.repositorySummaryIdealWidth
+                    idealWidth: theme.metrics.repositorySummaryIdealWidth,
+                    maxHeight: .infinity
                 )
         }
         .task(id: model.selectedLibraryRepositoryID) {
