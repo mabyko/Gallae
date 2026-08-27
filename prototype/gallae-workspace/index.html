@@ -1,0 +1,1696 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <title>Gallae Design Prototype 2</title>
+  <style>
+    /* Throwaway prototype: three shell directions, each with Library, Changes, and History. */
+    :root {
+      --accent: #1473e6;
+      --accent-strong: #075ec1;
+      --accent-soft: #dcecff;
+      --canvas: #d9dce1;
+      --window: #f6f6f7;
+      --chrome: #ececef;
+      --sidebar: #e8edf3;
+      --panel: #fbfbfc;
+      --panel-alt: #f2f3f5;
+      --line: #d5d7dc;
+      --line-strong: #bec2ca;
+      --text: #202124;
+      --secondary: #626873;
+      --tertiary: #898f99;
+      --selection: #dcecff;
+      --selection-text: #15395d;
+      --green: #267c3c;
+      --green-soft: #e4f3e7;
+      --red: #bd2634;
+      --red-soft: #fae7e9;
+      --orange: #9a5b08;
+      --purple: #7354b5;
+      --shadow: 0 26px 72px rgb(20 26 34 / 20%), 0 3px 12px rgb(20 26 34 / 12%);
+      color: var(--text);
+      background: var(--canvas);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --accent: #5aa7ff;
+        --accent-strong: #81bbff;
+        --accent-soft: #203d5d;
+        --canvas: #111316;
+        --window: #202124;
+        --chrome: #292a2e;
+        --sidebar: #242930;
+        --panel: #202124;
+        --panel-alt: #28292d;
+        --line: #393b41;
+        --line-strong: #4b4e56;
+        --text: #f1f1f3;
+        --secondary: #adb1b9;
+        --tertiary: #858a94;
+        --selection: #244d77;
+        --selection-text: #f6f9ff;
+        --green: #68c77c;
+        --green-soft: #183722;
+        --red: #ff7480;
+        --red-soft: #452126;
+        --orange: #f1b35e;
+        --purple: #bd9af6;
+        --shadow: 0 30px 84px rgb(0 0 0 / 48%), 0 3px 14px rgb(0 0 0 / 34%);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-width: 320px; min-height: 100%; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 7%, rgb(255 255 255 / 32%), transparent 32%),
+        linear-gradient(145deg, var(--canvas), color-mix(in srgb, var(--canvas), #6c7888 11%));
+    }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .icon {
+      width: 15px;
+      height: 15px;
+      flex: 0 0 auto;
+      stroke: currentColor;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+    }
+    .svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .stage {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 22px 22px 72px;
+    }
+    .app-window {
+      width: min(1480px, calc(100vw - 44px));
+      height: min(900px, calc(100vh - 94px));
+      min-height: 570px;
+      display: grid;
+      grid-template-rows: 56px minmax(0, 1fr) 25px;
+      overflow: hidden;
+      border: 1px solid var(--line-strong);
+      border-radius: 14px;
+      background: var(--window);
+      box-shadow: var(--shadow);
+    }
+    .titlebar {
+      position: relative;
+      z-index: 20;
+      min-width: 0;
+      display: grid;
+      grid-template-columns: auto minmax(260px, 1fr) auto auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--chrome), transparent 2%);
+      -webkit-app-region: drag;
+    }
+    .traffic-lights { display: flex; gap: 8px; }
+    .traffic-lights span {
+      width: 12px;
+      height: 12px;
+      border: 1px solid rgb(0 0 0 / 13%);
+      border-radius: 50%;
+    }
+    .traffic-lights span:nth-child(1) { background: #ff5f57; }
+    .traffic-lights span:nth-child(2) { background: #febc2e; }
+    .traffic-lights span:nth-child(3) { background: #28c840; }
+    .context-button {
+      min-width: 0;
+      justify-self: start;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 4px 7px 4px 4px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      text-align: left;
+      -webkit-app-region: no-drag;
+    }
+    .context-button:hover { background: color-mix(in srgb, var(--text), transparent 93%); }
+    .app-mark {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: linear-gradient(150deg, #3993ff, #075fc8);
+      color: white;
+      font-size: 14px;
+      font-weight: 760;
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+    }
+    .context-copy { min-width: 0; }
+    .context-copy strong, .context-copy span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .context-copy strong { font-size: 12px; font-weight: 680; }
+    .context-copy span { margin-top: 1px; color: var(--secondary); font-size: 9px; }
+    .repository-context { display: none; }
+    body:not([data-screen="library"]) .library-context { display: none; }
+    body:not([data-screen="library"]) .repository-context { display: flex; }
+    .destination-switch {
+      justify-self: center;
+      display: flex;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel), transparent 7%);
+      -webkit-app-region: no-drag;
+    }
+    body[data-screen="library"] .destination-switch { visibility: hidden; }
+    .destination-switch button {
+      min-width: 84px;
+      height: 27px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--secondary);
+      font-size: 10px;
+    }
+    .destination-switch button[aria-pressed="true"] {
+      background: var(--panel);
+      color: var(--text);
+      font-weight: 650;
+      box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+    }
+    .branch-chip {
+      justify-self: end;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      height: 29px;
+      padding: 0 9px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background: var(--panel);
+      font: 600 10px/1 ui-monospace, "SFMono-Regular", Menlo, monospace;
+      -webkit-app-region: no-drag;
+    }
+    body:not([data-screen="library"]) .branch-chip { display: flex; }
+    .branch-chip span:first-of-type {
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sync-count { color: var(--secondary); font-size: 9px; }
+    .toolbar {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+    .toolbar button, .icon-button, .text-button {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      font-size: 10px;
+    }
+    .toolbar button { padding: 0 8px; }
+    .toolbar button:hover, .icon-button:hover, .text-button:hover {
+      background: color-mix(in srgb, var(--text), transparent 92%);
+    }
+    body[data-screen="library"] .workspace-action { display: none; }
+    body:not([data-screen="library"]) .library-action { display: none; }
+    .screen {
+      min-width: 0;
+      min-height: 0;
+      display: none;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    body[data-screen="library"] .library-screen,
+    body[data-screen="changes"] .changes-screen,
+    body[data-screen="history"] .history-screen { display: grid; }
+    .panel {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background: var(--panel);
+    }
+    .panel + .panel { border-left: 1px solid var(--line); }
+    .sidebar { background: var(--sidebar); }
+    .panel-header {
+      min-height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 7px 10px 7px 12px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-alt);
+    }
+    .panel-header h2, .panel-header p { margin: 0; }
+    .panel-header h2 { font-size: 12px; font-weight: 680; }
+    .panel-header p { margin-top: 2px; color: var(--secondary); font-size: 9px; }
+    .panel-tools { display: flex; align-items: center; gap: 5px; }
+    .search-field {
+      width: 100%;
+      height: 29px;
+      padding: 0 9px 0 28px;
+      border: 1px solid var(--line-strong);
+      border-radius: 7px;
+      background:
+        linear-gradient(45deg, transparent 47%, var(--secondary) 48% 52%, transparent 53%) 16px 17px / 6px 6px no-repeat,
+        radial-gradient(circle, transparent 43%, var(--secondary) 46% 55%, transparent 58%) 8px 7px / 11px 11px no-repeat,
+        var(--panel);
+      color: var(--text);
+      font-size: 10px;
+    }
+    .search-field::placeholder { color: var(--tertiary); }
+    .count {
+      display: inline-grid;
+      min-width: 18px;
+      height: 18px;
+      place-items: center;
+      padding: 0 5px;
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--secondary), transparent 82%);
+      color: var(--secondary);
+      font-size: 9px;
+      font-variant-numeric: tabular-nums;
+    }
+    .segmented {
+      display: flex;
+      padding: 2px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--chrome);
+    }
+    .segmented button {
+      height: 23px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--secondary);
+      font-size: 9px;
+    }
+    .segmented button[aria-pressed="true"] {
+      background: var(--panel);
+      color: var(--text);
+      font-weight: 650;
+      box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+    }
+    .scroll { min-height: 0; overflow: auto; scrollbar-width: thin; }
+
+    /* Repository Library */
+    .library-screen { grid-template-columns: 238px minmax(430px, 1fr) 330px; }
+    .library-nav { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    .library-nav .search-wrap { padding: 9px 10px 7px; }
+    .nav-scroll { padding: 5px 8px 12px; }
+    .nav-section { margin-bottom: 13px; }
+    .section-label {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 7px 5px;
+      color: var(--secondary);
+      font-size: 9px;
+      font-weight: 730;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+    .nav-row {
+      width: 100%;
+      min-height: 29px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 7px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      font-size: 10px;
+      text-align: left;
+    }
+    .nav-row:hover { background: color-mix(in srgb, var(--text), transparent 94%); }
+    .nav-row.selected {
+      background: color-mix(in srgb, var(--accent), transparent 82%);
+      color: var(--selection-text);
+      font-weight: 630;
+    }
+    .nav-label {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .nav-meta { color: var(--secondary); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .scan-state {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 8px 11px;
+      border-top: 1px solid var(--line);
+      color: var(--secondary);
+      font-size: 9px;
+    }
+    .state-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .repository-list { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .repository-table { min-width: 650px; }
+    .repository-columns, .repository-row {
+      display: grid;
+      grid-template-columns: minmax(190px, 1.35fr) minmax(145px, 1fr) 118px 94px;
+      align-items: center;
+      gap: 12px;
+      padding: 0 13px;
+    }
+    .repository-columns {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      height: 27px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-alt);
+      color: var(--secondary);
+      font-size: 9px;
+      font-weight: 650;
+    }
+    .repository-row {
+      width: 100%;
+      min-height: 49px;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 38%);
+      background: transparent;
+      text-align: left;
+    }
+    .repository-row:hover { background: color-mix(in srgb, var(--accent), transparent 95%); }
+    .repository-row[aria-selected="true"] { background: var(--selection); color: var(--selection-text); }
+    .repo-cell { min-width: 0; }
+    .repo-cell strong, .repo-cell small {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .repo-cell strong { font-size: 11px; font-weight: 640; }
+    .repo-cell small { margin-top: 2px; color: var(--secondary); font-size: 9px; }
+    .cell-text { overflow: hidden; color: var(--secondary); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .branch-text { font: 9px/1 ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    .change-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      width: fit-content;
+      padding: 3px 6px;
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--orange), transparent 88%);
+      color: var(--orange);
+      font-size: 9px;
+      font-weight: 650;
+    }
+    .change-pill.clean { background: color-mix(in srgb, var(--green), transparent 88%); color: var(--green); }
+    .repo-preview { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--panel-alt); }
+    .preview-content { padding: 18px; }
+    .repo-monogram {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 13px;
+      border: 1px solid var(--line-strong);
+      border-radius: 11px;
+      background: var(--panel);
+      color: var(--accent);
+      font-weight: 760;
+    }
+    .preview-content h3 { margin: 0; font-size: 18px; }
+    .preview-path { margin: 4px 0 17px; color: var(--secondary); font-size: 9px; }
+    .preview-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin-bottom: 18px;
+      border-block: 1px solid var(--line);
+    }
+    .preview-stat { padding: 10px 4px; text-align: center; }
+    .preview-stat + .preview-stat { border-left: 1px solid var(--line); }
+    .preview-stat b { display: block; font-size: 14px; }
+    .preview-stat span { color: var(--secondary); font-size: 8px; }
+    .preview-section { margin-top: 16px; }
+    .preview-section h4 { margin: 0 0 7px; color: var(--secondary); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+    .preview-line { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 9px; }
+    .preview-line span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .preview-line time { flex: 0 0 auto; color: var(--secondary); }
+    .preview-footer { padding: 11px 13px; border-top: 1px solid var(--line); }
+    .primary-button {
+      width: 100%;
+      min-height: 30px;
+      border: 1px solid var(--accent-strong);
+      border-radius: 7px;
+      background: var(--accent);
+      color: white;
+      font-size: 10px;
+      font-weight: 680;
+    }
+    .primary-button:hover { filter: brightness(1.06); }
+
+    /* Shared repository navigator */
+    .workspace-nav { display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--sidebar); }
+    .workspace-nav .nav-scroll { padding-top: 8px; }
+    .workspace-nav .nav-row[aria-current="page"] { background: var(--selection); color: var(--selection-text); font-weight: 650; }
+    .current-ref {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--accent-strong);
+      font-size: 8px;
+      font-weight: 680;
+    }
+
+    /* Changes */
+    .changes-screen { grid-template-columns: 220px 326px minmax(0, 1fr); }
+    .file-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .group-title {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      justify-content: space-between;
+      height: 25px;
+      align-items: center;
+      padding: 0 10px 0 12px;
+      border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 36%);
+      background: var(--panel-alt);
+      color: var(--secondary);
+      font-size: 8px;
+      font-weight: 730;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+    }
+    .file-row {
+      width: 100%;
+      min-height: 43px;
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 10px;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 42%);
+      background: transparent;
+      text-align: left;
+    }
+    .file-row:hover { background: color-mix(in srgb, var(--accent), transparent 95%); }
+    .file-row[aria-current="true"] { background: var(--selection); color: var(--selection-text); }
+    .status-mark {
+      width: 18px;
+      height: 18px;
+      display: grid;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 4px;
+      font-size: 8px;
+      font-weight: 760;
+    }
+    .modified { color: var(--orange); }
+    .added-status { color: var(--green); }
+    .untracked { color: var(--accent); }
+    .file-copy { min-width: 0; }
+    .file-name, .file-path {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-name { font-size: 10px; font-weight: 570; }
+    .file-path { margin-top: 2px; color: var(--secondary); font-size: 8px; }
+    .file-stat { display: flex; gap: 4px; font: 8px/1 ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    .plus { color: var(--green); }
+    .minus { color: var(--red); }
+    .diff-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .diff-title { min-width: 0; }
+    .diff-title strong, .diff-title span {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .diff-title strong { font: 600 10px/1.2 ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    .diff-title span { margin-top: 3px; color: var(--secondary); font-size: 8px; }
+    .diff-table {
+      min-width: 700px;
+      padding: 10px 0 32px;
+      font: 10px/1.58 ui-monospace, "SFMono-Regular", Menlo, monospace;
+      font-variant-ligatures: none;
+    }
+    .diff-row {
+      min-height: 17px;
+      display: grid;
+      grid-template-columns: 38px 38px 18px minmax(max-content, 1fr);
+    }
+    .diff-row.added { background: var(--green-soft); }
+    .diff-row.removed { background: var(--red-soft); }
+    .diff-row.hunk { margin: 7px 0; background: var(--accent-soft); color: var(--accent-strong); }
+    .line-number {
+      padding-right: 7px;
+      border-right: 1px solid color-mix(in srgb, var(--line), transparent 20%);
+      color: var(--tertiary);
+      text-align: right;
+      user-select: none;
+    }
+    .line-sign { color: var(--tertiary); text-align: center; user-select: none; }
+    .added .line-sign { color: var(--green); }
+    .removed .line-sign { color: var(--red); }
+    .code-line { min-width: max-content; padding: 0 14px 0 5px; white-space: pre; }
+    .kw { color: var(--purple); }
+    .type { color: var(--accent-strong); }
+    .str { color: var(--orange); }
+    .comment { color: var(--tertiary); }
+    .selection-inspector {
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr);
+      background: var(--panel-alt);
+    }
+    .inspector-content { padding: 14px; }
+    .inspector-content h3 { margin: 0 0 4px; font-size: 13px; }
+    .inspector-content > p { margin: 0 0 15px; color: var(--secondary); font-size: 9px; line-height: 1.45; }
+    .inspector-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; font-size: 9px; }
+    .inspector-grid dt { color: var(--secondary); }
+    .inspector-grid dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .review-note { margin-top: 17px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 9px; line-height: 1.5; }
+
+    /* History */
+    .history-screen { grid-template-columns: 220px 450px minmax(0, 1fr); }
+    .commit-list { display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
+    .commit-columns, .commit-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) 88px;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+    }
+    .commit-columns {
+      height: 25px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-alt);
+      color: var(--secondary);
+      font-size: 8px;
+      font-weight: 650;
+    }
+    .commit-row {
+      width: 100%;
+      min-height: 46px;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line), transparent 40%);
+      background: transparent;
+      text-align: left;
+    }
+    .commit-row:hover { background: color-mix(in srgb, var(--accent), transparent 95%); }
+    .commit-row[aria-current="true"] { background: var(--selection); color: var(--selection-text); }
+    .graph-cell { position: relative; height: 46px; }
+    .graph-cell::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 14px;
+      width: 2px;
+      background: var(--accent);
+    }
+    .graph-cell::after {
+      content: "";
+      position: absolute;
+      top: 18px;
+      left: 10px;
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      background: var(--panel);
+    }
+    .branch-line .graph-cell::before { box-shadow: 8px 0 0 color-mix(in srgb, var(--purple), transparent 10%); }
+    .commit-copy { min-width: 0; }
+    .commit-subject, .commit-meta {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .commit-subject { font-size: 10px; font-weight: 570; }
+    .commit-meta { margin-top: 3px; color: var(--secondary); font-size: 8px; }
+    .commit-hash { color: var(--secondary); font: 8px/1 ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    .ref-label {
+      display: inline-flex;
+      margin-right: 4px;
+      padding: 2px 5px;
+      border: 1px solid color-mix(in srgb, var(--accent), transparent 34%);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--accent), transparent 88%);
+      color: var(--accent-strong);
+      font-size: 8px;
+    }
+    .commit-detail { display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr); }
+    .commit-hero { padding: 15px 17px 13px; border-bottom: 1px solid var(--line); }
+    .commit-hero h3 { margin: 0; font-size: 15px; line-height: 1.35; }
+    .commit-author { display: flex; align-items: center; gap: 9px; margin-top: 12px; color: var(--secondary); font-size: 9px; }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #9ac8ff, #4b75a7);
+      color: white;
+      font-size: 9px;
+      font-weight: 720;
+    }
+    .commit-facts { display: flex; flex-wrap: wrap; gap: 7px 14px; padding: 9px 17px; border-bottom: 1px solid var(--line); color: var(--secondary); font-size: 8px; }
+    .changed-files {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px 7px 17px;
+      border-bottom: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .changed-files span { padding: 3px 6px; border-radius: 5px; background: var(--panel-alt); font: 8px/1.2 ui-monospace, "SFMono-Regular", Menlo, monospace; white-space: nowrap; }
+    .history-diff .diff-table { min-width: 610px; }
+
+    /* Variant B: compact two-pane workspace */
+    body[data-variant="B"] .titlebar { grid-template-columns: auto minmax(220px, 1fr) auto auto auto; }
+    body[data-variant="B"] .destination-switch { justify-self: end; }
+    body[data-variant="B"] .branch-chip { justify-self: start; }
+    body[data-variant="B"] .library-screen {
+      grid-template-columns: minmax(520px, 1fr) 326px;
+      grid-template-rows: 47px minmax(0, 1fr);
+    }
+    body[data-variant="B"] .library-nav {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    body[data-variant="B"] .library-nav > .panel-header,
+    body[data-variant="B"] .library-nav > .scan-state { display: none; }
+    body[data-variant="B"] .library-nav .search-wrap { width: 250px; padding: 0; }
+    body[data-variant="B"] .library-nav .nav-scroll { display: flex; gap: 5px; padding: 0; overflow: hidden; }
+    body[data-variant="B"] .library-nav .nav-section { display: flex; gap: 4px; margin: 0; }
+    body[data-variant="B"] .library-nav .nav-section:last-child { display: none; }
+    body[data-variant="B"] .library-nav .section-label { display: none; }
+    body[data-variant="B"] .repository-list { grid-column: 1; grid-row: 2; }
+    body[data-variant="B"] .repo-preview { grid-column: 2; grid-row: 2; }
+    body[data-variant="B"] .changes-screen { grid-template-columns: 320px minmax(0, 1fr); }
+    body[data-variant="B"] .changes-screen .workspace-nav { display: none; }
+    body[data-variant="B"] .history-screen { grid-template-columns: 470px minmax(0, 1fr); }
+    body[data-variant="B"] .history-screen .workspace-nav { display: none; }
+
+    /* Variant C: review canvas with inspector */
+    body[data-variant="C"] .library-screen {
+      grid-template-columns: 280px minmax(0, 1fr);
+      grid-template-rows: minmax(340px, 1fr) 242px;
+    }
+    body[data-variant="C"] .library-nav { grid-column: 1; grid-row: 1 / -1; }
+    body[data-variant="C"] .repository-list { grid-column: 2; grid-row: 1; }
+    body[data-variant="C"] .repo-preview {
+      grid-column: 2;
+      grid-row: 2;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: 1fr;
+      border-top: 1px solid var(--line);
+    }
+    body[data-variant="C"] .repo-preview .panel-header { display: none; }
+    body[data-variant="C"] .repo-preview .preview-content { display: grid; grid-template-columns: auto minmax(220px, 1fr) minmax(240px, 1.3fr); gap: 16px; align-items: start; padding: 15px 18px; }
+    body[data-variant="C"] .repo-preview .repo-monogram { margin: 0; }
+    body[data-variant="C"] .repo-preview .preview-stats { margin: 0; }
+    body[data-variant="C"] .repo-preview .preview-section { margin: 0; }
+    body[data-variant="C"] .repo-preview .preview-footer { width: 150px; display: grid; align-items: end; }
+    body[data-variant="C"] .changes-screen { grid-template-columns: 300px minmax(0, 1fr) 276px; }
+    body[data-variant="C"] .changes-screen .workspace-nav { display: none; }
+    body[data-variant="C"] .changes-screen .selection-inspector { display: grid; }
+    body[data-variant="C"] .history-screen { grid-template-columns: 410px minmax(0, 1fr) 276px; }
+    body[data-variant="C"] .history-screen .workspace-nav { display: none; }
+    body[data-variant="C"] .history-screen .selection-inspector { display: grid; }
+
+    .statusbar {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 10px;
+      border-top: 1px solid var(--line);
+      background: var(--chrome);
+      color: var(--secondary);
+      font-size: 8px;
+    }
+    .status-group { min-width: 0; display: flex; gap: 12px; white-space: nowrap; }
+    .status-group span { overflow: hidden; text-overflow: ellipsis; }
+    .variant-switcher {
+      position: fixed;
+      z-index: 40;
+      left: 50%;
+      bottom: 13px;
+      display: grid;
+      grid-template-columns: 34px minmax(190px, auto) 34px;
+      align-items: center;
+      padding: 4px;
+      border: 1px solid rgb(255 255 255 / 18%);
+      border-radius: 11px;
+      background: rgb(24 27 31 / 92%);
+      box-shadow: 0 10px 30px rgb(0 0 0 / 24%);
+      color: white;
+      transform: translateX(-50%);
+      backdrop-filter: blur(18px);
+    }
+    .variant-switcher button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: white;
+      font-size: 16px;
+    }
+    .variant-switcher button:hover { background: rgb(255 255 255 / 12%); }
+    .variant-label { padding: 0 10px; text-align: center; }
+    .variant-label small { display: block; color: #aeb7c2; font-size: 7px; font-weight: 720; letter-spacing: .1em; }
+    .variant-label strong { display: block; margin-top: 1px; font-size: 10px; white-space: nowrap; }
+    .toast {
+      position: fixed;
+      z-index: 50;
+      left: 50%;
+      bottom: 67px;
+      padding: 7px 11px;
+      border-radius: 7px;
+      background: rgb(25 28 32 / 94%);
+      color: white;
+      font-size: 9px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, 6px);
+      transition: opacity 130ms ease, transform 130ms ease;
+    }
+    .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+    /* Prototype theme seam: primitive → semantic → component tokens. */
+    body[data-theme="gallae"] {
+      /* Primitive palette and metrics. */
+      --neutral-1000: #0b0c0f;
+      --neutral-950: #0d0f12;
+      --neutral-925: #17191d;
+      --neutral-900: #191b1f;
+      --neutral-875: #1c1e22;
+      --neutral-860: #1d1f23;
+      --neutral-850: #1e2024;
+      --neutral-825: #24262a;
+      --neutral-800: #24272b;
+      --neutral-750: #31343a;
+      --neutral-700: #444851;
+      --neutral-600: #565d68;
+      --neutral-550: #666e79;
+      --neutral-450: #989faa;
+      --neutral-350: #b6bbc4;
+      --neutral-250: #c4c8cf;
+      --neutral-225: #c4cad3;
+      --neutral-200: #cbd0d8;
+      --neutral-175: #d9dde3;
+      --neutral-150: #d9dce1;
+      --neutral-100: #e8ebef;
+      --neutral-75: #eceef1;
+      --neutral-50: #f0f2f4;
+      --neutral-25: #f4f5f7;
+      --neutral-10: #f8f9fa;
+      --neutral-5: #f2f3f5;
+      --neutral-0: #fff;
+      --blue-950: #1c344c;
+      --blue-900: #153958;
+      --blue-850: #244869;
+      --blue-800: #0059ad;
+      --blue-750: #0d68b8;
+      --blue-700: #086bc5;
+      --blue-650: #0875dc;
+      --blue-400: #64aafa;
+      --blue-300: #8ac0ff;
+      --blue-100: #ddecfb;
+      --blue-50: #e5f1fc;
+      --blue-25: #f5f9ff;
+      --green-800: #287a42;
+      --green-700: #1c3825;
+      --green-400: #6bc581;
+      --green-50: #e6f3e9;
+      --red-800: #b93341;
+      --red-700: #44242a;
+      --red-400: #ff7d88;
+      --red-50: #f9e8ea;
+      --amber-800: #88580d;
+      --amber-400: #efb762;
+      --purple-700: #7550a4;
+      --purple-400: #c5a0f3;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --radius-control: 8px;
+      --radius-row: 7px;
+      --radius-window: 17px;
+      --duration-feedback: 100ms;
+
+      /* Semantic light appearance. */
+      --color-accent: var(--blue-650);
+      --color-accent-strong: var(--blue-800);
+      --color-accent-soft: var(--blue-50);
+      --color-primary-action: var(--blue-700);
+      --color-on-primary: var(--neutral-0);
+      --color-text-primary: var(--neutral-860);
+      --color-text-secondary: var(--neutral-600);
+      --color-text-tertiary: var(--neutral-550);
+      --color-selection: var(--blue-100);
+      --color-on-selection: var(--blue-900);
+      --color-status-added: var(--green-800);
+      --color-status-added-soft: var(--green-50);
+      --color-status-removed: var(--red-800);
+      --color-status-removed-soft: var(--red-50);
+      --color-status-modified: var(--amber-800);
+      --color-syntax-keyword: var(--purple-700);
+      --surface-canvas: var(--neutral-200);
+      --surface-window: var(--neutral-25);
+      --surface-chrome: var(--neutral-75);
+      --surface-sidebar: var(--neutral-100);
+      --surface-content: var(--neutral-10);
+      --surface-secondary: var(--neutral-50);
+      --border-subtle: var(--neutral-150);
+      --border-strong: var(--neutral-250);
+      --effect-backdrop: radial-gradient(circle at 24% -8%, rgb(255 255 255 / 72%), transparent 42%), linear-gradient(150deg, var(--neutral-175), var(--neutral-225) 72%);
+      --effect-window-shadow: 0 32px 90px rgb(22 28 38 / 24%), 0 4px 18px rgb(22 28 38 / 14%);
+      --effect-titlebar-highlight: inset 0 1px rgb(255 255 255 / 48%);
+      --effect-control-shadow: inset 0 1px 2px rgb(0 0 0 / 5%), 0 1px rgb(255 255 255 / 34%);
+
+      /* Component defaults; UI rules below consume only these or semantic roles. */
+      --window-bg: var(--surface-window);
+      --window-border: color-mix(in srgb, var(--border-strong), transparent 4%);
+      --window-shadow: var(--effect-window-shadow);
+      --window-toolbar-height: 54px;
+      --window-status-height: 24px;
+      --titlebar-bg: linear-gradient(180deg, color-mix(in srgb, var(--surface-chrome), white 7%), var(--surface-chrome));
+      --titlebar-shadow: var(--effect-titlebar-highlight);
+      --sidebar-bg: linear-gradient(180deg, color-mix(in srgb, var(--surface-sidebar), white 5%), var(--surface-sidebar));
+      --search-bg: color-mix(in srgb, var(--surface-content), white 14%);
+      --search-shadow: var(--effect-control-shadow);
+      --segmented-selected-bg: color-mix(in srgb, var(--surface-content), white 12%);
+      --row-selected-bg: color-mix(in srgb, var(--color-accent), transparent 88%);
+      --row-selected-fg: var(--color-on-selection);
+      --row-selected-indicator: var(--color-accent);
+      --button-primary-bg: var(--color-primary-action);
+      --button-primary-fg: var(--color-on-primary);
+      --diff-added-bg: color-mix(in srgb, var(--color-status-added-soft), transparent 12%);
+      --diff-removed-bg: color-mix(in srgb, var(--color-status-removed-soft), transparent 12%);
+      --diff-hunk-bg: color-mix(in srgb, var(--color-accent-soft), transparent 5%);
+
+      /* Adapter for the shared structural CSS used by throwaway B/C variants. */
+      --accent: var(--color-accent);
+      --accent-strong: var(--color-accent-strong);
+      --accent-soft: var(--color-accent-soft);
+      --canvas: var(--surface-canvas);
+      --window: var(--surface-window);
+      --chrome: var(--surface-chrome);
+      --sidebar: var(--surface-sidebar);
+      --panel: var(--surface-content);
+      --panel-alt: var(--surface-secondary);
+      --line: var(--border-subtle);
+      --line-strong: var(--border-strong);
+      --text: var(--color-text-primary);
+      --secondary: var(--color-text-secondary);
+      --tertiary: var(--color-text-tertiary);
+      --selection: var(--color-selection);
+      --selection-text: var(--color-on-selection);
+      --green: var(--color-status-added);
+      --green-soft: var(--color-status-added-soft);
+      --red: var(--color-status-removed);
+      --red-soft: var(--color-status-removed-soft);
+      --orange: var(--color-status-modified);
+      --purple: var(--color-syntax-keyword);
+      color: var(--color-text-primary);
+      background: var(--effect-backdrop);
+    }
+    body[data-theme="gallae"][data-appearance="dark"] {
+      --color-accent: var(--blue-400);
+      --color-accent-strong: var(--blue-300);
+      --color-accent-soft: var(--blue-950);
+      --color-primary-action: var(--blue-750);
+      --color-text-primary: var(--neutral-5);
+      --color-text-secondary: var(--neutral-350);
+      --color-text-tertiary: var(--neutral-450);
+      --color-selection: var(--blue-850);
+      --color-on-selection: var(--blue-25);
+      --color-status-added: var(--green-400);
+      --color-status-added-soft: var(--green-700);
+      --color-status-removed: var(--red-400);
+      --color-status-removed-soft: var(--red-700);
+      --color-status-modified: var(--amber-400);
+      --color-syntax-keyword: var(--purple-400);
+      --surface-canvas: var(--neutral-950);
+      --surface-window: var(--neutral-875);
+      --surface-chrome: var(--neutral-825);
+      --surface-sidebar: var(--neutral-900);
+      --surface-content: var(--neutral-850);
+      --surface-secondary: var(--neutral-800);
+      --border-subtle: var(--neutral-750);
+      --border-strong: var(--neutral-700);
+      --effect-backdrop: radial-gradient(circle at 25% -12%, rgb(255 255 255 / 8%), transparent 42%), linear-gradient(150deg, var(--neutral-925), var(--neutral-1000) 72%);
+      --effect-window-shadow: 0 34px 94px rgb(0 0 0 / 58%), 0 4px 18px rgb(0 0 0 / 38%);
+      --effect-titlebar-highlight: inset 0 1px rgb(255 255 255 / 5%);
+      --effect-control-shadow: inset 0 1px 2px rgb(0 0 0 / 22%);
+      --titlebar-bg: linear-gradient(180deg, color-mix(in srgb, var(--surface-chrome), white 3%), var(--surface-chrome));
+      --sidebar-bg: linear-gradient(180deg, color-mix(in srgb, var(--surface-sidebar), white 2%), var(--surface-sidebar));
+      --search-bg: color-mix(in srgb, var(--surface-content), white 4%);
+      --segmented-selected-bg: color-mix(in srgb, var(--surface-content), white 5%);
+    }
+    body[data-variant="A"] .stage { padding: 18px 18px 72px; }
+    body[data-variant="A"] .app-window {
+      width: min(1480px, calc(100vw - 36px));
+      height: min(900px, calc(100vh - 90px));
+      grid-template-rows: var(--window-toolbar-height) minmax(0, 1fr) var(--window-status-height);
+      border-color: var(--window-border);
+      border-radius: var(--radius-window);
+      background: var(--window-bg);
+      box-shadow: var(--window-shadow);
+    }
+    body[data-variant="A"] .titlebar {
+      gap: 11px;
+      padding: 0 11px 0 15px;
+      border-bottom-color: color-mix(in srgb, var(--line), transparent 12%);
+      background: var(--titlebar-bg);
+      box-shadow: var(--titlebar-shadow);
+    }
+    body[data-variant="A"] .traffic-lights { gap: 8px; }
+    body[data-variant="A"] .traffic-lights span { width: 12px; height: 12px; }
+    body[data-variant="A"] .context-button {
+      gap: 8px;
+      min-height: 34px;
+      padding: 3px 8px 3px 4px;
+      border-radius: var(--radius-control);
+      transition: background-color var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .app-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(145deg, #2393ed 0%, #0764c8 58%, #4a48a8 130%);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 32%), inset 0 0 0 1px rgb(0 0 0 / 10%), 0 1px 2px rgb(0 0 0 / 18%);
+    }
+    body[data-variant="A"] .brand-glyph { width: 17px; height: 17px; stroke-width: 1.8; }
+    body[data-variant="A"] .context-copy strong { font-size: 12px; font-weight: 650; letter-spacing: -.008em; }
+    body[data-variant="A"] .context-copy span { margin-top: 2px; font-size: 9.5px; }
+    body[data-variant="A"] .destination-switch {
+      padding: 2px;
+      border-color: color-mix(in srgb, var(--line-strong), transparent 24%);
+      border-radius: 9px;
+      background: color-mix(in srgb, var(--text), transparent 95%);
+      box-shadow: inset 0 1px 2px rgb(0 0 0 / 5%);
+    }
+    body[data-variant="A"] .destination-switch button {
+      min-width: 91px;
+      height: 27px;
+      border-radius: 7px;
+      color: var(--secondary);
+      font-size: 10.5px;
+      transition: background-color var(--duration-feedback) ease, color var(--duration-feedback) ease, box-shadow var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .destination-switch button[aria-pressed="true"] {
+      background: var(--segmented-selected-bg);
+      color: var(--text);
+      font-weight: 620;
+      box-shadow: 0 1px 3px rgb(0 0 0 / 15%), inset 0 0 0 1px rgb(255 255 255 / 34%);
+    }
+    body[data-variant="A"] .branch-chip {
+      height: 29px;
+      padding: 0 9px;
+      border-color: color-mix(in srgb, var(--line-strong), transparent 14%);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel), white 5%);
+      font-size: 10px;
+      box-shadow: 0 1px 1px rgb(0 0 0 / 5%);
+    }
+    body[data-variant="A"] .toolbar { gap: 2px; }
+    body[data-variant="A"] .toolbar button,
+    body[data-variant="A"] .icon-button,
+    body[data-variant="A"] .text-button {
+      min-height: 28px;
+      border-radius: 7px;
+      color: var(--secondary);
+      font-size: 10.5px;
+      transition: background-color var(--duration-feedback) ease, color var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .toolbar button:hover,
+    body[data-variant="A"] .icon-button:hover,
+    body[data-variant="A"] .text-button:hover { color: var(--text); }
+    body[data-variant="A"] .icon { width: 15px; height: 15px; stroke-width: 1.55; }
+    body[data-variant="A"] .screen { background: var(--panel); }
+    body[data-variant="A"] .panel + .panel { border-left-color: color-mix(in srgb, var(--line), transparent 4%); }
+    body[data-variant="A"] .sidebar {
+      background: var(--sidebar-bg);
+    }
+    body[data-variant="A"] .panel-header {
+      min-height: 49px;
+      padding: 7px 11px 7px 13px;
+      border-bottom-color: color-mix(in srgb, var(--line), transparent 4%);
+      background: color-mix(in srgb, var(--panel-alt), var(--panel) 42%);
+    }
+    body[data-variant="A"] .sidebar .panel-header { background: transparent; }
+    body[data-variant="A"] .panel-header h2 { font-size: 11.5px; font-weight: 650; letter-spacing: -.004em; }
+    body[data-variant="A"] .panel-header p { margin-top: 2px; font-size: 9.5px; }
+    body[data-variant="A"] .search-wrap { position: relative; }
+    body[data-variant="A"] .search-wrap::before {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: 17px;
+      left: 20px;
+      width: 8px;
+      height: 8px;
+      border: 1.4px solid var(--tertiary);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    body[data-variant="A"] .search-wrap::after {
+      content: "";
+      position: absolute;
+      z-index: 2;
+      top: 26px;
+      left: 28px;
+      width: 5px;
+      height: 1.4px;
+      border-radius: 1px;
+      background: var(--tertiary);
+      transform: rotate(45deg);
+      transform-origin: left center;
+      pointer-events: none;
+    }
+    body[data-variant="A"] .search-field {
+      height: 30px;
+      padding: 0 10px 0 29px;
+      border-color: color-mix(in srgb, var(--line-strong), transparent 10%);
+      border-radius: var(--radius-control);
+      background: var(--search-bg);
+      color: var(--text);
+      font-size: 10.5px;
+      box-shadow: var(--search-shadow);
+    }
+    body[data-variant="A"] .count {
+      min-width: 18px;
+      height: 17px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--secondary), transparent 87%);
+      font-size: 8.5px;
+    }
+    body[data-variant="A"] .library-screen { grid-template-columns: 232px minmax(480px, 1fr) 318px; }
+    body[data-variant="A"] .nav-scroll { padding: 5px 8px 14px; }
+    body[data-variant="A"] .nav-section { margin-bottom: 14px; }
+    body[data-variant="A"] .section-label {
+      padding: 4px 8px 6px;
+      color: var(--tertiary);
+      font-size: 8.5px;
+      font-weight: 720;
+      letter-spacing: .065em;
+    }
+    body[data-variant="A"] .nav-row {
+      min-height: 30px;
+      gap: 8px;
+      padding: 4px 8px;
+      border-radius: var(--radius-row);
+      font-size: 10.5px;
+      transition: background-color var(--duration-feedback) ease, color var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .nav-row.selected,
+    body[data-variant="A"] .workspace-nav .nav-row[aria-current="page"] {
+      background: var(--row-selected-bg);
+      color: var(--row-selected-fg);
+      font-weight: 630;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent), transparent 78%);
+    }
+    body[data-variant="A"] .nav-meta { font-size: 8.5px; }
+    body[data-variant="A"] .scan-state {
+      min-height: 28px;
+      padding: 7px 12px;
+      border-top-color: color-mix(in srgb, var(--line), transparent 14%);
+      font-size: 8.5px;
+    }
+    body[data-variant="A"] .state-dot { width: 6px; height: 6px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--green), transparent 86%); }
+    body[data-variant="A"] .repository-columns,
+    body[data-variant="A"] .repository-row { grid-template-columns: minmax(190px, 1.35fr) minmax(145px, 1fr) 112px 88px; padding-inline: 14px; }
+    body[data-variant="A"] .repository-columns {
+      height: 28px;
+      background: color-mix(in srgb, var(--panel-alt), var(--panel) 42%);
+      color: var(--tertiary);
+      font-size: 8.5px;
+      letter-spacing: .02em;
+    }
+    body[data-variant="A"] .repository-row {
+      min-height: 51px;
+      border-bottom-color: color-mix(in srgb, var(--line), transparent 36%);
+      transition: background-color var(--duration-feedback) ease, box-shadow var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .repository-row[aria-selected="true"] {
+      background: var(--row-selected-bg);
+      color: var(--row-selected-fg);
+      box-shadow: inset 3px 0 var(--row-selected-indicator);
+    }
+    body[data-variant="A"] .repo-cell strong { font-size: 11.5px; font-weight: 630; letter-spacing: -.006em; }
+    body[data-variant="A"] .repo-cell small,
+    body[data-variant="A"] .cell-text { font-size: 9px; }
+    body[data-variant="A"] .branch-text { font-size: 9px; }
+    body[data-variant="A"] .change-pill {
+      padding: 3px 7px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--orange), transparent 88%);
+      font-size: 8.5px;
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--orange), transparent 79%);
+    }
+    body[data-variant="A"] .change-pill.clean {
+      background: color-mix(in srgb, var(--green), transparent 89%);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green), transparent 80%);
+    }
+    body[data-variant="A"] .repo-preview {
+      background: linear-gradient(180deg, color-mix(in srgb, var(--panel-alt), var(--panel) 36%), var(--panel-alt));
+    }
+    body[data-variant="A"] .preview-content { padding: 19px 18px; }
+    body[data-variant="A"] .repo-monogram {
+      width: 44px;
+      height: 44px;
+      margin-bottom: 14px;
+      border-color: color-mix(in srgb, var(--accent), transparent 70%);
+      border-radius: 12px;
+      background: linear-gradient(145deg, color-mix(in srgb, var(--accent-soft), white 18%), var(--accent-soft));
+      color: var(--accent-strong);
+      box-shadow: inset 0 1px rgb(255 255 255 / 58%), 0 2px 5px rgb(0 0 0 / 7%);
+    }
+    body[data-variant="A"] .repo-monogram .icon { width: 20px; height: 20px; stroke-width: 1.7; }
+    body[data-variant="A"] .preview-content h3 { font-size: 19px; font-weight: 680; letter-spacing: -.02em; }
+    body[data-variant="A"] .preview-path { margin: 4px 0 17px; color: var(--secondary); font-size: 9.5px; }
+    body[data-variant="A"] .preview-stats {
+      margin-bottom: 19px;
+      overflow: hidden;
+      border: 1px solid color-mix(in srgb, var(--line), transparent 5%);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--panel), transparent 4%);
+    }
+    body[data-variant="A"] .preview-stat { padding: 10px 4px 9px; }
+    body[data-variant="A"] .preview-stat b { font-size: 14px; font-weight: 660; }
+    body[data-variant="A"] .preview-stat span { font-size: 8.5px; }
+    body[data-variant="A"] .preview-section h4 { color: var(--tertiary); font-size: 8.5px; letter-spacing: .06em; }
+    body[data-variant="A"] .preview-line { padding: 7px 0; border-bottom-color: color-mix(in srgb, var(--line), transparent 18%); font-size: 9.5px; }
+    body[data-variant="A"] .preview-footer { padding: 11px 13px 12px; }
+    body[data-variant="A"] .primary-button {
+      min-height: 32px;
+      border-color: color-mix(in srgb, var(--button-primary-bg), black 14%);
+      border-radius: 8px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--button-primary-bg), white 6%), var(--button-primary-bg));
+      color: var(--button-primary-fg);
+      font-size: 10.5px;
+      font-weight: 650;
+      box-shadow: inset 0 1px rgb(255 255 255 / 25%), 0 1px 2px rgb(0 0 0 / 14%);
+    }
+    body[data-variant="A"] .changes-screen { grid-template-columns: 220px 320px minmax(0, 1fr); }
+    body[data-variant="A"] .history-screen { grid-template-columns: 220px 440px minmax(0, 1fr); }
+    body[data-variant="A"] .group-title {
+      height: 26px;
+      color: var(--tertiary);
+      font-size: 8.5px;
+      letter-spacing: .06em;
+      background: color-mix(in srgb, var(--panel-alt), var(--panel) 40%);
+    }
+    body[data-variant="A"] .file-row {
+      min-height: 44px;
+      border-bottom-color: color-mix(in srgb, var(--line), transparent 38%);
+      transition: background-color var(--duration-feedback) ease, box-shadow var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .file-row[aria-current="true"] {
+      background: var(--row-selected-bg);
+      color: var(--row-selected-fg);
+      box-shadow: inset 3px 0 var(--row-selected-indicator);
+    }
+    body[data-variant="A"] .status-mark {
+      width: 19px;
+      height: 19px;
+      border: 0;
+      border-radius: 5px;
+      background: color-mix(in srgb, currentColor, transparent 87%);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor, transparent 73%);
+      font-size: 8px;
+    }
+    body[data-variant="A"] .file-name { font-size: 10.5px; font-weight: 590; }
+    body[data-variant="A"] .file-path { font-size: 8.5px; }
+    body[data-variant="A"] .file-stat { font-size: 8.5px; }
+    body[data-variant="A"] .segmented {
+      border-color: color-mix(in srgb, var(--line-strong), transparent 22%);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--text), transparent 95%);
+    }
+    body[data-variant="A"] .segmented button { height: 23px; border-radius: 6px; font-size: 8.5px; }
+    body[data-variant="A"] .diff-title strong { font-size: 10.5px; font-weight: 590; }
+    body[data-variant="A"] .diff-title span { font-size: 8.5px; }
+    body[data-variant="A"] .diff-table { padding: 11px 0 34px; font-size: 10px; line-height: 1.65; }
+    body[data-variant="A"] .diff-row { min-height: 18px; grid-template-columns: 40px 40px 18px minmax(max-content, 1fr); }
+    body[data-variant="A"] .diff-row.added { background: var(--diff-added-bg); box-shadow: inset 2px 0 color-mix(in srgb, var(--green), transparent 34%); }
+    body[data-variant="A"] .diff-row.removed { background: var(--diff-removed-bg); box-shadow: inset 2px 0 color-mix(in srgb, var(--red), transparent 34%); }
+    body[data-variant="A"] .diff-row.hunk {
+      margin: 8px 0;
+      background: var(--diff-hunk-bg);
+      box-shadow: inset 2px 0 color-mix(in srgb, var(--accent), transparent 30%);
+    }
+    body[data-variant="A"] .line-number { border-right-color: color-mix(in srgb, var(--line), transparent 18%); color: var(--tertiary); }
+    body[data-variant="A"] .commit-columns {
+      height: 26px;
+      background: color-mix(in srgb, var(--panel-alt), var(--panel) 42%);
+      color: var(--tertiary);
+      font-size: 8.5px;
+    }
+    body[data-variant="A"] .commit-row {
+      min-height: 47px;
+      border-bottom-color: color-mix(in srgb, var(--line), transparent 38%);
+      transition: background-color var(--duration-feedback) ease, box-shadow var(--duration-feedback) ease;
+    }
+    body[data-variant="A"] .commit-row[aria-current="true"] {
+      background: var(--row-selected-bg);
+      color: var(--row-selected-fg);
+      box-shadow: inset 3px 0 var(--row-selected-indicator);
+    }
+    body[data-variant="A"] .graph-cell::before { width: 1.5px; background: color-mix(in srgb, var(--accent), transparent 20%); }
+    body[data-variant="A"] .graph-cell::after {
+      width: 7px;
+      height: 7px;
+      border-width: 2px;
+      background: var(--panel);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent), transparent 87%);
+    }
+    body[data-variant="A"] .commit-row[aria-current="true"] .graph-cell::after { background: var(--accent); border-color: color-mix(in srgb, var(--accent), white 22%); }
+    body[data-variant="A"] .commit-subject { font-size: 10.5px; font-weight: 590; }
+    body[data-variant="A"] .commit-meta,
+    body[data-variant="A"] .commit-hash { font-size: 8.5px; }
+    body[data-variant="A"] .ref-label {
+      padding: 2px 5px;
+      border-color: color-mix(in srgb, var(--accent), transparent 54%);
+      border-radius: 5px;
+      background: color-mix(in srgb, var(--accent), transparent 88%);
+      font-size: 7.5px;
+      font-weight: 650;
+    }
+    body[data-variant="A"] .commit-hero { padding: 16px 18px 14px; }
+    body[data-variant="A"] .commit-hero h3 { font-size: 15px; font-weight: 660; letter-spacing: -.012em; }
+    body[data-variant="A"] .commit-author { font-size: 9px; }
+    body[data-variant="A"] .avatar {
+      background: linear-gradient(145deg, color-mix(in srgb, var(--accent), white 36%), color-mix(in srgb, var(--accent), black 16%));
+      box-shadow: inset 0 0 0 1px rgb(255 255 255 / 20%);
+    }
+    body[data-variant="A"] .commit-facts { padding: 9px 18px; font-size: 8.5px; }
+    body[data-variant="A"] .changed-files { padding-inline: 18px 12px; }
+    body[data-variant="A"] .changed-files span {
+      border: 1px solid color-mix(in srgb, var(--line), transparent 10%);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--panel-alt), var(--panel) 32%);
+      font-size: 8.5px;
+    }
+    body[data-variant="A"] .statusbar {
+      border-top-color: color-mix(in srgb, var(--line), transparent 8%);
+      background: color-mix(in srgb, var(--chrome), var(--panel) 20%);
+      color: var(--tertiary);
+      font-size: 8px;
+    }
+    body[data-variant="A"] button:active { background-color: color-mix(in srgb, var(--accent), transparent 86%); }
+    body[data-variant="A"] button:focus-visible,
+    body[data-variant="A"] input:focus-visible,
+    body[data-variant="A"] [tabindex]:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--accent), white 8%);
+      outline-offset: -2px;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent), transparent 76%);
+    }
+
+    @media (max-width: 1120px) {
+      .app-window { min-height: 520px; }
+      .titlebar { grid-template-columns: auto minmax(220px, 1fr) auto auto auto; }
+      .toolbar-label { display: none; }
+      .library-screen, body[data-variant="C"] .library-screen { grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: 1fr; }
+      .repo-preview, body[data-variant="C"] .repo-preview { display: none; }
+      .repository-list, body[data-variant="C"] .repository-list { grid-column: 2; grid-row: 1; }
+      .library-nav, body[data-variant="C"] .library-nav { grid-column: 1; grid-row: 1; }
+      body[data-variant="A"] .changes-screen { grid-template-columns: 190px 300px minmax(0, 1fr); }
+      body[data-variant="A"] .history-screen { grid-template-columns: 190px 390px minmax(0, 1fr); }
+      body[data-variant="C"] .changes-screen { grid-template-columns: 290px minmax(0, 1fr); }
+      body[data-variant="C"] .history-screen { grid-template-columns: 390px minmax(0, 1fr); }
+      body[data-variant="C"] .selection-inspector { display: none; }
+    }
+    @media (max-width: 850px) {
+      .stage { padding: 9px 9px 62px; }
+      .app-window { width: calc(100vw - 18px); height: calc(100vh - 72px); min-height: 460px; }
+      .titlebar { grid-template-columns: auto minmax(160px, 1fr) auto; }
+      .destination-switch { justify-self: end; }
+      .branch-chip { display: none !important; }
+      .toolbar { display: none; }
+      .library-screen, body[data-variant="B"] .library-screen, body[data-variant="C"] .library-screen { grid-template-columns: 190px minmax(0, 1fr); grid-template-rows: 1fr; }
+      body[data-variant="B"] .library-nav {
+        grid-column: 1;
+        grid-row: 1;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
+        align-items: stretch;
+        padding: 0;
+        border-bottom: 0;
+      }
+      body[data-variant="B"] .library-nav > .panel-header { display: flex; }
+      body[data-variant="B"] .library-nav .search-wrap { width: auto; padding: 9px 10px 7px; }
+      body[data-variant="B"] .library-nav .nav-scroll { display: block; padding: 5px 8px 12px; overflow: auto; }
+      body[data-variant="B"] .library-nav .nav-section { display: block; margin-bottom: 13px; }
+      body[data-variant="B"] .library-nav .section-label { display: flex; }
+      body[data-variant="B"] .repository-list { grid-column: 2; grid-row: 1; }
+      .repo-preview { display: none !important; }
+      body[data-variant] .changes-screen { grid-template-columns: 270px minmax(0, 1fr); }
+      body[data-variant] .history-screen { grid-template-columns: 350px minmax(0, 1fr); }
+      body[data-variant] .workspace-nav, body[data-variant] .selection-inspector { display: none; }
+    }
+    @media (max-width: 620px) {
+      .stage { padding: 0 0 58px; }
+      .app-window { width: 100vw; height: calc(100vh - 58px); min-height: 400px; border-inline: 0; border-radius: 0; }
+      .traffic-lights { display: none; }
+      .titlebar { grid-template-columns: minmax(150px, 1fr) auto; padding-left: 8px; }
+      .destination-switch button { min-width: 62px; }
+      .context-copy span { display: none; }
+      body[data-screen="library"] .destination-switch { display: none; }
+      body[data-variant] .library-screen { grid-template-columns: minmax(0, 1fr); }
+      body[data-variant] .library-nav { display: none; }
+      body[data-variant] .repository-list { grid-column: 1; }
+      .repository-table { min-width: 520px; }
+      body[data-variant] .changes-screen { grid-template-columns: minmax(0, 1fr); }
+      body[data-variant] .changes-screen .file-panel { display: none; }
+      body[data-variant] .history-screen { grid-template-columns: minmax(0, 1fr); }
+      body[data-variant] .history-screen .commit-list { display: none; }
+      .status-secondary { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body data-variant="A" data-screen="library" data-theme="gallae" data-appearance-mode="system" data-appearance="light">
+  <svg class="svg-defs" width="0" height="0" aria-hidden="true" focusable="false">
+    <symbol id="i-gallae" viewBox="0 0 16 16"><circle cx="4" cy="3.5" r="1.25"/><circle cx="12" cy="3.5" r="1.25"/><circle cx="8" cy="12.5" r="1.25"/><path d="M4 4.8v1.1c0 1.2 1 2.1 2.1 2.1H8m4-3.2v1.1C12 7.1 11 8 9.9 8H8v3.2"/></symbol>
+    <symbol id="i-library" viewBox="0 0 16 16"><path d="M2.5 3.5h4l1.2 1.4h5.8v7.6h-11z"/><path d="M2.5 6h11"/></symbol>
+    <symbol id="i-repo" viewBox="0 0 16 16"><rect x="3" y="2" width="10" height="12" rx="1.5"/><path d="M5.5 5h5M5.5 8h5M5.5 11h3"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="5.5" r="1.5"/><path d="M4 5v6M5.5 10h1A5.5 5.5 0 0 0 12 7"/></symbol>
+    <symbol id="i-changes" viewBox="0 0 16 16"><path d="M3 3h10M3 8h7M3 13h10"/><circle cx="12.5" cy="8" r="1.5"/></symbol>
+    <symbol id="i-history" viewBox="0 0 16 16"><path d="M3.1 5.1A5.5 5.5 0 1 1 2.8 10"/><path d="M2 3.5v3h3"/><path d="M8 5v3.4l2.2 1.3"/></symbol>
+    <symbol id="i-remote" viewBox="0 0 16 16"><path d="M3 11.5a3 3 0 0 1 .7-5.9A4.4 4.4 0 0 1 12.2 7a2.4 2.4 0 0 1 .3 4.7H3z"/></symbol>
+    <symbol id="i-tag" viewBox="0 0 16 16"><path d="M2.5 3v4.5l6 6 5-5-6-6z"/><circle cx="5.5" cy="5.5" r=".9"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13 5V2.7l-1.7 1.5A5.3 5.3 0 1 0 13 9"/><path d="M13 2.7h-2.4"/></symbol>
+    <symbol id="i-open" viewBox="0 0 16 16"><path d="M6 3H3v10h10v-3"/><path d="M8 3h5v5M13 3 7 9"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></symbol>
+  </svg>
+
+  <div class="stage">
+    <main class="app-window" aria-label="Gallae for Git 디자인 시안">
+      <header class="titlebar">
+        <div class="traffic-lights" aria-hidden="true"><span></span><span></span><span></span></div>
+        <button class="context-button library-context" type="button" aria-label="Repository Library">
+          <span class="app-mark" aria-hidden="true"><svg class="icon brand-glyph"><use href="#i-gallae"></use></svg></span>
+          <span class="context-copy"><strong>Gallae for Git</strong><span>Repository Library</span></span>
+        </button>
+        <button class="context-button repository-context" data-screen-target="library" type="button" aria-label="Repository Library로 돌아가기">
+          <span class="app-mark" aria-hidden="true"><svg class="icon brand-glyph"><use href="#i-gallae"></use></svg></span>
+          <span class="context-copy"><strong>bakekujira</strong><span>~/Code/Gallae/bakekujira</span></span>
+        </button>
+        <nav class="destination-switch" aria-label="저장소 화면">
+          <button data-screen-target="changes" type="button">Changes <span class="count">5</span></button>
+          <button data-screen-target="history" type="button">History</button>
+        </nav>
+        <button class="branch-chip mock-action" type="button" aria-label="현재 브랜치 feature/status-view, 원격보다 2커밋 앞섬">
+          <svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg>
+          <span>feature/status-view</span><span class="sync-count">↑2 ↓0</span>
+        </button>
+        <div class="toolbar" aria-label="화면 명령">
+          <button class="library-action mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg><span class="toolbar-label">Add Folder</span></button>
+          <button class="library-action mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-open"></use></svg><span class="toolbar-label">Open Repository</span></button>
+          <button class="workspace-action mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"></use></svg><span class="toolbar-label">Refresh</span></button>
+          <button class="workspace-action mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-open"></use></svg><span class="toolbar-label">Show in Finder</span></button>
+        </div>
+      </header>
+
+      <section class="screen library-screen" aria-label="Repository Library">
+        <aside class="panel sidebar library-nav">
+          <div class="panel-header">
+            <div><h2>Library</h2><p>Authorized folders only</p></div>
+            <button class="icon-button mock-action" type="button" aria-label="Library Folder 추가"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
+          </div>
+          <div class="search-wrap"><input class="search-field" type="search" aria-label="저장소 검색" placeholder="Filter repositories"></div>
+          <div class="scroll nav-scroll">
+            <section class="nav-section">
+              <div class="section-label"><span>Recent</span><span>3</span></div>
+              <button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-repo"></use></svg><span class="nav-label">bakekujira</span><span class="nav-meta">5</span></button>
+              <button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-repo"></use></svg><span class="nav-label">Gallae</span></button>
+              <button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-repo"></use></svg><span class="nav-label">garden-notes</span><span class="nav-meta">2</span></button>
+            </section>
+            <section class="nav-section">
+              <div class="section-label"><span>Library Folders</span><span>2</span></div>
+              <button class="nav-row selected" type="button"><svg class="icon" aria-hidden="true"><use href="#i-library"></use></svg><span class="nav-label">~/Code</span><span class="nav-meta">8</span></button>
+              <button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-library"></use></svg><span class="nav-label">~/Work</span><span class="nav-meta">12</span></button>
+            </section>
+            <section class="nav-section">
+              <div class="section-label"><span>Locations</span></div>
+              <button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-remote"></use></svg><span class="nav-label">Recently cloned</span></button>
+            </section>
+          </div>
+          <div class="scan-state"><span class="state-dot" aria-hidden="true"></span><span>20 repositories · scanned now</span></div>
+        </aside>
+
+        <section class="panel repository-list" aria-labelledby="repositories-title">
+          <div class="panel-header">
+            <div><h2 id="repositories-title">Repositories <span class="count">8</span></h2><p>Inside ~/Code</p></div>
+            <div class="panel-tools"><button class="text-button mock-action" type="button">Name</button><button class="icon-button mock-action" type="button" aria-label="목록 옵션">•••</button></div>
+          </div>
+          <div class="scroll">
+            <div class="repository-table" role="listbox" aria-label="저장소 목록">
+              <div class="repository-columns" aria-hidden="true"><span>Repository</span><span>Branch</span><span>State</span><span>Updated</span></div>
+              <button class="repository-row" type="button" aria-selected="true"><span class="repo-cell"><strong>bakekujira</strong><small>Gallae/bakekujira</small></span><span class="cell-text branch-text">feature/status-view</span><span class="change-pill">5 changes</span><span class="cell-text">Now</span></button>
+              <button class="repository-row" type="button" aria-selected="false"><span class="repo-cell"><strong>Gallae</strong><small>Gallae</small></span><span class="cell-text branch-text">main</span><span class="change-pill clean">Clean</span><span class="cell-text">4m</span></button>
+              <button class="repository-row" type="button" aria-selected="false"><span class="repo-cell"><strong>garden-notes</strong><small>Personal/garden-notes</small></span><span class="cell-text branch-text">drafts/summer</span><span class="change-pill">2 changes</span><span class="cell-text">1h</span></button>
+              <button class="repository-row" type="button" aria-selected="false"><span class="repo-cell"><strong>swift-experiments</strong><small>Labs/swift-experiments</small></span><span class="cell-text branch-text">main</span><span class="change-pill clean">Clean</span><span class="cell-text">Yesterday</span></button>
+              <button class="repository-row" type="button" aria-selected="false"><span class="repo-cell"><strong>mac-utilities</strong><small>Tools/mac-utilities</small></span><span class="cell-text branch-text">release/1.4</span><span class="change-pill clean">Clean</span><span class="cell-text">Mon</span></button>
+              <button class="repository-row" type="button" aria-selected="false"><span class="repo-cell"><strong>docs-engine</strong><small>Shared/docs-engine</small></span><span class="cell-text branch-text">main</span><span class="change-pill">1 change</span><span class="cell-text">Aug 21</span></button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="panel repo-preview" aria-label="선택한 저장소 요약">
+          <div class="panel-header"><div><h2>Repository</h2><p>Selection summary</p></div></div>
+          <div class="scroll preview-content">
+            <div class="repo-monogram" aria-hidden="true"><svg class="icon"><use href="#i-repo"></use></svg></div>
+            <div><h3>bakekujira</h3><p class="preview-path">~/Code/Gallae/bakekujira</p><div class="preview-stats"><div class="preview-stat"><b>5</b><span>Changes</span></div><div class="preview-stat"><b>3</b><span>Branches</span></div><div class="preview-stat"><b>42</b><span>Commits</span></div></div></div>
+            <section class="preview-section"><h4>Recent activity</h4><div class="preview-line"><span>Clarify repository states</span><time>12m</time></div><div class="preview-line"><span>Add status parser fixtures</span><time>2h</time></div><div class="preview-line"><span>Document first slice</span><time>Yesterday</time></div></section>
+          </div>
+          <div class="preview-footer"><button class="primary-button open-repository" type="button">Open Repository</button></div>
+        </aside>
+      </section>
+
+      <section class="screen changes-screen" aria-label="Changes">
+        <aside class="panel workspace-nav">
+          <div class="panel-header"><div><h2>bakekujira</h2><p>Repository</p></div></div>
+          <div class="scroll nav-scroll">
+            <section class="nav-section"><div class="section-label"><span>Workspace</span></div><button class="nav-row" data-screen-target="changes" type="button" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-changes"></use></svg><span class="nav-label">Changes</span><span class="nav-meta">5</span></button><button class="nav-row" data-screen-target="history" type="button"><svg class="icon" aria-hidden="true"><use href="#i-history"></use></svg><span class="nav-label">History</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Local Branches</span><span>3</span></div><button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">feature/status-view</span><span class="current-ref">Current</span></button><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">main</span></button><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">prototype/workspace</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Remote</span></div><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-remote"></use></svg><span class="nav-label">origin/main</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Tags</span></div><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg><span class="nav-label">v0.1-preview</span></button></section>
+          </div>
+        </aside>
+        <section class="panel file-panel" aria-labelledby="changes-title">
+          <div class="panel-header"><div><h2 id="changes-title">Working Changes <span class="count">5</span></h2><p>Read-only prototype</p></div><div class="segmented" aria-label="변경 범위"><button type="button" aria-pressed="true">All</button><button class="mock-action" type="button" aria-pressed="false">Staged</button></div></div>
+          <div class="scroll">
+            <div class="group-title"><span>Staged</span><span>1 file</span></div>
+            <button class="file-row" type="button" aria-label="App.swift, staged, 수정됨, 8줄 추가 2줄 삭제"><span class="status-mark modified" aria-hidden="true">M</span><span class="file-copy"><span class="file-name">App.swift</span><span class="file-path">Sources/Gallae · Modified</span></span><span class="file-stat"><span class="plus">+8</span><span class="minus">−2</span></span></button>
+            <div class="group-title"><span>Unstaged</span><span>3 files</span></div>
+            <button class="file-row" type="button" aria-current="true" aria-label="StatusParser.swift, unstaged, 수정됨, 18줄 추가 7줄 삭제"><span class="status-mark modified" aria-hidden="true">M</span><span class="file-copy"><span class="file-name">StatusParser.swift</span><span class="file-path">Sources/Gallae/Git · Modified</span></span><span class="file-stat"><span class="plus">+18</span><span class="minus">−7</span></span></button>
+            <button class="file-row" type="button" aria-label="ChangesView.swift, unstaged, 수정됨, 9줄 추가 3줄 삭제"><span class="status-mark modified" aria-hidden="true">M</span><span class="file-copy"><span class="file-name">ChangesView.swift</span><span class="file-path">Sources/Gallae/UI · Modified</span></span><span class="file-stat"><span class="plus">+9</span><span class="minus">−3</span></span></button>
+            <button class="file-row" type="button" aria-label="README.md, unstaged, 수정됨, 3줄 추가"><span class="status-mark modified" aria-hidden="true">M</span><span class="file-copy"><span class="file-name">README.md</span><span class="file-path">Documentation · Modified</span></span><span class="file-stat"><span class="plus">+3</span></span></button>
+            <div class="group-title"><span>Untracked</span><span>1 file</span></div>
+            <button class="file-row" type="button" aria-label="StatusParserTests.swift, 추적 안 됨, 42줄 추가"><span class="status-mark untracked" aria-hidden="true">U</span><span class="file-copy"><span class="file-name">StatusParserTests.swift</span><span class="file-path">Tests/GallaeTests · Untracked</span></span><span class="file-stat"><span class="plus">+42</span></span></button>
+          </div>
+        </section>
+        <section class="panel diff-panel" aria-labelledby="diff-title">
+          <div class="panel-header"><div class="diff-title"><strong id="diff-title">Sources/Gallae/Git/StatusParser.swift</strong><span>Modified · Unstaged · UTF-8</span></div><div class="panel-tools"><div class="segmented" aria-label="diff 표시 방식"><button type="button" aria-pressed="true">Unified</button><button class="mock-action" type="button" aria-pressed="false">Split</button></div><button class="icon-button mock-action" type="button" aria-label="Diff 옵션">•••</button></div></div>
+          <div class="scroll" tabindex="0" aria-label="StatusParser.swift 통합 diff">
+            <div class="diff-table" role="table" aria-label="코드 변경 내용">
+              <div class="diff-row"><span class="line-number">12</span><span class="line-number">12</span><span class="line-sign"> </span><span class="code-line"><span class="kw">struct</span> <span class="type">WorkingTreeEntry</span>: <span class="type">Identifiable</span> {</span></div>
+              <div class="diff-row"><span class="line-number">13</span><span class="line-number">13</span><span class="line-sign"> </span><span class="code-line">    <span class="kw">let</span> id: <span class="type">String</span></span></div>
+              <div class="diff-row removed"><span class="line-number">14</span><span class="line-number"></span><span class="line-sign">−</span><span class="code-line">    <span class="kw">let</span> state: <span class="type">String</span></span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">14</span><span class="line-sign">+</span><span class="code-line">    <span class="kw">let</span> indexState: <span class="type">FileState</span></span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">15</span><span class="line-sign">+</span><span class="code-line">    <span class="kw">let</span> worktreeState: <span class="type">FileState</span></span></div>
+              <div class="diff-row"><span class="line-number">15</span><span class="line-number">16</span><span class="line-sign"> </span><span class="code-line">    <span class="kw">let</span> path: <span class="type">String</span></span></div>
+              <div class="diff-row"><span class="line-number">16</span><span class="line-number">17</span><span class="line-sign"> </span><span class="code-line">}</span></div>
+              <div class="diff-row"><span class="line-number"></span><span class="line-number"></span><span class="line-sign"></span><span class="code-line"></span></div>
+              <div class="diff-row hunk"><span class="line-number"></span><span class="line-number"></span><span class="line-sign"></span><span class="code-line">@@ -28,12 +29,21 @@ enum StatusParser {</span></div>
+              <div class="diff-row"><span class="line-number">28</span><span class="line-number">29</span><span class="line-sign"> </span><span class="code-line">    <span class="kw">static func</span> parse(_ output: <span class="type">String</span>) -&gt; [<span class="type">WorkingTreeEntry</span>] {</span></div>
+              <div class="diff-row removed"><span class="line-number">29</span><span class="line-number"></span><span class="line-sign">−</span><span class="code-line">        output.split(separator: <span class="str">"\n"</span>).map { line <span class="kw">in</span></span></div>
+              <div class="diff-row removed"><span class="line-number">30</span><span class="line-number"></span><span class="line-sign">−</span><span class="code-line">            <span class="type">WorkingTreeEntry</span>(</span></div>
+              <div class="diff-row removed"><span class="line-number">31</span><span class="line-number"></span><span class="line-sign">−</span><span class="code-line">                id: <span class="type">String</span>(line.dropFirst(3)),</span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">30</span><span class="line-sign">+</span><span class="code-line">        output.split(separator: <span class="str">"\0"</span>).compactMap { record <span class="kw">in</span></span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">31</span><span class="line-sign">+</span><span class="code-line">            <span class="kw">guard</span> record.count &gt; 3 <span class="kw">else</span> { <span class="kw">return nil</span> }</span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">32</span><span class="line-sign">+</span><span class="code-line"></span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">33</span><span class="line-sign">+</span><span class="code-line">            <span class="kw">let</span> index = <span class="type">FileState</span>(code: record[record.startIndex])</span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">34</span><span class="line-sign">+</span><span class="code-line">            <span class="kw">let</span> worktree = <span class="type">FileState</span>(code: record[record.index(after: record.startIndex)])</span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">35</span><span class="line-sign">+</span><span class="code-line">            <span class="kw">let</span> path = <span class="type">String</span>(record.dropFirst(3))</span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">36</span><span class="line-sign">+</span><span class="code-line"></span></div>
+              <div class="diff-row added"><span class="line-number"></span><span class="line-number">37</span><span class="line-sign">+</span><span class="code-line">            <span class="kw">return</span> <span class="type">WorkingTreeEntry</span>(id: path, indexState: index, worktreeState: worktree, path: path)</span></div>
+              <div class="diff-row"><span class="line-number">36</span><span class="line-number">38</span><span class="line-sign"> </span><span class="code-line">        }</span></div>
+              <div class="diff-row"><span class="line-number">37</span><span class="line-number">39</span><span class="line-sign"> </span><span class="code-line">    }</span></div>
+              <div class="diff-row"><span class="line-number">38</span><span class="line-number">40</span><span class="line-sign"> </span><span class="code-line">}</span></div>
+            </div>
+          </div>
+        </section>
+        <aside class="panel selection-inspector" aria-label="선택한 변경 정보">
+          <div class="panel-header"><div><h2>Review</h2><p>Selected change</p></div></div>
+          <div class="scroll inspector-content"><h3>StatusParser.swift</h3><p>작업 트리와 인덱스 상태를 분리해 읽도록 파서를 바꾸는 변경입니다.</p><dl class="inspector-grid"><dt>State</dt><dd>Modified · Unstaged</dd><dt>Path</dt><dd>Sources/Gallae/Git/StatusParser.swift</dd><dt>Lines</dt><dd><span class="plus">+18</span> <span class="minus">−7</span></dd><dt>Encoding</dt><dd>UTF-8</dd></dl><div class="review-note">첫 슬라이스에서는 읽기만 지원합니다. Stage와 Commit은 검토 흐름이 검증된 뒤 추가합니다.</div></div>
+        </aside>
+      </section>
+
+      <section class="screen history-screen" aria-label="History">
+        <aside class="panel workspace-nav">
+          <div class="panel-header"><div><h2>bakekujira</h2><p>Repository</p></div></div>
+          <div class="scroll nav-scroll">
+            <section class="nav-section"><div class="section-label"><span>Workspace</span></div><button class="nav-row" data-screen-target="changes" type="button"><svg class="icon" aria-hidden="true"><use href="#i-changes"></use></svg><span class="nav-label">Changes</span><span class="nav-meta">5</span></button><button class="nav-row" data-screen-target="history" type="button" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#i-history"></use></svg><span class="nav-label">History</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Local Branches</span><span>3</span></div><button class="nav-row" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">feature/status-view</span><span class="current-ref">Current</span></button><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">main</span></button><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-branch"></use></svg><span class="nav-label">prototype/workspace</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Remote</span></div><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-remote"></use></svg><span class="nav-label">origin/main</span></button></section>
+            <section class="nav-section"><div class="section-label"><span>Tags</span></div><button class="nav-row mock-action" type="button"><svg class="icon" aria-hidden="true"><use href="#i-tag"></use></svg><span class="nav-label">v0.1-preview</span></button></section>
+          </div>
+        </aside>
+        <section class="panel commit-list" aria-labelledby="history-title">
+          <div class="panel-header"><div><h2 id="history-title">History</h2><p>All local branches</p></div><button class="icon-button mock-action" type="button" aria-label="히스토리 필터">•••</button></div>
+          <div class="commit-columns" aria-hidden="true"><span>Graph</span><span>Commit</span><span>Revision</span></div>
+          <div class="scroll" role="listbox" aria-label="커밋 목록">
+            <button class="commit-row" type="button" aria-current="true"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject"><span class="ref-label">HEAD</span>Clarify repository states</span><span class="commit-meta">Eugene · 12 minutes ago</span></span><span class="commit-hash">6be4a19</span></button>
+            <button class="commit-row" type="button"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject">Add status parser fixtures</span><span class="commit-meta">Eugene · 2 hours ago</span></span><span class="commit-hash">21cbf54</span></button>
+            <button class="commit-row branch-line" type="button"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject"><span class="ref-label">main</span>Document first vertical slice</span><span class="commit-meta">Eugene · Yesterday</span></span><span class="commit-hash">c8249ee</span></button>
+            <button class="commit-row branch-line" type="button"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject">Define clean-room constraints</span><span class="commit-meta">Eugene · Yesterday</span></span><span class="commit-hash">9b6a72f</span></button>
+            <button class="commit-row" type="button"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject">Sketch library folder discovery</span><span class="commit-meta">Eugene · Aug 25</span></span><span class="commit-hash">1f037c8</span></button>
+            <button class="commit-row" type="button"><span class="graph-cell"></span><span class="commit-copy"><span class="commit-subject">Start Gallae product notes</span><span class="commit-meta">Eugene · Aug 24</span></span><span class="commit-hash">882fa13</span></button>
+          </div>
+        </section>
+        <section class="panel commit-detail" aria-labelledby="commit-title">
+          <div class="panel-header"><div><h2>Selected Commit</h2><p>6be4a19 · feature/status-view</p></div><div class="segmented" aria-label="커밋 상세 보기"><button type="button" aria-pressed="true">Changes</button><button class="mock-action" type="button" aria-pressed="false">Files</button></div></div>
+          <div class="commit-hero"><h3 id="commit-title">Clarify repository states</h3><div class="commit-author"><span class="avatar" aria-hidden="true">EG</span><span><strong>Eugene</strong><br>eugene@example.com · 12 minutes ago</span></div></div>
+          <div class="commit-facts"><span>SHA 6be4a19f20d3</span><span>Parent 21cbf54</span><span>3 files</span><span class="plus">+24</span><span class="minus">−8</span></div>
+          <div class="changed-files" aria-label="변경된 파일"><span>StatusParser.swift</span><span>RepositoryState.swift</span><span>PRODUCT.md</span></div>
+          <div class="scroll history-diff" tabindex="0" aria-label="선택 커밋 diff"><div class="diff-table"><div class="diff-row hunk"><span class="line-number"></span><span class="line-number"></span><span class="line-sign"></span><span class="code-line">@@ -8,8 +8,14 @@ enum RepositoryState {</span></div><div class="diff-row"><span class="line-number">8</span><span class="line-number">8</span><span class="line-sign"> </span><span class="code-line"><span class="kw">enum</span> <span class="type">RepositoryState</span> {</span></div><div class="diff-row removed"><span class="line-number">9</span><span class="line-number"></span><span class="line-sign">−</span><span class="code-line">    <span class="kw">case</span> ready</span></div><div class="diff-row added"><span class="line-number"></span><span class="line-number">9</span><span class="line-sign">+</span><span class="code-line">    <span class="kw">case</span> scanning</span></div><div class="diff-row added"><span class="line-number"></span><span class="line-number">10</span><span class="line-sign">+</span><span class="code-line">    <span class="kw">case</span> available</span></div><div class="diff-row added"><span class="line-number"></span><span class="line-number">11</span><span class="line-sign">+</span><span class="code-line">    <span class="kw">case</span> unavailable(reason: <span class="type">String</span>)</span></div><div class="diff-row"><span class="line-number">10</span><span class="line-number">12</span><span class="line-sign"> </span><span class="code-line">}</span></div></div></div>
+        </section>
+        <aside class="panel selection-inspector" aria-label="선택한 커밋 정보">
+          <div class="panel-header"><div><h2>Commit</h2><p>Selection context</p></div></div>
+          <div class="scroll inspector-content"><h3>Clarify repository states</h3><p>저장소 탐색과 열림 상태를 분리해 Library와 Workspace의 책임을 명확하게 합니다.</p><dl class="inspector-grid"><dt>Author</dt><dd>Eugene</dd><dt>Revision</dt><dd>6be4a19f20d3</dd><dt>Parent</dt><dd>21cbf54</dd><dt>References</dt><dd>HEAD, feature/status-view</dd><dt>Changes</dt><dd>3 files · <span class="plus">+24</span> <span class="minus">−8</span></dd></dl><div class="review-note">History는 첫 구현 범위가 아닙니다. 이 시안에서는 작업공간 구조가 다음 단계까지 유지되는지만 확인합니다.</div></div>
+        </aside>
+      </section>
+
+      <footer class="statusbar">
+        <div class="status-group"><span id="screenStatus">Repository Library</span><span class="status-secondary">20 repositories</span></div>
+        <div class="status-group"><span class="status-secondary">Read-only design prototype</span><span>Updated now</span></div>
+      </footer>
+    </main>
+  </div>
+
+  <nav class="variant-switcher" aria-label="디자인 시안 전환">
+    <button id="previousVariant" type="button" aria-label="이전 시안" title="이전 시안 (왼쪽 화살표)">←</button>
+    <div class="variant-label" aria-live="polite"><small id="prototypeState">PROTOTYPE · LIBRARY</small><strong id="variantLabel">A · Balanced</strong></div>
+    <button id="nextVariant" type="button" aria-label="다음 시안" title="다음 시안 (오른쪽 화살표)">→</button>
+  </nav>
+  <div class="toast" id="toast" role="status" aria-live="polite">시안에서는 이 명령을 실행하지 않습니다.</div>
+
+  <script>
+    const variants = [{ id: "A", label: "A · Balanced" }, { id: "B", label: "B · Compact" }, { id: "C", label: "C · Review" }];
+    const screens = ["library", "changes", "history"];
+    const appearanceModes = ["system", "light", "dark"];
+    const systemAppearance = matchMedia("(prefers-color-scheme: dark)");
+    const parameters = new URLSearchParams(location.search);
+    const requestedVariant = parameters.get("variant")?.toUpperCase();
+    const requestedScreen = parameters.get("screen")?.toLowerCase();
+    const requestedAppearanceMode = parameters.get("appearance")?.toLowerCase();
+    let currentVariant = Math.max(0, variants.findIndex(({ id }) => id === requestedVariant));
+    let currentScreen = screens.includes(requestedScreen) ? requestedScreen : "library";
+    let currentAppearanceMode = appearanceModes.includes(requestedAppearanceMode) ? requestedAppearanceMode : "system";
+    const variantLabel = document.querySelector("#variantLabel");
+    const prototypeState = document.querySelector("#prototypeState");
+    const screenStatus = document.querySelector("#screenStatus");
+    const toast = document.querySelector("#toast");
+    let toastTimer;
+
+    function updateUrl() {
+      const url = new URL(location.href);
+      url.searchParams.set("variant", variants[currentVariant].id);
+      url.searchParams.set("screen", currentScreen);
+      url.searchParams.set("appearance", currentAppearanceMode);
+      url.searchParams.delete("theme");
+      history.replaceState(null, "", url);
+    }
+    function render() {
+      const appearance = currentAppearanceMode === "system" ? (systemAppearance.matches ? "dark" : "light") : currentAppearanceMode;
+      document.body.dataset.variant = variants[currentVariant].id;
+      document.body.dataset.screen = currentScreen;
+      document.body.dataset.appearanceMode = currentAppearanceMode;
+      document.body.dataset.appearance = appearance;
+      document.documentElement.style.colorScheme = appearance;
+      variantLabel.textContent = variants[currentVariant].label;
+      prototypeState.textContent = "PROTOTYPE · " + currentScreen.toUpperCase() + " · " + currentAppearanceMode.toUpperCase();
+      screenStatus.textContent = currentScreen === "library" ? "Repository Library" : currentScreen === "changes" ? "bakekujira · Working Changes" : "bakekujira · History";
+      document.querySelectorAll("[data-screen-target]").forEach((button) => {
+        const active = button.dataset.screenTarget === currentScreen;
+        if (button.closest(".destination-switch")) button.setAttribute("aria-pressed", String(active));
+        if (button.closest(".workspace-nav")) {
+          if (active) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        }
+      });
+      updateUrl();
+    }
+    function showVariant(index) { currentVariant = (index + variants.length) % variants.length; render(); }
+    function showScreen(screen) { if (!screens.includes(screen)) return; currentScreen = screen; render(); }
+    function showPrototypeNotice() {
+      clearTimeout(toastTimer);
+      toast.classList.add("visible");
+      toastTimer = setTimeout(() => toast.classList.remove("visible"), 1600);
+    }
+
+    document.querySelector("#previousVariant").addEventListener("click", () => showVariant(currentVariant - 1));
+    document.querySelector("#nextVariant").addEventListener("click", () => showVariant(currentVariant + 1));
+    document.querySelectorAll("[data-screen-target]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.screenTarget)));
+    document.querySelectorAll(".open-repository").forEach((button) => button.addEventListener("click", () => showScreen("changes")));
+    document.querySelectorAll(".repository-row").forEach((row) => row.addEventListener("click", () => document.querySelectorAll(".repository-row").forEach((candidate) => candidate.setAttribute("aria-selected", String(candidate === row)))));
+    document.querySelectorAll(".mock-action").forEach((button) => button.addEventListener("click", showPrototypeNotice));
+    systemAppearance.addEventListener("change", () => { if (currentAppearanceMode === "system") render(); });
+    document.addEventListener("keydown", (event) => {
+      if (event.target.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (event.key === "ArrowLeft") showVariant(currentVariant - 1);
+      if (event.key === "ArrowRight") showVariant(currentVariant + 1);
+    });
+    render();
+  </script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		110000000000000000000001 /* GallaeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000001 /* GallaeApp.swift */; };
+		110000000000000000000002 /* AppView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000002 /* AppView.swift */; };
+		110000000000000000000003 /* RepositoryInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000003 /* RepositoryInspector.swift */; };
+		110000000000000000000004 /* RepositoryInspectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000004 /* RepositoryInspectorTests.swift */; };
+		110000000000000000000005 /* GallaeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000005 /* GallaeTheme.swift */; };
+		110000000000000000000006 /* RepositoryWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000009 /* RepositoryWorkspaceView.swift */; };
+		110000000000000000000007 /* RepositoryScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000A /* RepositoryScanner.swift */; };
+		110000000000000000000008 /* RepositoryLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000B /* RepositoryLibraryView.swift */; };
+		110000000000000000000009 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000C /* LibraryStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		130000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 190000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 180000000000000000000001;
+			remoteInfo = Gallae;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		120000000000000000000001 /* GallaeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GallaeApp.swift; sourceTree = "<group>"; };
+		120000000000000000000002 /* AppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppView.swift; sourceTree = "<group>"; };
+		120000000000000000000003 /* RepositoryInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryInspector.swift; sourceTree = "<group>"; };
+		120000000000000000000004 /* RepositoryInspectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryInspectorTests.swift; sourceTree = "<group>"; };
+		120000000000000000000005 /* GallaeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GallaeTheme.swift; sourceTree = "<group>"; };
+		120000000000000000000006 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		120000000000000000000007 /* Gallae.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gallae.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		120000000000000000000008 /* GallaeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = GallaeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		120000000000000000000009 /* RepositoryWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorkspaceView.swift; sourceTree = "<group>"; };
+		12000000000000000000000A /* RepositoryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryScanner.swift; sourceTree = "<group>"; };
+		12000000000000000000000B /* RepositoryLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLibraryView.swift; sourceTree = "<group>"; };
+		12000000000000000000000C /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		140000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		140000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		150000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				150000000000000000000002 /* Gallae */,
+				150000000000000000000003 /* GallaeTests */,
+				150000000000000000000004 /* Config */,
+				150000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		150000000000000000000002 /* Gallae */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000001 /* GallaeApp.swift */,
+				120000000000000000000002 /* AppView.swift */,
+				120000000000000000000005 /* GallaeTheme.swift */,
+				12000000000000000000000C /* LibraryStore.swift */,
+				12000000000000000000000A /* RepositoryScanner.swift */,
+				12000000000000000000000B /* RepositoryLibraryView.swift */,
+				120000000000000000000003 /* RepositoryInspector.swift */,
+				120000000000000000000009 /* RepositoryWorkspaceView.swift */,
+			);
+			path = Gallae;
+			sourceTree = "<group>";
+		};
+		150000000000000000000003 /* GallaeTests */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000004 /* RepositoryInspectorTests.swift */,
+			);
+			path = GallaeTests;
+			sourceTree = "<group>";
+		};
+		150000000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000006 /* Base.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		150000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				120000000000000000000007 /* Gallae.app */,
+				120000000000000000000008 /* GallaeTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		180000000000000000000001 /* Gallae */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000001 /* Build configuration list for PBXNativeTarget "Gallae" */;
+			buildPhases = (
+				160000000000000000000001 /* Sources */,
+				140000000000000000000001 /* Frameworks */,
+				170000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Gallae;
+			productName = Gallae;
+			productReference = 120000000000000000000007 /* Gallae.app */;
+			productType = "com.apple.product-type.application";
+		};
+		180000000000000000000002 /* GallaeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A0000000000000000000002 /* Build configuration list for PBXNativeTarget "GallaeTests" */;
+			buildPhases = (
+				160000000000000000000002 /* Sources */,
+				140000000000000000000002 /* Frameworks */,
+				170000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1B0000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = GallaeTests;
+			productName = GallaeTests;
+			productReference = 120000000000000000000008 /* GallaeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		190000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					180000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					180000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 180000000000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = 1A0000000000000000000000 /* Build configuration list for PBXProject "Gallae" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 150000000000000000000001;
+			productRefGroup = 150000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				180000000000000000000001 /* Gallae */,
+				180000000000000000000002 /* GallaeTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		170000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		170000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		160000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000000000000000000001 /* GallaeApp.swift in Sources */,
+				110000000000000000000002 /* AppView.swift in Sources */,
+				110000000000000000000005 /* GallaeTheme.swift in Sources */,
+				110000000000000000000009 /* LibraryStore.swift in Sources */,
+				110000000000000000000007 /* RepositoryScanner.swift in Sources */,
+				110000000000000000000008 /* RepositoryLibraryView.swift in Sources */,
+				110000000000000000000003 /* RepositoryInspector.swift in Sources */,
+				110000000000000000000006 /* RepositoryWorkspaceView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		160000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				110000000000000000000004 /* RepositoryInspectorTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1B0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 180000000000000000000001 /* Gallae */;
+			targetProxy = 130000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1C0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 120000000000000000000006 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		1C0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 120000000000000000000006 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		1C0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Gallae for Git";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(GALLAE_BUNDLE_ID)";
+				PRODUCT_NAME = Gallae;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Debug;
+		};
+		1C0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Gallae for Git";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(GALLAE_BUNDLE_ID)";
+				PRODUCT_NAME = Gallae;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Release;
+		};
+		1C0000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(GALLAE_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gallae.app/Contents/MacOS/Gallae";
+			};
+			name = Debug;
+		};
+		1C0000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(GALLAE_BUNDLE_ID).tests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gallae.app/Contents/MacOS/Gallae";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1A0000000000000000000000 /* Build configuration list for PBXProject "Gallae" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C0000000000000000000001 /* Debug */,
+				1C0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000001 /* Build configuration list for PBXNativeTarget "Gallae" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C0000000000000000000003 /* Debug */,
+				1C0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		1A0000000000000000000002 /* Build configuration list for PBXNativeTarget "GallaeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C0000000000000000000005 /* Debug */,
+				1C0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 190000000000000000000001 /* Project object */;
+}

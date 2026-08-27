@@ -1,0 +1,13 @@
+// Build setting defaults.
+//
+// Bundle ID guardrail: clean clones use the sacrificial ID below. Never put
+// an organization or personal identifier in a tracked build configuration.
+// For a personal build, create an untracked Local.xcconfig next to this file:
+//
+//   GALLAE_BUNDLE_ID = <personal-bundle-id>
+//   GALLAE_BUNDLE_ID[config=Debug] = <personal-debug-bundle-id>
+//   Add the developer's signing team setting here as well.
+
+GALLAE_BUNDLE_ID = forked.gallae.local
+
+#include? "Local.xcconfig"
