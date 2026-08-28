@@ -43,6 +43,8 @@ final class RepositoryInspectorTests: XCTestCase {
         try FileManager.default.removeItem(at: repositoryURL.appending(path: "deleted.txt"))
         try runGit(["-C", repositoryURL.path, "mv", "old name.txt", "새 이름 [1].txt"])
         try write("untracked\n", to: " 한글 file [1].txt", in: repositoryURL)
+        try write("first\n", to: "Sources/Feature/First.swift", in: repositoryURL)
+        try write("second\n", to: "Sources/Feature/Second.swift", in: repositoryURL)
 
         let repository = try await RepositoryInspector().inspect(at: repositoryURL)
         let changes = Dictionary(uniqueKeysWithValues: repository.changes.map { ($0.path, $0) })
@@ -62,6 +64,17 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let untracked = try XCTUnwrap(changes[" 한글 file [1].txt"])
         XCTAssertEqual(untracked.unstaged, .untracked)
+
+        let hierarchy = RepositoryChangeHierarchyNode.make(repository.changes)
+        let sources = try XCTUnwrap(hierarchy.first { $0.name == "Sources" })
+        XCTAssertEqual(sources.changeCount, 2)
+        let feature = try XCTUnwrap(sources.children?.first)
+        XCTAssertEqual(feature.name, "Feature")
+        XCTAssertEqual(feature.children?.map(\.name), ["First.swift", "Second.swift"])
+
+        let statusGroups = RepositoryChangeStatusGroup.make(repository.changes)
+        XCTAssertEqual(statusGroups.map(\.id), [.changes, .untracked])
+        XCTAssertEqual(statusGroups.map { $0.changes.count }, [3, 3])
 
         let inspector = RepositoryInspector()
         let bothDiff = try await inspector.diff(for: both, in: repository)
@@ -218,7 +231,10 @@ final class RepositoryInspectorTests: XCTestCase {
         let libraryURL = fixtureURL.appending(path: "Library", directoryHint: .isDirectory)
         let firstRepositoryURL = libraryURL.appending(path: "Alpha", directoryHint: .isDirectory)
         let nestedRepositoryURL = firstRepositoryURL.appending(path: "Nested", directoryHint: .isDirectory)
-        let secondRepositoryURL = libraryURL.appending(path: "Group/Beta", directoryHint: .isDirectory)
+        let secondRepositoryURL = libraryURL.appending(
+            path: "Group/Team/Beta",
+            directoryHint: .isDirectory
+        )
         let hiddenRepositoryURL = libraryURL.appending(path: ".hidden/Hidden", directoryHint: .isDirectory)
         let packagedRepositoryURL = libraryURL.appending(path: "Archive.app/Packaged", directoryHint: .isDirectory)
         let linkedMetadataRepositoryURL = libraryURL.appending(path: "LinkedMetadata", directoryHint: .isDirectory)
@@ -266,6 +282,19 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(found.contains(packagedRepositoryURL.standardizedFileURL))
         XCTAssertFalse(found.contains(linkedMetadataRepositoryURL.standardizedFileURL))
         XCTAssertFalse(found.contains(outsideRepositoryURL.standardizedFileURL))
+
+        let hierarchy = RepositoryHierarchyNode.make(
+            found.map(RepositoryLocation.init(rootURL:)),
+            relativeTo: libraryURL
+        )
+        XCTAssertEqual(hierarchy.map(\.name), ["Alpha", "Group"])
+        XCTAssertEqual(hierarchy.first?.repository?.rootURL, firstRepositoryURL.standardizedFileURL)
+        let group = try XCTUnwrap(hierarchy.last)
+        XCTAssertEqual(group.repositoryCount, 1)
+        let team = try XCTUnwrap(group.children?.first)
+        XCTAssertEqual(team.name, "Team")
+        XCTAssertEqual(team.children?.map(\.name), ["Beta"])
+        XCTAssertEqual(team.children?.first?.repository?.rootURL, secondRepositoryURL.standardizedFileURL)
     }
 
     func testScannerKeepsResultsWhenOnePathIsUnreadable() async throws {
@@ -364,6 +393,7 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
         XCTAssertTrue(change.isConflicted)
+        XCTAssertEqual(RepositoryChangeStatusGroup.make(repository.changes).map(\.id), [.conflicts])
 
         let diff = try await RepositoryInspector().diff(for: change, in: repository)
         XCTAssertFalse(try textLines(in: diff, scope: .conflict).isEmpty)

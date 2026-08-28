@@ -15,25 +15,37 @@ struct RepositoryLibraryView: View {
                 libraryFolderColumn
                     .frame(
                         minWidth: theme.metrics.libraryFolderMinimumWidth,
-                        idealWidth: theme.metrics.libraryFolderIdealWidth
+                        idealWidth: theme.metrics.libraryFolderIdealWidth,
+                        maxWidth: theme.metrics.libraryFolderMaximumWidth
                     )
                     .frame(height: proxy.size.height)
 
-                repositoryColumn
-                    .frame(
-                        minWidth: theme.metrics.repositoryListMinimumWidth,
-                        idealWidth: theme.metrics.repositoryListIdealWidth
-                    )
-                    .frame(height: proxy.size.height)
-                    .layoutPriority(1)
+                if isLibraryEmpty {
+                    libraryWelcome
+                        .frame(
+                            minWidth: theme.metrics.repositoryListMinimumWidth
+                                + theme.metrics.repositorySummaryMinimumWidth,
+                            maxWidth: .infinity
+                        )
+                        .frame(height: proxy.size.height)
+                        .layoutPriority(1)
+                } else {
+                    repositoryColumn
+                        .frame(
+                            minWidth: theme.metrics.repositoryListMinimumWidth,
+                            idealWidth: theme.metrics.repositoryListIdealWidth
+                        )
+                        .frame(height: proxy.size.height)
+                        .layoutPriority(1)
 
-                repositorySummaryColumn
-                    .frame(
-                        minWidth: theme.metrics.repositorySummaryMinimumWidth,
-                        idealWidth: theme.metrics.repositorySummaryIdealWidth
-                    )
-                    .frame(height: proxy.size.height)
-                    .layoutPriority(1)
+                    repositorySummaryColumn
+                        .frame(
+                            minWidth: theme.metrics.repositorySummaryMinimumWidth,
+                            idealWidth: theme.metrics.repositorySummaryIdealWidth,
+                            maxWidth: theme.metrics.repositorySummaryMaximumWidth
+                        )
+                        .frame(height: proxy.size.height)
+                }
             }
         }
         .task(id: selectedSummary?.rootURL) {
@@ -45,8 +57,13 @@ struct RepositoryLibraryView: View {
     private var libraryFolderColumn: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Repository Library")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Library")
+                        .font(.headline)
+                    Text("Recent and folders")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Add Library Folder", systemImage: "plus", action: chooseLibraryFolder)
                     .labelStyle(.iconOnly)
@@ -93,6 +110,20 @@ struct RepositoryLibraryView: View {
                 scanStatus(for: folder)
                     .padding(10)
             }
+        }
+    }
+
+    private var libraryWelcome: some View {
+        ContentUnavailableView {
+            Label("Start with a Repository", systemImage: "folder.badge.plus")
+        } description: {
+            Text("Open a Git working tree directly, or add a Library Folder to find Repositories.")
+        } actions: {
+            Button("Open Repository…", action: chooseRepository)
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Open Repository")
+            Button("Add Library Folder…", action: chooseLibraryFolder)
+                .accessibilityLabel("Add Library Folder")
         }
     }
 
@@ -164,6 +195,10 @@ struct RepositoryLibraryView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .help(folder.url.path)
+                    } else if model.selectedLibrarySource == .recent {
+                        Text("Most recent first")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
@@ -255,7 +290,7 @@ struct RepositoryLibraryView: View {
                     ContentUnavailableView("Not Scanned", systemImage: "folder")
                 }
             } else {
-                repositoryList(folder.repositories)
+                repositoryHierarchyList(folder.repositories, relativeTo: folder.url)
             }
         } else {
             ContentUnavailableView {
@@ -283,7 +318,8 @@ struct RepositoryLibraryView: View {
                 repository: repository,
                 summary: model.libraryRepositorySummaries[repository.id],
                 errorMessage: model.libraryRepositorySummaryErrors[repository.id],
-                isLoading: model.loadingLibraryRepositorySummaries.contains(repository.id)
+                isLoading: model.loadingLibraryRepositorySummaries.contains(repository.id),
+                showsPath: true
             )
             .tag(repository.id)
             .contentShape(.rect)
@@ -296,16 +332,76 @@ struct RepositoryLibraryView: View {
                 }) != true else { return }
                 await model.loadLibraryRepositorySummary(at: repository.rootURL)
             }
+            .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
         }
-        .listStyle(.inset)
+        .listStyle(.plain)
         .accessibilityLabel("Repositories, \(repositories.count)")
+    }
+
+    private func repositoryHierarchyList(
+        _ repositories: [RepositoryLocation],
+        relativeTo folderURL: URL
+    ) -> some View {
+        let nodes = RepositoryHierarchyNode.make(repositories, relativeTo: folderURL)
+        return List(
+            nodes,
+            children: \.children,
+            selection: Binding(
+                get: { model.selectedLibraryRepositoryID },
+                set: { id in
+                    guard let id else {
+                        model.selectLibraryRepository(nil)
+                        return
+                    }
+                    guard repositories.contains(where: { sameFileLocation($0.id, id) }) else {
+                        return
+                    }
+                    model.selectLibraryRepository(id)
+                }
+            )
+        ) { node in
+            repositoryHierarchyRow(node)
+                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+        }
+        .listStyle(.plain)
+        .accessibilityLabel("Repository hierarchy, \(repositories.count) Repositories")
+    }
+
+    @ViewBuilder
+    private func repositoryHierarchyRow(_ node: RepositoryHierarchyNode) -> some View {
+        if let repository = node.repository {
+            RepositoryLibraryRow(
+                repository: repository,
+                summary: model.libraryRepositorySummaries[repository.id],
+                errorMessage: model.libraryRepositorySummaryErrors[repository.id],
+                isLoading: model.loadingLibraryRepositorySummaries.contains(repository.id),
+                showsPath: false
+            )
+            .contentShape(.rect)
+            .onTapGesture(count: 2) {
+                Task { await model.openLibraryRepository(at: repository.rootURL) }
+            }
+            .task(id: repository.id) {
+                guard model.selectedLibraryRepositoryID.map({
+                    sameFileLocation($0, repository.id)
+                }) != true else { return }
+                await model.loadLibraryRepositorySummary(at: repository.rootURL)
+            }
+        } else {
+            RepositoryHierarchyFolderRow(node: node)
+        }
     }
 
     private var repositorySummaryColumn: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Repository")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Repository")
+                        .font(.headline)
+                    Text("Selection summary")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -323,9 +419,14 @@ struct RepositoryLibraryView: View {
                 }
 
                 Divider()
-                Button("Open Repository") {
+                Button {
                     Task { await model.openSelectedLibraryRepository() }
+                } label: {
+                    Label("Open Repository", systemImage: "arrow.right.circle.fill")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
                 .disabled(
                     model.isLoading
@@ -417,9 +518,14 @@ struct RepositoryLibraryView: View {
                             Text(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
                                 .lineLimit(2)
                                 .help(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
-                            Text("\(commit.id.prefix(8)) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
+                            Text("\(commit.id.prefix(8)) · \(commit.committedAt, style: .relative)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .help(commit.committedAt.formatted(date: .abbreviated, time: .shortened))
+                                .accessibilityLabel(
+                                    "Commit \(commit.id.prefix(8)), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
+                                )
                         }
                     }
                 }
@@ -445,6 +551,10 @@ struct RepositoryLibraryView: View {
         guard let id = model.selectedLibraryRepositoryID else { return nil }
         return model.libraryRepositorySummaries[id]
     }
+
+    private var isLibraryEmpty: Bool {
+        model.recentRepositories.isEmpty && model.libraryFolders.isEmpty
+    }
 }
 
 private struct LibraryFolderRow: View {
@@ -460,6 +570,7 @@ private struct LibraryFolderRow: View {
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
             }
             Spacer()
             Text(folder.repositories.count, format: .number)
@@ -476,21 +587,26 @@ private struct RepositoryLibraryRow: View {
     let summary: RepositorySummary?
     let errorMessage: String?
     let isLoading: Bool
+    let showsPath: Bool
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Image(systemName: "folder")
                 .foregroundStyle(.secondary)
+                .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(repository.name)
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
-                Text(repository.rootURL.path)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if showsPath {
+                    Text(repository.rootURL.path)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
 
             Spacer()
@@ -501,8 +617,10 @@ private struct RepositoryLibraryRow: View {
                         .font(.caption.monospaced())
                         .lineLimit(1)
                     Text(summary.changes.isEmpty ? "Clean" : "\(summary.changes.count) changes")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(theme.colors.badgeBackground, in: .capsule)
                 }
             } else if errorMessage != nil {
                 Image(systemName: "exclamationmark.triangle")
@@ -528,5 +646,129 @@ private struct RepositoryLibraryRow: View {
             return "\(repository.name), unavailable, \(repository.rootURL.path)"
         }
         return "\(repository.name), reading status, \(repository.rootURL.path)"
+    }
+}
+
+private struct RepositoryHierarchyFolderRow: View {
+    let node: RepositoryHierarchyNode
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            Text(node.name)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+            Spacer()
+            Text(node.repositoryCount, format: .number)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityValue("\(node.name), folder, \(node.repositoryCount) Repositories")
+        .help(node.id.path)
+    }
+}
+
+struct RepositoryHierarchyNode: Equatable, Identifiable, Sendable {
+    let id: URL
+    let name: String
+    var children: [RepositoryHierarchyNode]?
+    let repository: RepositoryLocation?
+
+    var repositoryCount: Int {
+        repository == nil
+            ? children?.reduce(0) { $0 + $1.repositoryCount } ?? 0
+            : 1
+    }
+
+    static func make(
+        _ repositories: [RepositoryLocation],
+        relativeTo rootURL: URL
+    ) -> [RepositoryHierarchyNode] {
+        let rootURL = rootURL.standardizedFileURL
+        let rootComponents = rootURL.pathComponents
+        var nodes: [RepositoryHierarchyNode] = []
+
+        for repository in repositories {
+            let repositoryComponents = repository.rootURL.standardizedFileURL.pathComponents
+            guard repositoryComponents.starts(with: rootComponents) else { continue }
+            let relativeComponents = repositoryComponents.dropFirst(rootComponents.count)
+            insert(
+                repository,
+                below: relativeComponents.dropLast(),
+                parentURL: rootURL,
+                into: &nodes
+            )
+        }
+
+        sort(&nodes)
+        return nodes
+    }
+
+    private static func insert(
+        _ repository: RepositoryLocation,
+        below components: ArraySlice<String>,
+        parentURL: URL,
+        into nodes: inout [RepositoryHierarchyNode]
+    ) {
+        guard let component = components.first else {
+            guard !nodes.contains(where: { sameFileLocation($0.id, repository.id) }) else {
+                return
+            }
+            nodes.append(.init(
+                id: repository.id,
+                name: repository.name,
+                children: nil,
+                repository: repository
+            ))
+            return
+        }
+
+        let folderURL = parentURL
+            .appending(path: component, directoryHint: .isDirectory)
+            .standardizedFileURL
+        if let index = nodes.firstIndex(where: {
+            $0.repository == nil && sameFileLocation($0.id, folderURL)
+        }) {
+            var children = nodes[index].children ?? []
+            insert(
+                repository,
+                below: components.dropFirst(),
+                parentURL: folderURL,
+                into: &children
+            )
+            nodes[index].children = children
+        } else {
+            var children: [RepositoryHierarchyNode] = []
+            insert(
+                repository,
+                below: components.dropFirst(),
+                parentURL: folderURL,
+                into: &children
+            )
+            nodes.append(.init(
+                id: folderURL,
+                name: component,
+                children: children,
+                repository: nil
+            ))
+        }
+    }
+
+    private static func sort(_ nodes: inout [RepositoryHierarchyNode]) {
+        for index in nodes.indices where nodes[index].children != nil {
+            var children = nodes[index].children ?? []
+            sort(&children)
+            nodes[index].children = children
+        }
+        nodes.sort {
+            let comparison = $0.name.localizedStandardCompare($1.name)
+            if comparison == .orderedSame {
+                return $0.repository == nil && $1.repository != nil
+            }
+            return comparison == .orderedAscending
+        }
     }
 }
