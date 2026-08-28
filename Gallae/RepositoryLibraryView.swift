@@ -10,31 +10,31 @@ struct RepositoryLibraryView: View {
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
-        HSplitView {
-            libraryFolderColumn
-                .frame(
-                    minWidth: theme.metrics.libraryFolderMinimumWidth,
-                    idealWidth: theme.metrics.libraryFolderIdealWidth,
-                    maxHeight: .infinity
-                )
+        GeometryReader { proxy in
+            HSplitView {
+                libraryFolderColumn
+                    .frame(
+                        minWidth: theme.metrics.libraryFolderMinimumWidth,
+                        idealWidth: theme.metrics.libraryFolderIdealWidth
+                    )
+                    .frame(height: proxy.size.height)
 
-            repositoryColumn
-                .frame(
-                    minWidth: theme.metrics.repositoryListMinimumWidth,
-                    idealWidth: theme.metrics.repositoryListIdealWidth,
-                    maxHeight: .infinity
-                )
+                repositoryColumn
+                    .frame(
+                        minWidth: theme.metrics.repositoryListMinimumWidth,
+                        idealWidth: theme.metrics.repositoryListIdealWidth
+                    )
+                    .frame(height: proxy.size.height)
+                    .layoutPriority(1)
 
-            repositorySummaryColumn
-                .frame(
-                    minWidth: theme.metrics.repositorySummaryMinimumWidth,
-                    idealWidth: theme.metrics.repositorySummaryIdealWidth,
-                    maxHeight: .infinity
-                )
-        }
-        .task(id: model.selectedLibraryRepositoryID) {
-            guard let url = model.selectedLibraryRepository?.rootURL else { return }
-            await model.loadLibraryRepositorySummary(at: url)
+                repositorySummaryColumn
+                    .frame(
+                        minWidth: theme.metrics.repositorySummaryMinimumWidth,
+                        idealWidth: theme.metrics.repositorySummaryIdealWidth
+                    )
+                    .frame(height: proxy.size.height)
+                    .layoutPriority(1)
+            }
         }
         .task(id: selectedSummary?.rootURL) {
             guard let id = model.selectedLibraryRepositoryID else { return }
@@ -72,6 +72,7 @@ struct RepositoryLibraryView: View {
                             .foregroundStyle(.secondary)
                     }
                     .tag(RepositoryLibrarySource.recent)
+                    .accessibilityElement(children: .combine)
                     .accessibilityLabel("Recent Repositories, \(model.recentRepositories.count)")
                 }
 
@@ -139,7 +140,7 @@ struct RepositoryLibraryView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .help(failure.message)
+                    .help("\(failure.url.path)\n\(failure.message)")
             }
 
             Button("Remove Folder", role: .destructive) {
@@ -162,6 +163,7 @@ struct RepositoryLibraryView: View {
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .help(folder.url.path)
                     }
                 }
                 Spacer()
@@ -178,6 +180,7 @@ struct RepositoryLibraryView: View {
 
             Divider()
             repositoryListContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -186,13 +189,13 @@ struct RepositoryLibraryView: View {
         if model.selectedLibrarySource == .recent {
             if model.recentRepositories.isEmpty {
                 ContentUnavailableView {
-                    Label("No Recent Repositories", systemImage: "clock")
+                    Label("No Repositories Yet", systemImage: "clock")
                 } description: {
                     Text("Repositories you open will appear here.")
                 } actions: {
-                    Button("Open Repository…", action: chooseRepository)
+                    Button("Open…", action: chooseRepository)
                         .accessibilityLabel("Open Repository")
-                    Button("Add Library Folder…", action: chooseLibraryFolder)
+                    Button("Add Folder…", action: chooseLibraryFolder)
                         .accessibilityLabel("Add Library Folder")
                 }
             } else {
@@ -288,6 +291,9 @@ struct RepositoryLibraryView: View {
                 Task { await model.openLibraryRepository(at: repository.rootURL) }
             }
             .task(id: repository.id) {
+                guard model.selectedLibraryRepositoryID.map({
+                    sameFileLocation($0, repository.id)
+                }) != true else { return }
                 await model.loadLibraryRepositorySummary(at: repository.rootURL)
             }
         }
@@ -312,6 +318,9 @@ struct RepositoryLibraryView: View {
                     selectedRepositorySummary(repository)
                         .padding(16)
                 }
+                .task(id: repository.id) {
+                    await model.loadLibraryRepositorySummary(at: repository.rootURL)
+                }
 
                 Divider()
                 Button("Open Repository") {
@@ -330,6 +339,7 @@ struct RepositoryLibraryView: View {
                     systemImage: "folder",
                     description: Text("Selection updates this summary without opening a Workspace.")
                 )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -406,6 +416,7 @@ struct RepositoryLibraryView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
                                 .lineLimit(2)
+                                .help(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
                             Text("\(commit.id.prefix(8)) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
@@ -420,6 +431,9 @@ struct RepositoryLibraryView: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Try Again") {
+                    Task { await model.retryLibraryRepositoryActivity(at: repositoryID) }
+                }
             }
         } else {
             ProgressView("Reading recent activity…")
@@ -453,6 +467,7 @@ private struct LibraryFolderRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(folder.name), \(folder.repositories.count) Repositories, \(folder.url.path)")
+        .help(folder.url.path)
     }
 }
 
@@ -501,6 +516,7 @@ private struct RepositoryLibraryRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        .help(repository.rootURL.path)
     }
 
     private var accessibilityLabel: String {

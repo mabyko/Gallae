@@ -142,7 +142,7 @@ GallaeApp
 - 모든 실패 상태에 사용자가 실행할 수 있는 다음 행동이 있다.
 - 조회 동작이 Git 상태를 바꾸지 않는다.
 
-빈 Repository Library와 깨끗한 Repository Workspace의 세로 확장 결함은 수정했고, 변경이 있는 Workspace를 포함해 기본·최소·확대 창의 접근성 frame과 Library에서 Return으로 여는 경로를 확인했다. 픽셀 단위의 최종 시각 검수는 배포 전에 진행한다. 사용자 지정 애니메이션은 두지 않았다. 대량 경로는 임시 Library의 Repository 32개, 변경 파일 501개와 12,000행 diff fixture로 검증한다.
+빈 Repository Library와 깨끗한 Repository Workspace의 세로 확장 결함은 수정했고, 변경이 있는 Workspace를 포함해 기본·최소·확대 창의 접근성 frame을 확인했다. 실제 키 입력과 macOS 접근성 트리로 ⌘O·Esc, Return·이중 클릭, 방향키로 파일과 diff 전환, ⌘R 새로고침을 확인했고 Repository·경로·HEAD와 목록 행의 이름은 의미를 포함하며 중복해 읽히지 않는다. Finder가 전달한 폴더는 앱 실행 전과 실행 중 모두 같은 메인 윈도우에서 열리고, 유효하지 않은 폴더는 오류를 표시하면서 기존 Workspace를 유지하는 것을 확인했다. 탐색 중 취소 뒤 발견 결과 유지, 접근 불가 Library Folder의 재시도·재연결·제거, Recent Activity 실패의 재시도, 새로고침 실패 뒤 이전 Workspace 유지와 복구도 실제 상태로 확인했다. Light·Dark의 기본·최소 창은 실제 픽셀 캡처로 Library 세 열의 상단 정렬, 좁은 창의 빈 상태와 동작 노출, Changes 목록보다 diff에 더 넓은 면적을 두는 2열 균형을 확인했다. System은 현재 macOS Dark 설정을 그대로 따르며, 사용자 지정 애니메이션이 없어 Reduce Motion용 별도 분기 없이 표준 SwiftUI 동작을 따르는 것을 확인했다. 두 환경은 배포 전 최종 검수에서 다시 확인한다. 대량 경로는 임시 Library의 Repository 32개, 변경 파일 501개와 12,000행 diff fixture로 검증한다.
 
 공식 Git 저장소 `f78ce2f7b6`의 4,850개 파일에 500 commit 전 tree를 적용한 실제 fixture에서는 tracked 1,335개와 untracked 47개를 합쳐 변경 1,382개가 나왔다. 전체 diff는 약 7.1MB, 가장 큰 단일 파일 diff는 약 283KB였고 `RepositoryInspector`가 모든 파일을 19.8초에 읽는 동안 2MB 기본 한계에 걸린 파일은 없었다. 기본 2MB와 사용자 요청 시 16MB 확장 한계를 유지한다.
 

@@ -41,6 +41,7 @@
 		12000000000000000000000A /* RepositoryScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryScanner.swift; sourceTree = "<group>"; };
 		12000000000000000000000B /* RepositoryLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLibraryView.swift; sourceTree = "<group>"; };
 		12000000000000000000000C /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		12000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +75,7 @@
 		150000000000000000000002 /* Gallae */ = {
 			isa = PBXGroup;
 			children = (
+				12000000000000000000000D /* Info.plist */,
 				120000000000000000000001 /* GallaeApp.swift */,
 				120000000000000000000002 /* AppView.swift */,
 				120000000000000000000005 /* GallaeTheme.swift */,
@@ -286,6 +288,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Gallae/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Gallae for Git";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -309,6 +312,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Gallae/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Gallae for Git";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (

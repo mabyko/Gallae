@@ -39,13 +39,13 @@ struct GallaeTheme: Sendable {
             diffHunkBackground: .accentColor.opacity(0.08)
         ),
         metrics: .init(
-            libraryFolderMinimumWidth: 170,
+            libraryFolderMinimumWidth: 200,
             libraryFolderIdealWidth: 210,
             repositoryListMinimumWidth: 280,
             repositoryListIdealWidth: 380,
             repositorySummaryMinimumWidth: 230,
             repositorySummaryIdealWidth: 290,
-            changeListMinimumWidth: 260,
+            changeListMinimumWidth: 320,
             changeListIdealWidth: 320,
             diffLineNumberWidth: 44
         )

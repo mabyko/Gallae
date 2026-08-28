@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 import SwiftUI
 
@@ -10,12 +11,17 @@ struct RepositoryWorkspaceView: View {
             repositoryHeader
             Divider()
 
-            if model.repository?.changes.isEmpty == true {
-                ContentUnavailableView(
-                    "Working Tree Clean",
-                    systemImage: "checkmark.circle",
-                    description: Text("There are no staged, unstaged, or untracked files.")
-                )
+            if let repository = model.repository, repository.changes.isEmpty {
+                ContentUnavailableView {
+                    Label("Working Tree Clean", systemImage: "checkmark.circle")
+                } description: {
+                    Text("There are no staged, unstaged, or untracked files.")
+                } actions: {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([repository.rootURL])
+                    }
+                    .accessibilityHint("Open the Repository folder in Finder")
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let repository = model.repository {
                 HSplitView {
@@ -38,6 +44,7 @@ struct RepositoryWorkspaceView: View {
                         }
                     )
                     .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
                 }
             }
         }
@@ -52,19 +59,35 @@ struct RepositoryWorkspaceView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(repository.name)
                         .font(.largeTitle.weight(.semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(repository.name)
+                        .accessibilityLabel("Repository, \(repository.name)")
                     Text(repository.rootURL.path)
                         .font(.callout.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                         .textSelection(.enabled)
+                        .help(repository.rootURL.path)
+                        .accessibilityLabel("Repository path, \(repository.rootURL.path)")
                 }
 
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 8) {
                     Label(repository.head.label, systemImage: repository.head.systemImage)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(repository.head.label)
+                        .accessibilityLabel("HEAD, \(repository.head.label)")
                     if let upstream = repository.upstream {
                         Label(upstream.label, systemImage: "arrow.up.arrow.down")
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(upstream.label)
+                            .accessibilityLabel("Upstream, \(upstream.label)")
                     }
                     if repository.isUnborn {
                         Label("No commits yet", systemImage: "circle.dashed")
@@ -303,7 +326,6 @@ private struct RepositoryDiffNotice: View {
     let message: String
     let fileURL: URL?
     var primaryAction: (label: String, action: () -> Void)? = nil
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -316,7 +338,7 @@ private struct RepositoryDiffNotice: View {
             }
             if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
                 Button("Open File") {
-                    openURL(fileURL)
+                    NSWorkspace.shared.open(fileURL)
                 }
             }
         }

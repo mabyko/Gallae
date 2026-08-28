@@ -474,6 +474,32 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(store.restoreLastWorkspace())
     }
 
+    @MainActor
+    func testRetriesRecentActivityAfterRepositoryReturns() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        let movedURL = fixtureURL.appending(path: "repository-moved", directoryHint: .isDirectory)
+        try initializeRepository(at: repositoryURL)
+        try write("content\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        let model = AppModel()
+        let repository = RepositoryLocation(rootURL: repositoryURL)
+        model.libraryFolders = [.init(url: fixtureURL, repositories: [repository])]
+        model.selectLibrarySource(.folder(fixtureURL))
+        await model.loadLibraryRepositorySummary(at: repositoryURL)
+
+        try FileManager.default.moveItem(at: repositoryURL, to: movedURL)
+        await model.loadLibraryRepositoryActivity(at: repositoryURL)
+        XCTAssertNotNil(model.libraryRepositoryActivityErrors[repositoryURL])
+
+        try FileManager.default.moveItem(at: movedURL, to: repositoryURL)
+        await model.retryLibraryRepositoryActivity(at: repositoryURL)
+        XCTAssertNil(model.libraryRepositoryActivityErrors[repositoryURL])
+        XCTAssertEqual(model.libraryRepositoryActivities[repositoryURL]?.commitCount, 1)
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GallaeTests-\(UUID().uuidString)", directoryHint: .isDirectory)

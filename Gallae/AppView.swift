@@ -3,12 +3,15 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct AppView: View {
+    private enum FolderSelection {
+        case repository(replacing: URL?)
+        case libraryFolder(replacing: URL?)
+    }
+
     @Environment(\.scenePhase) private var scenePhase
     @State private var model = AppModel()
-    @State private var isChoosingRepository = false
-    @State private var isChoosingLibraryFolder = false
-    @State private var reconnectingRepositoryID: URL?
-    @State private var reconnectingLibraryFolderID: URL?
+    @State private var folderSelection: FolderSelection?
+    @State private var isFolderImporterPresented = false
 
     var body: some View {
         Group {
@@ -49,7 +52,6 @@ struct AppView: View {
                 Button("Open Repository…", systemImage: "folder") {
                     chooseRepository()
                 }
-                .keyboardShortcut("o")
                 .accessibilityHint("Choose a local Git working tree")
 
                 if model.screen == .workspace {
@@ -63,44 +65,33 @@ struct AppView: View {
             }
         }
         .fileImporter(
-            isPresented: $isChoosingRepository,
+            isPresented: $isFolderImporterPresented,
             allowedContentTypes: [.directory],
             allowsMultipleSelection: false
         ) { result in
+            guard let folderSelection else { return }
+            self.folderSelection = nil
+
             switch result {
             case .success(let urls):
-                let replacedID = reconnectingRepositoryID
-                reconnectingRepositoryID = nil
                 guard let url = urls.first else { return }
-                Task {
+                switch folderSelection {
+                case .repository(let replacedID):
+                    Task {
+                        if let replacedID {
+                            await model.reconnectRecentRepository(replacedID, to: url)
+                        } else {
+                            await model.openRepository(at: url)
+                        }
+                    }
+                case .libraryFolder(let replacedID):
                     if let replacedID {
-                        await model.reconnectRecentRepository(replacedID, to: url)
+                        model.reconnectLibraryFolder(replacedID, to: url)
                     } else {
-                        await model.openRepository(at: url)
+                        model.addLibraryFolder(at: url)
                     }
                 }
             case .failure(let error):
-                reconnectingRepositoryID = nil
-                model.present(error)
-            }
-        }
-        .fileImporter(
-            isPresented: $isChoosingLibraryFolder,
-            allowedContentTypes: [.directory],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                let replacedID = reconnectingLibraryFolderID
-                reconnectingLibraryFolderID = nil
-                guard let url = urls.first else { return }
-                if let replacedID {
-                    model.reconnectLibraryFolder(replacedID, to: url)
-                } else {
-                    model.addLibraryFolder(at: url)
-                }
-            case .failure(let error):
-                reconnectingLibraryFolderID = nil
                 model.present(error)
             }
         }
@@ -118,6 +109,12 @@ struct AppView: View {
         .task {
             await model.restoreState()
         }
+        .onOpenURL { url in
+            Task { await model.openRepository(at: url) }
+        }
+        .focusedSceneValue(\.openRepository) {
+            chooseRepository()
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, model.repository != nil else { return }
             Task { await model.refreshRepository() }
@@ -125,13 +122,13 @@ struct AppView: View {
     }
 
     private func chooseRepository(replacing id: URL? = nil) {
-        reconnectingRepositoryID = id
-        isChoosingRepository = true
+        folderSelection = .repository(replacing: id)
+        isFolderImporterPresented = true
     }
 
     private func chooseLibraryFolder(replacing id: URL? = nil) {
-        reconnectingLibraryFolderID = id
-        isChoosingLibraryFolder = true
+        folderSelection = .libraryFolder(replacing: id)
+        isFolderImporterPresented = true
     }
 }
 
@@ -404,6 +401,12 @@ final class AppModel {
             }
             libraryRepositoryActivityErrors[url] = Self.message(for: error)
         }
+    }
+
+    func retryLibraryRepositoryActivity(at url: URL) async {
+        libraryRepositoryActivityErrors[url] = nil
+        libraryRepositoryActivities[url] = nil
+        await loadLibraryRepositoryActivity(at: url)
     }
 
     func openLibraryRepository(at url: URL) async {
