@@ -120,6 +120,7 @@ GallaeApp
 - 발견 결과를 즉시 보여 주고 탐색을 취소할 수 있다.
 - 일부 경로의 실패가 전체 결과를 지우지 않는다.
 - 선택은 요약만 바꾸며 Return, 이중 클릭 또는 Open 명령이 같은 윈도우를 Workspace로 전환한다. Workspace의 Library 명령은 같은 창을 Repository Library로 되돌린다.
+- 같은 앱 실행 안에서 Workspace와 Library를 오가면 선택과 Library Folder 계층의 펼침 상태를 유지하고, 선택 강조가 다시 보이는 Repository 목록으로 키보드 포커스를 되돌린다.
 - Library Folder 결과는 실제 상대 경로 계층으로 보여 주며, 폴더 행은 disclosure 또는 이중 클릭으로 접고 펼친다. 중간 폴더와 Repository는 서로 다른 아이콘으로 구분하고, 중간 폴더를 선택하면 경로와 하위 Repository 수만 요약한다. Recent는 최근 순서의 평면 목록을 유지한다. Recent 항목은 디스크의 Repository를 바꾸지 않고 목록에서 제거할 수 있다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
 
 ### 1B-2 · 복원 — 완료

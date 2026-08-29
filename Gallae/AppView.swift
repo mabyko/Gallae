@@ -13,6 +13,7 @@ struct AppView: View {
     @State private var model = AppModel()
     @State private var folderSelection: FolderSelection?
     @State private var isFolderImporterPresented = false
+    @State private var expandedLibraryHierarchyFolderIDs: Set<URL> = []
 
     var body: some View {
         Group {
@@ -24,7 +25,8 @@ struct AppView: View {
                     chooseFolder: { chooseFolder() },
                     chooseLibraryFolder: { chooseLibraryFolder() },
                     reconnectLibraryFolder: { url in chooseLibraryFolder(replacing: url) },
-                    reconnectRepository: { url in chooseRepository(replacing: url) }
+                    reconnectRepository: { url in chooseRepository(replacing: url) },
+                    expandedHierarchyFolderIDs: $expandedLibraryHierarchyFolderIDs
                 )
             }
         }

@@ -7,8 +7,9 @@ struct RepositoryLibraryView: View {
     let chooseLibraryFolder: () -> Void
     let reconnectLibraryFolder: (URL) -> Void
     let reconnectRepository: (URL) -> Void
+    @Binding var expandedHierarchyFolderIDs: Set<URL>
     @State private var selectedHierarchyNodeID: URL?
-    @State private var expandedHierarchyFolderIDs: Set<URL> = []
+    @FocusState private var isRepositoryListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -56,6 +57,15 @@ struct RepositoryLibraryView: View {
         }
         .onChange(of: model.selectedLibraryFolderID) {
             selectedHierarchyNodeID = model.selectedLibraryRepositoryID
+        }
+        .onChange(of: model.selectedLibraryRepositoryID) {
+            selectedHierarchyNodeID = model.selectedLibraryRepositoryID
+        }
+        .task {
+            selectedHierarchyNodeID = nil
+            await Task.yield()
+            selectedHierarchyNodeID = model.selectedLibraryRepositoryID
+            isRepositoryListFocused = model.selectedLibraryRepositoryID != nil
         }
     }
 
@@ -367,6 +377,7 @@ struct RepositoryLibraryView: View {
             .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
         }
         .listStyle(.plain)
+        .focused($isRepositoryListFocused)
         .contextMenu(forSelectionType: URL.self) { selection in
             if let repositoryID = selection.first {
                 Button("Remove from Recent", systemImage: "minus.circle", role: .destructive) {
@@ -387,7 +398,7 @@ struct RepositoryLibraryView: View {
         let nodes = RepositoryHierarchyNode.make(repositories, relativeTo: folderURL)
         return List(
             selection: Binding(
-                get: { selectedHierarchyNodeID ?? model.selectedLibraryRepositoryID },
+                get: { selectedHierarchyNodeID },
                 set: { id in
                     selectedHierarchyNodeID = id
                     guard let id else {
@@ -406,6 +417,7 @@ struct RepositoryLibraryView: View {
             }
         }
         .listStyle(.plain)
+        .focused($isRepositoryListFocused)
         .contextMenu(forSelectionType: URL.self) { selection in
             if
                 let id = selection.first,
