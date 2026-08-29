@@ -108,6 +108,18 @@ struct RepositoryLibraryView: View {
                     ForEach(model.libraryFolders) { folder in
                         LibraryFolderRow(folder: folder)
                             .tag(RepositoryLibrarySource.folder(folder.id))
+                            .contextMenu {
+                                Button(
+                                    "Remove \(folder.name) from Library",
+                                    systemImage: "folder.badge.minus",
+                                    role: .destructive
+                                ) {
+                                    model.removeLibraryFolder(folder.id)
+                                }
+                                .accessibilityHint(
+                                    "Remove this saved Library Folder without changing files on disk"
+                                )
+                            }
                     }
                 }
             }
@@ -159,6 +171,25 @@ struct RepositoryLibraryView: View {
 
                 Spacer(minLength: 8)
 
+                Menu {
+                    Button(
+                        "Remove \(folder.name) from Library",
+                        systemImage: "folder.badge.minus",
+                        role: .destructive
+                    ) {
+                        model.removeLibraryFolder(folder.id)
+                    }
+                    .accessibilityHint(
+                        "Remove this saved Library Folder without changing files on disk"
+                    )
+                } label: {
+                    Label("Folder Actions", systemImage: "ellipsis")
+                }
+                .labelStyle(.iconOnly)
+                .menuStyle(.button)
+                .controlSize(.small)
+                .help("Folder Actions")
+
                 Group {
                     switch folder.scanState {
                     case .scanning:
@@ -174,18 +205,6 @@ struct RepositoryLibraryView: View {
                     case .idle, .failed:
                         EmptyView()
                     }
-
-                    Button(
-                        "Remove Folder",
-                        systemImage: "folder.badge.minus",
-                        role: .destructive
-                    ) {
-                        model.removeLibraryFolder(folder.id)
-                    }
-                    .help("Remove Folder")
-                    .accessibilityHint(
-                        "Remove this saved Library Folder without changing files on disk"
-                    )
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.bordered)
