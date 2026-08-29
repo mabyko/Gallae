@@ -158,31 +158,32 @@ struct RepositoryInspector: Sendable {
             throw RepositoryInspectionError.gitUnavailable
         }
 
-        let bareResult = try runGit(["-C", selectedURL.path, "rev-parse", "--is-bare-repository"])
-        guard bareResult.status == 0 else {
-            throw RepositoryInspectionError.notWorkingTree(bareResult.standardError)
-        }
+        let rootResult = try runGit([
+            "-C", selectedURL.path,
+            "rev-parse", "--is-bare-repository", "--show-toplevel"
+        ])
+        let lines = text(from: rootResult.standardOutput)
+            .split(whereSeparator: \Character.isNewline)
 
-        switch text(from: bareResult.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines) {
+        switch lines.first {
         case "true":
             throw RepositoryInspectionError.bareRepository
         case "false":
             break
         default:
+            guard rootResult.status == 0 else {
+                throw RepositoryInspectionError.notWorkingTree(rootResult.standardError)
+            }
             throw RepositoryInspectionError.invalidGitOutput
         }
-
-        let rootResult = try runGit(["-C", selectedURL.path, "rev-parse", "--show-toplevel"])
         guard rootResult.status == 0 else {
             throw RepositoryInspectionError.notWorkingTree(rootResult.standardError)
         }
-
-        let rootPath = line(from: rootResult.standardOutput)
-        guard !rootPath.isEmpty else {
+        guard lines.count == 2 else {
             throw RepositoryInspectionError.invalidGitOutput
         }
 
-        return URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        return URL(fileURLWithPath: String(lines[1]), isDirectory: true).standardizedFileURL
     }
 
     private static func activitySynchronously(

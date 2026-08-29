@@ -36,10 +36,12 @@ struct RepositoryLibraryFolder: Equatable, Identifiable, Sendable {
 }
 
 struct RepositoryScanner: Sendable {
+    private static let maximumConcurrentValidations = 4
+
     func scan(in rootURL: URL) -> AsyncStream<RepositoryScanEvent> {
         AsyncStream { continuation in
             let task = Task.detached(priority: .utility) {
-                Self.scanSynchronously(in: rootURL.standardizedFileURL, continuation: continuation)
+                await Self.scan(in: rootURL.standardizedFileURL, continuation: continuation)
             }
             continuation.onTermination = { @Sendable _ in
                 task.cancel()
@@ -47,11 +49,33 @@ struct RepositoryScanner: Sendable {
         }
     }
 
-    private static func scanSynchronously(
+    private static func scan(
         in rootURL: URL,
         continuation: AsyncStream<RepositoryScanEvent>.Continuation
-    ) {
+    ) async {
         defer { continuation.finish() }
+
+        var scopes = [RepositoryScanScope(url: rootURL, includesRoot: true)]
+        var scopeIndex = 0
+        while !isCurrentTaskCancelled, scopeIndex < scopes.count {
+            let scope = scopes[scopeIndex]
+            scopeIndex += 1
+            let candidates = collectCandidates(in: scope, continuation: continuation)
+            let descendantRoots = await validateCandidates(
+                candidates,
+                continuation: continuation
+            )
+            scopes.append(contentsOf: descendantRoots.map {
+                RepositoryScanScope(url: $0, includesRoot: false)
+            })
+        }
+    }
+
+    private static func collectCandidates(
+        in scope: RepositoryScanScope,
+        continuation: AsyncStream<RepositoryScanEvent>.Continuation
+    ) -> [URL] {
+        let rootURL = scope.url
 
         let keys: Set<URLResourceKey> = [
             .isDirectoryKey,
@@ -60,19 +84,23 @@ struct RepositoryScanner: Sendable {
             .isSymbolicLinkKey
         ]
 
-        do {
-            switch try disposition(of: rootURL, resourceKeys: keys) {
-            case .repository(let repositoryURL):
-                continuation.yield(.found(.init(rootURL: repositoryURL)))
-                return
-            case .skip:
-                return
-            case .descend:
-                break
+        if scope.includesRoot {
+            do {
+                switch try disposition(of: rootURL, resourceKeys: keys) {
+                case .candidate:
+                    return [rootURL]
+                case .skip:
+                    return []
+                case .descend:
+                    break
+                }
+            } catch {
+                continuation.yield(.failed(.init(
+                    url: rootURL,
+                    message: error.localizedDescription
+                )))
+                return []
             }
-        } catch {
-            continuation.yield(.failed(.init(url: rootURL, message: error.localizedDescription)))
-            return
         }
 
         guard let enumerator = FileManager.default.enumerator(
@@ -89,15 +117,16 @@ struct RepositoryScanner: Sendable {
                 url: rootURL,
                 message: "The Library Folder could not be read."
             )))
-            return
+            return []
         }
 
+        var candidates: [URL] = []
         while !isCurrentTaskCancelled, let url = enumerator.nextObject() as? URL {
             do {
                 switch try disposition(of: url, resourceKeys: keys) {
-                case .repository(let repositoryURL):
+                case .candidate:
                     enumerator.skipDescendants()
-                    continuation.yield(.found(.init(rootURL: repositoryURL)))
+                    candidates.append(url)
                 case .skip:
                     enumerator.skipDescendants()
                 case .descend:
@@ -107,6 +136,74 @@ struct RepositoryScanner: Sendable {
                 enumerator.skipDescendants()
                 continuation.yield(.failed(.init(url: url, message: error.localizedDescription)))
             }
+        }
+        return candidates
+    }
+
+    private static func validateCandidates(
+        _ candidates: [URL],
+        continuation: AsyncStream<RepositoryScanEvent>.Continuation
+    ) async -> [URL] {
+        guard !candidates.isEmpty, !isCurrentTaskCancelled else { return [] }
+
+        var descendantRoots: [URL] = []
+        await withTaskGroup(of: RepositoryCandidateValidation.self) { group in
+            var candidateIndex = 0
+            while candidateIndex < min(maximumConcurrentValidations, candidates.count) {
+                let candidate = candidates[candidateIndex]
+                candidateIndex += 1
+                group.addTask(priority: .utility) {
+                    validateCandidate(at: candidate)
+                }
+            }
+
+            while let validation = await group.next() {
+                if isCurrentTaskCancelled {
+                    group.cancelAll()
+                    break
+                }
+
+                switch validation {
+                case .found(let repositoryURL):
+                    continuation.yield(.found(.init(rootURL: repositoryURL)))
+                case .descend(let url):
+                    descendantRoots.append(url)
+                case .skip:
+                    break
+                case .failed(let failure):
+                    continuation.yield(.failed(failure))
+                }
+
+                if candidateIndex < candidates.count {
+                    let candidate = candidates[candidateIndex]
+                    candidateIndex += 1
+                    group.addTask(priority: .utility) {
+                        validateCandidate(at: candidate)
+                    }
+                }
+            }
+        }
+        return descendantRoots
+    }
+
+    private static func validateCandidate(at url: URL) -> RepositoryCandidateValidation {
+        do {
+            let rootURL = try RepositoryInspector.workingTreeRoot(at: url)
+            guard rootURL.standardizedFileURL == url.standardizedFileURL else {
+                return .descend(url)
+            }
+            return .found(rootURL)
+        } catch let error as RepositoryInspectionError {
+            switch error {
+            case .bareRepository:
+                return .skip
+            case .notWorkingTree:
+                return .descend(url)
+            default:
+                return .failed(.init(url: url, message: error.localizedDescription))
+            }
+        } catch {
+            return .failed(.init(url: url, message: error.localizedDescription))
         }
     }
 
@@ -118,23 +215,7 @@ struct RepositoryScanner: Sendable {
         guard values.isDirectory == true else { return .skip }
         guard values.isSymbolicLink != true, values.isPackage != true else { return .skip }
         guard isPotentialRepository(at: url) else { return .descend }
-
-        do {
-            let rootURL = try RepositoryInspector.workingTreeRoot(at: url)
-            guard rootURL.standardizedFileURL == url.standardizedFileURL else {
-                return .descend
-            }
-            return .repository(rootURL)
-        } catch let error as RepositoryInspectionError {
-            switch error {
-            case .bareRepository:
-                return .skip
-            case .notWorkingTree:
-                return .descend
-            default:
-                throw error
-            }
-        }
+        return .candidate
     }
 
     static func hasRepositoryMarker(at url: URL) -> Bool {
@@ -158,7 +239,19 @@ struct RepositoryScanner: Sendable {
 }
 
 private enum DirectoryDisposition {
-    case repository(URL)
+    case candidate
     case skip
     case descend
+}
+
+private struct RepositoryScanScope: Sendable {
+    let url: URL
+    let includesRoot: Bool
+}
+
+private enum RepositoryCandidateValidation: Sendable {
+    case found(URL)
+    case descend(URL)
+    case skip
+    case failed(RepositoryScanFailure)
 }

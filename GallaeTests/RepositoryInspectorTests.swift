@@ -479,6 +479,49 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testRescanKeepsExistingResultsUntilItRemovesMissingRepositories() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+        let libraryURL = fixtureURL.appending(path: "Library", directoryHint: .isDirectory)
+        let firstRepositoryURL = libraryURL.appending(path: "First", directoryHint: .isDirectory)
+        let removedRepositoryURL = libraryURL.appending(path: "Removed", directoryHint: .isDirectory)
+        try initializeRepository(at: firstRepositoryURL)
+        try initializeRepository(at: removedRepositoryURL)
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        defer { model.cancelLibraryScan() }
+
+        model.addLibraryFolder(at: libraryURL)
+        guard await waitForLibraryScan(in: model) else {
+            return XCTFail("Initial Library scan timed out")
+        }
+        XCTAssertEqual(
+            Set(model.selectedLibraryFolder?.repositories.map(\.rootURL) ?? []),
+            Set([firstRepositoryURL, removedRepositoryURL].map(\.standardizedFileURL))
+        )
+
+        model.selectLibraryRepository(removedRepositoryURL)
+        try FileManager.default.removeItem(at: removedRepositoryURL)
+        model.rescanSelectedLibraryFolder()
+
+        XCTAssertEqual(model.selectedLibraryFolder?.scanState, .scanning)
+        XCTAssertEqual(model.selectedLibraryFolder?.repositories.count, 2)
+        XCTAssertEqual(model.selectedLibraryRepositoryID, removedRepositoryURL.standardizedFileURL)
+
+        guard await waitForLibraryScan(in: model) else {
+            return XCTFail("Repeated Library scan timed out")
+        }
+        XCTAssertEqual(
+            model.selectedLibraryFolder?.repositories.map(\.rootURL),
+            [firstRepositoryURL.standardizedFileURL]
+        )
+        XCTAssertEqual(model.selectedLibraryRepositoryID, firstRepositoryURL.standardizedFileURL)
+    }
+
+    @MainActor
     func testRestoresLibraryRecentAndFreshWorkspaceState() async throws {
         let fixtureURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixtureURL) }
@@ -586,6 +629,18 @@ final class RepositoryInspectorTests: XCTestCase {
             .appending(path: "GallaeTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    @MainActor
+    private func waitForLibraryScan(in model: AppModel) async -> Bool {
+        for _ in 0..<500 {
+            guard let folder = model.selectedLibraryFolder else { return false }
+            if case .completed = folder.scanState {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
     }
 
     private func initializeRepository(at url: URL) throws {

@@ -702,17 +702,9 @@ final class AppModel {
         guard !folderIDs.isEmpty else { return }
 
         for folderID in folderIDs {
-            guard let folder = libraryFolders.first(where: { $0.id == folderID }) else { continue }
-            let previousRepositories = folder.repositories
-
             updateLibraryFolder(id: folderID) { folder in
-                folder.repositories = []
                 folder.scanState = .scanning
                 folder.firstFailure = nil
-            }
-            discardUnusedCaches(for: previousRepositories)
-            if selectedLibraryFolderID == folderID {
-                selectedLibraryRepositoryID = nil
             }
         }
 
@@ -737,12 +729,18 @@ final class AppModel {
     private func consumeScan(folderID: URL, generation: Int) async {
         var partialFailureCount = 0
         var rootFailureMessage: String?
+        var foundRepositories: [RepositoryLocation] = []
 
         for await event in scanner.scan(in: folderID) {
             guard !Task.isCancelled, generation == scanGeneration else { return }
 
             switch event {
             case .found(let repository):
+                if !foundRepositories.contains(where: {
+                    sameFileLocation($0.id, repository.id)
+                }) {
+                    foundRepositories.append(repository)
+                }
                 updateLibraryFolder(id: folderID) { folder in
                     guard !folder.repositories.contains(where: {
                         sameFileLocation($0.id, repository.id)
@@ -767,11 +765,39 @@ final class AppModel {
         }
 
         guard !Task.isCancelled, generation == scanGeneration else { return }
+        let repositoriesBeforeReconciliation = libraryFolders
+            .first(where: { sameFileLocation($0.id, folderID) })?
+            .repositories ?? []
+        let shouldReconcile = rootFailureMessage == nil || !foundRepositories.isEmpty
+        if shouldReconcile {
+            foundRepositories.sort {
+                $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
+            }
+        }
         updateLibraryFolder(id: folderID) { folder in
-            if let rootFailureMessage, folder.repositories.isEmpty {
+            if shouldReconcile {
+                folder.repositories = foundRepositories
+            }
+            if let rootFailureMessage, foundRepositories.isEmpty {
                 folder.scanState = .failed(rootFailureMessage)
             } else {
                 folder.scanState = .completed(partialFailureCount: partialFailureCount)
+            }
+        }
+        if shouldReconcile {
+            let removedRepositories = repositoriesBeforeReconciliation.filter { repository in
+                !foundRepositories.contains {
+                    sameFileLocation($0.id, repository.id)
+                }
+            }
+            discardUnusedCaches(for: removedRepositories)
+            if selectedLibraryFolderID.map({ sameFileLocation($0, folderID) }) == true,
+               selectedLibraryRepositoryID.map({ selectedID in
+                   !foundRepositories.contains {
+                       sameFileLocation($0.id, selectedID)
+                   }
+               }) != false {
+                selectedLibraryRepositoryID = foundRepositories.first?.id
             }
         }
     }

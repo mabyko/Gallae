@@ -119,6 +119,7 @@ GallaeApp
 - 유효한 Repository를 찾으면 그 하위 탐색을 멈춘다.
 - 발견 결과를 즉시 보여 주고 탐색을 취소할 수 있다.
 - 일부 경로의 실패가 전체 결과를 지우지 않는다.
+- Scan Again은 기존 결과와 선택을 유지하고, 완료되면 사라진 Repository를 목록에서 정리한다.
 - 선택은 요약만 바꾸며 Return, 이중 클릭 또는 Open 명령이 같은 윈도우를 Workspace로 전환한다. Workspace의 Library 명령은 같은 창을 Repository Library로 되돌린다.
 - 같은 앱 실행 안에서 Workspace와 Library를 오가면 선택과 Library Folder 계층의 펼침 상태를 유지하고, 선택 강조가 다시 보이는 Repository 목록으로 키보드 포커스를 되돌린다.
 - Library Folder 결과는 실제 상대 경로 계층으로 보여 주며, 폴더 행은 disclosure 또는 이중 클릭으로 접고 펼친다. 중간 폴더와 Repository는 서로 다른 아이콘으로 구분하고, 중간 폴더를 선택하면 경로와 하위 Repository 수만 요약한다. Recent는 최근 순서의 평면 목록을 유지한다. Recent 항목은 디스크의 Repository를 바꾸지 않고 목록에서 제거할 수 있다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
@@ -147,6 +148,8 @@ GallaeApp
 - 조회 동작이 Git 상태를 바꾸지 않는다.
 
 빈 Repository Library와 깨끗한 Repository Workspace의 세로 확장 결함은 수정했고, 변경이 있는 Workspace를 포함해 기본·최소·확대 창의 접근성 frame을 확인했다. 실제 키 입력과 macOS 접근성 트리로 ⌘O·Esc, Return·이중 클릭, 방향키로 파일과 diff 전환, ⌘R 새로고침을 확인했고 Repository·경로·HEAD와 목록 행의 이름은 의미를 포함하며 중복해 읽히지 않는다. Finder가 전달한 폴더는 앱 실행 전과 실행 중 모두 같은 메인 윈도우에서 열리고, 유효하지 않은 폴더는 오류를 표시하면서 기존 Workspace를 유지하는 것을 확인했다. 탐색 중 취소 뒤 발견 결과 유지, 접근 불가 Library Folder의 재시도·재연결·제거, Recent Activity 실패의 재시도, 새로고침 실패 뒤 이전 Workspace 유지와 복구도 실제 상태로 확인했다. Light·Dark의 기본·최소 창은 실제 픽셀 캡처로 Library 세 열의 상단 정렬, 좁은 창의 빈 상태와 동작 노출, Changes 목록보다 diff에 더 넓은 면적을 두는 2열 균형을 확인했다. System은 현재 macOS Dark 설정을 그대로 따르며, 사용자 지정 애니메이션이 없어 Reduce Motion용 별도 분기 없이 표준 SwiftUI 동작을 따르는 것을 확인했다. 두 환경은 배포 전 최종 검수에서 다시 확인한다. 대량 경로는 임시 Library의 Repository 32개, 변경 파일 501개와 12,000행 diff fixture로 검증한다.
+
+실제 53개 Repository Library의 전체 탐색은 Repository당 Git 검증을 한 번으로 줄이고 최대 4개씩 실행한 뒤 3회 0.20~0.27초로 측정했다.
 
 공식 Git 저장소 `f78ce2f7b6`의 4,850개 파일에 500 commit 전 tree를 적용한 실제 fixture에서는 tracked 1,335개와 untracked 47개를 합쳐 변경 1,382개가 나왔다. 전체 diff는 약 7.1MB, 가장 큰 단일 파일 diff는 약 283KB였고 `RepositoryInspector`가 모든 파일을 19.8초에 읽는 동안 2MB 기본 한계에 걸린 파일은 없었다. 기본 2MB와 사용자 요청 시 16MB 확장 한계를 유지한다.
 
