@@ -3,10 +3,12 @@ import SwiftUI
 
 struct RepositoryLibraryView: View {
     @Bindable var model: AppModel
+    let chooseFolder: () -> Void
     let chooseLibraryFolder: () -> Void
     let reconnectLibraryFolder: (URL) -> Void
-    let chooseRepository: () -> Void
     let reconnectRepository: (URL) -> Void
+    @State private var selectedHierarchyNodeID: URL?
+    @State private var expandedHierarchyFolderIDs: Set<URL> = []
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -52,6 +54,9 @@ struct RepositoryLibraryView: View {
             guard let id = model.selectedLibraryRepositoryID else { return }
             await model.loadLibraryRepositoryActivity(at: id)
         }
+        .onChange(of: model.selectedLibraryFolderID) {
+            selectedHierarchyNodeID = model.selectedLibraryRepositoryID
+        }
     }
 
     private var libraryFolderColumn: some View {
@@ -65,10 +70,6 @@ struct RepositoryLibraryView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Add Library Folder", systemImage: "plus", action: chooseLibraryFolder)
-                    .labelStyle(.iconOnly)
-                    .accessibilityLabel("Add Library Folder")
-                    .help("Add Library Folder")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -117,51 +118,87 @@ struct RepositoryLibraryView: View {
         ContentUnavailableView {
             Label("Start with a Repository", systemImage: "folder.badge.plus")
         } description: {
-            Text("Open a Git working tree directly, or add a Library Folder to find Repositories.")
+            Text("Choose a Repository to open it, or a parent folder to add it to the Library.")
         } actions: {
-            Button("Open Repository…", action: chooseRepository)
+            Button("Choose Folder…", action: chooseFolder)
                 .buttonStyle(.borderedProminent)
-                .accessibilityLabel("Open Repository")
-            Button("Add Library Folder…", action: chooseLibraryFolder)
-                .accessibilityLabel("Add Library Folder")
+                .accessibilityHint(
+                    "Open a Git Repository, or add the selected folder to the Library"
+                )
         }
     }
 
     @ViewBuilder
     private func scanStatus(for folder: RepositoryLibraryFolder) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            switch folder.scanState {
-            case .idle:
-                Text("Not scanned")
-                    .foregroundStyle(.secondary)
-            case .scanning:
-                Text("Scanning · \(folder.repositories.count) found")
-                Button("Cancel Scan") {
-                    model.cancelLibraryScan()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                switch folder.scanState {
+                case .idle:
+                    Text("Not scanned")
+                        .foregroundStyle(.secondary)
+                case .scanning:
+                    Text("Scanning · \(folder.repositories.count) found")
+                case .completed:
+                    Text("\(folder.repositories.count) Repositories")
+                case .cancelled:
+                    Text("Stopped · \(folder.repositories.count) found")
+                case .failed:
+                    Label("Scan Failed", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(theme.colors.statusConflict)
                 }
-            case .completed(let partialFailureCount):
-                Text("\(folder.repositories.count) Repositories")
-                if partialFailureCount > 0 {
-                    Label(
-                        "Skipped \(partialFailureCount) unreadable locations",
-                        systemImage: "exclamationmark.triangle"
+
+                Spacer(minLength: 8)
+
+                Group {
+                    switch folder.scanState {
+                    case .scanning:
+                        Button("Cancel Scan", systemImage: "xmark") {
+                            model.cancelLibraryScan()
+                        }
+                        .help("Cancel Scan")
+                    case .completed, .cancelled:
+                        Button("Scan Again", systemImage: "arrow.clockwise") {
+                            model.rescanSelectedLibraryFolder()
+                        }
+                        .help("Scan Again")
+                    case .idle, .failed:
+                        EmptyView()
+                    }
+
+                    Button(
+                        "Remove Folder",
+                        systemImage: "folder.badge.minus",
+                        role: .destructive
+                    ) {
+                        model.removeLibraryFolder(folder.id)
+                    }
+                    .help("Remove Folder")
+                    .accessibilityHint(
+                        "Remove this saved Library Folder without changing files on disk"
                     )
-                    .foregroundStyle(theme.colors.statusConflict)
                 }
-                Button("Scan Again") {
-                    model.rescanSelectedLibraryFolder()
-                }
-            case .cancelled:
-                Text("Scan stopped · \(folder.repositories.count) found")
-                Button("Scan Again") {
-                    model.rescanSelectedLibraryFolder()
-                }
-            case .failed(let message):
-                Label("Couldn’t Scan Folder", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(theme.colors.statusConflict)
+                .labelStyle(.iconOnly)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .font(.caption.weight(.medium))
+
+            if case .failed(let message) = folder.scanState {
                 Text(message)
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .help(message)
+            }
+
+            if case .completed(let partialFailureCount) = folder.scanState,
+               partialFailureCount > 0 {
+                Label(
+                    "Skipped \(partialFailureCount) unreadable locations",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption2)
+                .foregroundStyle(theme.colors.statusConflict)
             }
 
             if let failure = folder.firstFailure,
@@ -173,11 +210,6 @@ struct RepositoryLibraryView: View {
                     .lineLimit(2)
                     .help("\(failure.url.path)\n\(failure.message)")
             }
-
-            Button("Remove Folder", role: .destructive) {
-                model.removeLibraryFolder(folder.id)
-            }
-            .accessibilityHint("Remove this saved Library Folder without changing files on disk")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
@@ -226,12 +258,12 @@ struct RepositoryLibraryView: View {
                 ContentUnavailableView {
                     Label("No Repositories Yet", systemImage: "clock")
                 } description: {
-                    Text("Repositories you open will appear here.")
+                    Text("Choose a Repository to open it, or a parent folder to add it to the Library.")
                 } actions: {
-                    Button("Open…", action: chooseRepository)
-                        .accessibilityLabel("Open Repository")
-                    Button("Add Folder…", action: chooseLibraryFolder)
-                        .accessibilityLabel("Add Library Folder")
+                    Button("Choose Folder…", action: chooseFolder)
+                        .accessibilityHint(
+                            "Open a Git Repository, or add the selected folder to the Library"
+                        )
                 }
             } else {
                 repositoryList(model.recentRepositories)
@@ -296,12 +328,12 @@ struct RepositoryLibraryView: View {
             ContentUnavailableView {
                 Label("Choose a Library Folder", systemImage: "sidebar.left")
             } description: {
-                Text("Select a registered folder or add a new one.")
+                Text("Select a registered folder or choose a new folder.")
             } actions: {
-                Button("Add Folder…", action: chooseLibraryFolder)
-                    .accessibilityLabel("Add Library Folder")
-                Button("Open Repository…", action: chooseRepository)
-                    .accessibilityLabel("Open Repository")
+                Button("Choose Folder…", action: chooseFolder)
+                    .accessibilityHint(
+                        "Open a Git Repository, or add the selected folder to the Library"
+                    )
             }
         }
     }
@@ -323,8 +355,8 @@ struct RepositoryLibraryView: View {
             )
             .tag(repository.id)
             .contentShape(.rect)
-            .onTapGesture(count: 2) {
-                Task { await model.openLibraryRepository(at: repository.rootURL) }
+            .accessibilityAction(named: "Remove from Recent") {
+                model.removeRecentRepository(repository.id)
             }
             .task(id: repository.id) {
                 guard model.selectedLibraryRepositoryID.map({
@@ -335,6 +367,16 @@ struct RepositoryLibraryView: View {
             .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
         }
         .listStyle(.plain)
+        .contextMenu(forSelectionType: URL.self) { selection in
+            if let repositoryID = selection.first {
+                Button("Remove from Recent", systemImage: "minus.circle", role: .destructive) {
+                    model.removeRecentRepository(repositoryID)
+                }
+            }
+        } primaryAction: { selection in
+            guard let repositoryID = selection.first else { return }
+            Task { await model.openLibraryRepository(at: repositoryID) }
+        }
         .accessibilityLabel("Repositories, \(repositories.count)")
     }
 
@@ -344,11 +386,10 @@ struct RepositoryLibraryView: View {
     ) -> some View {
         let nodes = RepositoryHierarchyNode.make(repositories, relativeTo: folderURL)
         return List(
-            nodes,
-            children: \.children,
             selection: Binding(
-                get: { model.selectedLibraryRepositoryID },
+                get: { selectedHierarchyNodeID ?? model.selectedLibraryRepositoryID },
                 set: { id in
+                    selectedHierarchyNodeID = id
                     guard let id else {
                         model.selectLibraryRepository(nil)
                         return
@@ -359,12 +400,70 @@ struct RepositoryLibraryView: View {
                     model.selectLibraryRepository(id)
                 }
             )
-        ) { node in
-            repositoryHierarchyRow(node)
-                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+        ) {
+            ForEach(nodes) { node in
+                repositoryHierarchyBranch(node)
+            }
         }
         .listStyle(.plain)
+        .contextMenu(forSelectionType: URL.self) { selection in
+            if
+                let id = selection.first,
+                let repository = repositories.first(where: { sameFileLocation($0.id, id) })
+            {
+                Button("Open Repository", systemImage: "arrow.right.circle") {
+                    Task { await model.openLibraryRepository(at: repository.rootURL) }
+                }
+            }
+        } primaryAction: { selection in
+            guard let id = selection.first else { return }
+            if let repository = repositories.first(where: { sameFileLocation($0.id, id) }) {
+                Task { await model.openLibraryRepository(at: repository.rootURL) }
+            } else {
+                toggleHierarchyFolder(id)
+            }
+        }
         .accessibilityLabel("Repository hierarchy, \(repositories.count) Repositories")
+    }
+
+    private func repositoryHierarchyBranch(_ node: RepositoryHierarchyNode) -> AnyView {
+        if let children = node.children {
+            return AnyView(
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { expandedHierarchyFolderIDs.contains(node.id) },
+                        set: { isExpanded in
+                            if isExpanded {
+                                expandedHierarchyFolderIDs.insert(node.id)
+                            } else {
+                                expandedHierarchyFolderIDs.remove(node.id)
+                            }
+                        }
+                    )
+                ) {
+                    ForEach(children) { child in
+                        repositoryHierarchyBranch(child)
+                    }
+                } label: {
+                    RepositoryHierarchyFolderRow(node: node)
+                }
+                .tag(node.id)
+                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+            )
+        }
+
+        return AnyView(
+            repositoryHierarchyRow(node)
+                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+        )
+    }
+
+    private func toggleHierarchyFolder(_ id: URL) {
+        if expandedHierarchyFolderIDs.contains(id) {
+            expandedHierarchyFolderIDs.remove(id)
+        } else {
+            expandedHierarchyFolderIDs.insert(id)
+        }
     }
 
     @ViewBuilder
@@ -377,10 +476,8 @@ struct RepositoryLibraryView: View {
                 isLoading: model.loadingLibraryRepositorySummaries.contains(repository.id),
                 showsPath: false
             )
+            .tag(repository.id)
             .contentShape(.rect)
-            .onTapGesture(count: 2) {
-                Task { await model.openLibraryRepository(at: repository.rootURL) }
-            }
             .task(id: repository.id) {
                 guard model.selectedLibraryRepositoryID.map({
                     sameFileLocation($0, repository.id)
@@ -396,7 +493,7 @@ struct RepositoryLibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Repository")
+                    Text(selectedHierarchyFolder == nil ? "Repository" : "Folder")
                         .font(.headline)
                     Text("Selection summary")
                         .font(.caption)
@@ -409,7 +506,12 @@ struct RepositoryLibraryView: View {
 
             Divider()
 
-            if let repository = model.selectedLibraryRepository {
+            if let folder = selectedHierarchyFolder {
+                ScrollView {
+                    selectedFolderSummary(folder)
+                        .padding(16)
+                }
+            } else if let repository = model.selectedLibraryRepository {
                 ScrollView {
                     selectedRepositorySummary(repository)
                         .padding(16)
@@ -437,7 +539,7 @@ struct RepositoryLibraryView: View {
             } else {
                 ContentUnavailableView(
                     "Select a Repository",
-                    systemImage: "folder",
+                    systemImage: "arrow.triangle.branch",
                     description: Text("Selection updates this summary without opening a Workspace.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -445,11 +547,31 @@ struct RepositoryLibraryView: View {
         }
     }
 
+    private func selectedFolderSummary(_ folder: RepositoryHierarchyNode) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 5) {
+                Label(folder.name, systemImage: "folder")
+                    .font(.title2.weight(.semibold))
+                Text(folder.id.path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Divider()
+            LabeledContent("Repositories", value: folder.repositoryCount.formatted())
+            Text("Select a Repository in this folder to see its Git status.")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+    }
+
     @ViewBuilder
     private func selectedRepositorySummary(_ repository: RepositoryLocation) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
-                Label(repository.name, systemImage: "folder")
+                Label(repository.name, systemImage: "arrow.triangle.branch")
                     .font(.title2.weight(.semibold))
                 Text(repository.rootURL.path)
                     .font(.caption.monospaced())
@@ -552,6 +674,18 @@ struct RepositoryLibraryView: View {
         return model.libraryRepositorySummaries[id]
     }
 
+    private var selectedHierarchyFolder: RepositoryHierarchyNode? {
+        guard
+            let selectedHierarchyNodeID,
+            let folder = model.selectedLibraryFolder
+        else { return nil }
+
+        return RepositoryHierarchyNode.make(folder.repositories, relativeTo: folder.url)
+            .lazy
+            .compactMap { $0.node(matching: selectedHierarchyNodeID) }
+            .first(where: { $0.repository == nil })
+    }
+
     private var isLibraryEmpty: Bool {
         model.recentRepositories.isEmpty && model.libraryFolders.isEmpty
     }
@@ -592,7 +726,7 @@ private struct RepositoryLibraryRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "folder")
+            Image(systemName: "arrow.triangle.branch")
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
@@ -612,10 +746,12 @@ private struct RepositoryLibraryRow: View {
             Spacer()
 
             if let summary {
-                VStack(alignment: .trailing, spacing: 3) {
+                HStack(spacing: 8) {
                     Text(summary.head.label)
                         .font(.caption.monospaced())
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(summary.head.label)
                     Text(summary.changes.isEmpty ? "Clean" : "\(summary.changes.count) changes")
                         .font(.caption2.weight(.medium))
                         .padding(.horizontal, 6)
@@ -681,6 +817,13 @@ struct RepositoryHierarchyNode: Equatable, Identifiable, Sendable {
         repository == nil
             ? children?.reduce(0) { $0 + $1.repositoryCount } ?? 0
             : 1
+    }
+
+    func node(matching id: URL) -> RepositoryHierarchyNode? {
+        if sameFileLocation(self.id, id) {
+            return self
+        }
+        return children?.lazy.compactMap { $0.node(matching: id) }.first
     }
 
     static func make(

@@ -46,7 +46,8 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 
 Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록한 상위 폴더 아래의 로컬 Git 저장소를 찾아 한곳에서 선택할 수 있게 한다.
 
-- 사용자는 하나 이상의 **Library Folder**를 표준 macOS 폴더 선택기로 등록한다.
+- Repository Library에서 폴더를 선택하면, Repository는 바로 열고 일반 폴더는 **Library Folder**로 등록한다.
+- 사용자는 하나 이상의 Library Folder를 표준 macOS 폴더 선택기로 직접 등록할 수도 있다.
 - Gallae는 사용자가 허용한 폴더 안에서만 하위 폴더를 탐색하고, 발견한 **Repository**를 Library Folder별로 묶어 보여 준다. 디스크 전체를 임의로 검색하지 않는다.
 - 직접 연 Repository는 Library Folder 밖에 있어도 최근 항목에 나타난다.
 - Repository를 선택하면 요약을 확인할 수 있고, 열면 같은 메인 윈도우가 그 저장소의 **Repository Workspace**로 전환된다.
@@ -100,7 +101,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 ### 완료 조건
 
-- 표준 macOS 폴더 선택기로 Library Folder를 등록하거나 Repository를 직접 연다.
+- 표준 macOS 폴더 선택기에서 Repository를 직접 열거나 일반 폴더를 Library Folder로 등록한다.
 - 등록한 범위 안에서 Repository를 재귀적으로 찾고, Library Folder별 계층과 최근 항목으로 탐색할 수 있다.
 - 탐색 중 발견한 Repository를 점진적으로 보여 주며 앱 조작을 막지 않는다.
 - 유효하지 않은 경로와 bare 저장소를 구분해 설명한다.
@@ -124,7 +125,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 | 상태 | 진입 시점 | 핵심 목적 | 기본 구성 |
 | --- | --- | --- | --- |
-| Repository Library | 복원할 저장소가 없거나 사용자가 Library로 이동했을 때 | 등록한 범위에서 저장소를 찾고 연다 | Library Folder 탐색, 저장소 목록, 선택 저장소 요약 |
+| Repository Library | 복원할 저장소가 없거나 사용자가 Library로 이동했을 때 | 등록한 범위에서 저장소를 찾고 연다 | Library Folder 탐색, 저장소 목록, 선택 항목 요약 |
 | Changes | Repository를 열었을 때의 기본 상태 | 현재 브랜치와 작업 트리를 파악하고 diff를 읽는다 | 저장소 문맥, 상태별 파일 목록, 선택 파일 diff |
 | History | 사용자가 히스토리로 이동했을 때 | 커밋 관계와 선택한 변경의 맥락을 읽는다 | 참조 탐색, 커밋 그래프/목록, 커밋 상세와 변경 파일 |
 

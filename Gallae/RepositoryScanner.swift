@@ -137,15 +137,19 @@ struct RepositoryScanner: Sendable {
         }
     }
 
-    private static func isPotentialRepository(at url: URL) -> Bool {
+    static func hasRepositoryMarker(at url: URL) -> Bool {
         let fileManager = FileManager.default
-        let gitURL = url.appending(path: ".git")
-        if fileManager.fileExists(atPath: gitURL.path) {
-            let values = try? gitURL.resourceValues(forKeys: [.isSymbolicLinkKey])
-            return values?.isSymbolicLink == false
-        }
-        return fileManager.fileExists(atPath: url.appending(path: "HEAD").path)
+        return fileManager.fileExists(atPath: url.appending(path: ".git").path)
+            || fileManager.fileExists(atPath: url.appending(path: "HEAD").path)
             && fileManager.fileExists(atPath: url.appending(path: "objects").path)
+    }
+
+    private static func isPotentialRepository(at url: URL) -> Bool {
+        guard hasRepositoryMarker(at: url) else { return false }
+        let gitURL = url.appending(path: ".git")
+        guard FileManager.default.fileExists(atPath: gitURL.path) else { return true }
+        let values = try? gitURL.resourceValues(forKeys: [.isSymbolicLinkKey])
+        return values?.isSymbolicLink == false
     }
 
     private static var isCurrentTaskCancelled: Bool {

@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 관리하는 폴더 아래의 Repository를 한 번에 찾는다. |
 | 시작 조건 | Repository Library가 열려 있다. |
-| 진입점 | Library Folder 추가 명령 |
+| 진입점 | Repository Library의 Choose Folder 또는 Library Folder 추가 명령 |
 | 완료 상태 | 허용된 범위가 저장되고 발견한 Repository가 Library에 표시된다. |
 
 ## 정상 흐름
 
-1. 사용자가 표준 macOS 폴더 선택기로 Library Folder를 고른다.
+1. 사용자가 표준 macOS 폴더 선택기로 일반 폴더를 고른다. Repository를 고르면 Library에 등록하지 않고 바로 연다.
 2. Gallae가 탐색할 범위를 표시하고 탐색을 시작한다.
 3. Repository를 발견하는 대로 Library Folder 아래에 추가한다.
 4. 탐색이 끝나면 결과 수와 마지막 탐색 상태를 갱신한다.

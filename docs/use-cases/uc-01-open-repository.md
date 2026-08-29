@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 알고 있는 Repository를 바로 열어 상태를 읽는다. |
 | 시작 조건 | 앱이 실행 중이거나 Repository 경로와 함께 실행된다. |
-| 진입점 | 파일 메뉴의 열기 명령, Repository Library의 열기 버튼, Finder에서 전달된 경로 |
+| 진입점 | 파일 메뉴의 열기 명령, Repository Library의 Choose Folder, Finder에서 전달된 경로 |
 | 완료 상태 | 유효한 Repository Workspace의 Changes가 열리고 최근 항목에 반영된다. |
 
 ## 정상 흐름
@@ -18,7 +18,8 @@
 
 ## 대안 흐름
 
-- 일반 폴더라면 Git Repository가 아니라고 설명하고 다른 폴더를 고르게 한다.
+- Repository Library의 Choose Folder에서 일반 폴더를 골랐다면 Library Folder로 등록하고 탐색한다.
+- 파일 메뉴의 직접 열기에서 일반 폴더를 골랐다면 Git Repository가 아니라고 설명하고 다른 폴더를 고르게 한다.
 - bare Repository라면 유효한 Git 저장소지만 첫 슬라이스에서 열 수 없는 유형이라고 설명한다.
 - 경로를 읽을 수 없다면 원인을 설명하고 다시 선택하거나 취소하게 한다.
 - 확인 과정에서 실패해도 이미 열려 있던 Workspace는 유지한다.

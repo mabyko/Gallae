@@ -295,6 +295,10 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(team.name, "Team")
         XCTAssertEqual(team.children?.map(\.name), ["Beta"])
         XCTAssertEqual(team.children?.first?.repository?.rootURL, secondRepositoryURL.standardizedFileURL)
+        XCTAssertEqual(
+            group.node(matching: secondRepositoryURL)?.repository?.rootURL,
+            secondRepositoryURL.standardizedFileURL
+        )
     }
 
     func testScannerKeepsResultsWhenOnePathIsUnreadable() async throws {
@@ -425,6 +429,53 @@ final class RepositoryInspectorTests: XCTestCase {
         } catch let error as RepositoryInspectionError {
             XCTAssertEqual(error, .bareRepository)
         }
+    }
+
+    @MainActor
+    func testFolderChoiceOpensRepositoryOrRegistersLibraryFolder() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let repositoryURL = fixtureURL.appending(path: "Repository", directoryHint: .isDirectory)
+        let libraryURL = fixtureURL.appending(path: "Library", directoryHint: .isDirectory)
+        let nestedRepositoryURL = libraryURL.appending(
+            path: "Nested",
+            directoryHint: .isDirectory
+        )
+        let invalidRepositoryURL = fixtureURL.appending(
+            path: "Invalid Repository",
+            directoryHint: .isDirectory
+        )
+        try initializeRepository(at: repositoryURL)
+        try initializeRepository(at: nestedRepositoryURL)
+        try FileManager.default.createDirectory(
+            at: invalidRepositoryURL.appending(path: ".git", directoryHint: .isDirectory),
+            withIntermediateDirectories: true
+        )
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        defer { model.cancelLibraryScan() }
+
+        await model.openOrAddFolder(at: repositoryURL)
+        XCTAssertEqual(model.screen, .workspace)
+        XCTAssertEqual(model.repository?.rootURL, repositoryURL.standardizedFileURL)
+        XCTAssertEqual(model.recentRepositories.map(\.rootURL), [repositoryURL.standardizedFileURL])
+        XCTAssertTrue(model.libraryFolders.isEmpty)
+
+        model.showLibrary()
+        await model.openOrAddFolder(at: libraryURL)
+        XCTAssertEqual(model.screen, .library)
+        XCTAssertEqual(model.selectedLibrarySource, .folder(libraryURL.standardizedFileURL))
+        XCTAssertTrue(model.libraryFolders.contains { $0.id == libraryURL.standardizedFileURL })
+
+        await model.openOrAddFolder(at: invalidRepositoryURL)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(model.libraryFolders.contains {
+            $0.id == invalidRepositoryURL.standardizedFileURL
+        })
     }
 
     @MainActor

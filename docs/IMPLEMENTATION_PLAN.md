@@ -21,8 +21,9 @@
 │  └─ 열 수 없음 → 원인과 복구 경로
 ├─ 복원 가능한 Active Repository 있음 → Workspace 복원 후 새로고침
 └─ 복원할 항목 없음 → Repository Library
-   ├─ Repository 직접 열기
-   └─ Library Folder 등록 → 점진적 탐색 → Repository 선택 → 열기
+   └─ 폴더 선택
+      ├─ Repository → 직접 열기
+      └─ 일반 폴더 → Library Folder 등록 → 점진적 탐색 → Repository 선택 → 열기
 ```
 
 Library에서 선택은 요약만 바꾸고, 명시적인 Open 명령이 Workspace를 연다.
@@ -31,7 +32,7 @@ Library에서 선택은 요약만 바꾸고, 명시적인 Open 명령이 Workspa
 
 | 상태 | 보여 줄 정보 | 다음 행동 |
 | --- | --- | --- |
-| Library가 비어 있음 | 등록된 위치와 최근 Repository가 없음 | 폴더 등록 또는 Repository 직접 열기 |
+| Library가 비어 있음 | 등록된 위치와 최근 Repository가 없음 | 폴더를 선택해 Repository 열기 또는 Library Folder 등록 |
 | 탐색 중 | 탐색 범위, 진행 여부, 발견 수 | 발견한 Repository 열기 또는 탐색 취소 |
 | 탐색 결과 없음 | 탐색은 끝났지만 Repository가 없음 | 다른 폴더 선택 또는 재탐색 |
 | 위치 접근 불가 | 읽을 수 없는 위치와 원인 | 위치 다시 선택 또는 Library에서 제거 |
@@ -112,13 +113,14 @@ GallaeApp
 
 ### 1B-1 · Repository Library — 완료
 
+- Library의 Choose Folder는 선택한 경로가 Repository면 직접 열고, 일반 폴더면 Library Folder로 등록해 탐색한다.
 - 사용자가 허용한 Library Folder 밖은 탐색하지 않는다.
 - symlink를 따라가지 않고 package·숨김 디렉터리와 `.git` 내부를 건너뛴다.
 - 유효한 Repository를 찾으면 그 하위 탐색을 멈춘다.
 - 발견 결과를 즉시 보여 주고 탐색을 취소할 수 있다.
 - 일부 경로의 실패가 전체 결과를 지우지 않는다.
-- 선택은 요약만 바꾸며 Return, 이중 클릭 또는 Open 명령이 같은 윈도우를 Workspace로 전환한다.
-- Library Folder 결과는 실제 상대 경로 계층으로 접고 펼쳐 보여 주며, Recent는 최근 순서의 평면 목록을 유지한다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
+- 선택은 요약만 바꾸며 Return, 이중 클릭 또는 Open 명령이 같은 윈도우를 Workspace로 전환한다. Workspace의 Library 명령은 같은 창을 Repository Library로 되돌린다.
+- Library Folder 결과는 실제 상대 경로 계층으로 보여 주며, 폴더 행은 disclosure 또는 이중 클릭으로 접고 펼친다. 중간 폴더와 Repository는 서로 다른 아이콘으로 구분하고, 중간 폴더를 선택하면 경로와 하위 Repository 수만 요약한다. Recent는 최근 순서의 평면 목록을 유지한다. Recent 항목은 디스크의 Repository를 바꾸지 않고 목록에서 제거할 수 있다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
 
 ### 1B-2 · 복원 — 완료
 

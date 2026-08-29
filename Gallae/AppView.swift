@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct AppView: View {
     private enum FolderSelection {
+        case openOrAdd
         case repository(replacing: URL?)
         case libraryFolder(replacing: URL?)
     }
@@ -20,9 +21,9 @@ struct AppView: View {
             } else {
                 RepositoryLibraryView(
                     model: model,
+                    chooseFolder: { chooseFolder() },
                     chooseLibraryFolder: { chooseLibraryFolder() },
                     reconnectLibraryFolder: { url in chooseLibraryFolder(replacing: url) },
-                    chooseRepository: { chooseRepository() },
                     reconnectRepository: { url in chooseRepository(replacing: url) }
                 )
             }
@@ -38,23 +39,21 @@ struct AppView: View {
         .toolbar {
             ToolbarItemGroup {
                 if model.screen == .library {
-                    Button("Add Library Folder…", systemImage: "folder.badge.plus") {
-                        chooseLibraryFolder()
+                    Button("Choose Folder…", systemImage: "folder.badge.plus") {
+                        chooseFolder()
                     }
-                    .accessibilityHint("Choose a folder whose descendants Gallae may scan")
+                    .accessibilityHint(
+                        "Open a Git Repository, or add the selected folder to the Library"
+                    )
                 } else {
-                    Button("Repository Library", systemImage: "books.vertical") {
+                    Button {
                         model.showLibrary()
+                    } label: {
+                        Label("Library", systemImage: "chevron.backward")
+                            .labelStyle(.titleAndIcon)
                     }
                     .accessibilityHint("Return to the Repository Library in this window")
-                }
 
-                Button("Open Repository…", systemImage: "folder") {
-                    chooseRepository()
-                }
-                .accessibilityHint("Choose a local Git working tree")
-
-                if model.screen == .workspace {
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
                     }
@@ -76,6 +75,8 @@ struct AppView: View {
             case .success(let urls):
                 guard let url = urls.first else { return }
                 switch folderSelection {
+                case .openOrAdd:
+                    Task { await model.openOrAddFolder(at: url) }
                 case .repository(let replacedID):
                     Task {
                         if let replacedID {
@@ -119,6 +120,11 @@ struct AppView: View {
             guard phase == .active, model.repository != nil else { return }
             Task { await model.refreshRepository() }
         }
+    }
+
+    private func chooseFolder() {
+        folderSelection = .openOrAdd
+        isFolderImporterPresented = true
     }
 
     private func chooseRepository(replacing id: URL? = nil) {
@@ -428,6 +434,17 @@ final class AppModel {
         )
     }
 
+    func openOrAddFolder(at url: URL) async {
+        _ = await inspect(
+            url,
+            rememberOnSuccess: true,
+            markCurrentStaleOnFailure: false,
+            showWorkspaceOnSuccess: true,
+            presentFailure: true,
+            addLibraryFolderWhenNotWorkingTree: true
+        )
+    }
+
     func refreshRepository() async {
         guard let rootURL = repository?.rootURL else { return }
         _ = await inspect(
@@ -593,7 +610,8 @@ final class AppModel {
         rememberOnSuccess: Bool,
         markCurrentStaleOnFailure: Bool,
         showWorkspaceOnSuccess: Bool,
-        presentFailure: Bool
+        presentFailure: Bool,
+        addLibraryFolderWhenNotWorkingTree: Bool = false
     ) async -> Bool {
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -621,6 +639,15 @@ final class AppModel {
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
+            if
+                addLibraryFolderWhenNotWorkingTree,
+                let inspectionError = error as? RepositoryInspectionError,
+                case .notWorkingTree = inspectionError,
+                !RepositoryScanner.hasRepositoryMarker(at: url)
+            {
+                addLibraryFolder(at: url)
+                return false
+            }
             if markCurrentStaleOnFailure, repository != nil {
                 isRepositoryStale = true
             }
