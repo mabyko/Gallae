@@ -30,6 +30,14 @@ struct RepositorySummary: Equatable, Sendable {
         let isConflicted: Bool
 
         var id: String { path }
+
+        var canDiscardUnstagedChanges: Bool {
+            guard !isConflicted else { return false }
+            return switch unstaged {
+            case .modified, .typeChanged, .deleted: true
+            default: false
+            }
+        }
     }
 
     let rootURL: URL
@@ -54,6 +62,35 @@ struct RepositoryActivity: Equatable, Sendable {
     let recentCommits: [Commit]
 }
 
+struct RepositoryHistory: Equatable, Sendable {
+    struct Commit: Equatable, Identifiable, Sendable {
+        let id: String
+        let parentIDs: [String]
+        let authorName: String
+        let authorEmail: String
+        let committedAt: Date
+        let subject: String
+        let body: String
+
+        func matches(search query: String) -> Bool {
+            let terms = query.split { $0.isWhitespace }
+            guard !terms.isEmpty else { return true }
+
+            let fields = [subject, body, authorName, authorEmail, id]
+            return terms.allSatisfy { term in
+                fields.contains { $0.localizedCaseInsensitiveContains(String(term)) }
+            }
+        }
+    }
+
+    let commits: [Commit]
+}
+
+struct RepositoryCommitPatch: Equatable, Sendable {
+    let commitID: String
+    let content: RepositoryDiff.Section.Content
+}
+
 struct RepositoryDiff: Equatable, Sendable {
     enum Scope: Equatable, Hashable, Sendable {
         case staged
@@ -75,6 +112,23 @@ struct RepositoryDiff: Equatable, Sendable {
         let content: Content
 
         var id: Scope { scope }
+
+        var hunks: [Hunk] {
+            guard case .text(let lines) = content else { return [] }
+            let starts = lines.indices.filter { lines[$0].kind == .hunk }
+            guard let first = starts.first else { return [] }
+            let metadata = lines[..<first].map(\.text)
+
+            return starts.enumerated().map { offset, start in
+                let end = offset + 1 < starts.count ? starts[offset + 1] : lines.endIndex
+                let patch = (metadata + lines[start..<end].map(\.text)).joined(separator: "\n") + "\n"
+                return Hunk(
+                    id: lines[start].id,
+                    scope: scope,
+                    patch: Data(patch.utf8)
+                )
+            }
+        }
     }
 
     struct Line: Equatable, Identifiable, Sendable {
@@ -91,6 +145,12 @@ struct RepositoryDiff: Equatable, Sendable {
         let oldLineNumber: Int?
         let newLineNumber: Int?
         let text: String
+    }
+
+    struct Hunk: Equatable, Identifiable, Sendable {
+        let id: Int
+        let scope: Scope
+        fileprivate let patch: Data
     }
 
     let path: String
@@ -122,6 +182,32 @@ struct RepositoryInspector: Sendable {
         return activity
     }
 
+    func history(in repository: RepositorySummary) async throws -> RepositoryHistory {
+        try Task.checkCancellation()
+        let history = try await Task.detached(priority: .userInitiated) {
+            try Self.historySynchronously(in: repository)
+        }.value
+        try Task.checkCancellation()
+        return history
+    }
+
+    func patch(
+        for commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary,
+        maximumOutputBytes: Int? = maximumDisplayedDiffBytes
+    ) async throws -> RepositoryCommitPatch {
+        try Task.checkCancellation()
+        let patch = try await Task.detached(priority: .userInitiated) {
+            try Self.patchSynchronously(
+                for: commit,
+                in: repository,
+                maximumOutputBytes: maximumOutputBytes
+            )
+        }.value
+        try Task.checkCancellation()
+        return patch
+    }
+
     func diff(
         for change: RepositorySummary.Change,
         in repository: RepositorySummary,
@@ -137,6 +223,206 @@ struct RepositoryInspector: Sendable {
         }.value
         try Task.checkCancellation()
         return diff
+    }
+
+    func stage(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.stageSynchronously(change, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func unstage(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.unstageSynchronously(change, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func discard(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.discardSynchronously(change, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func stage(
+        _ hunk: RepositoryDiff.Hunk,
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.updateIndexSynchronously(
+                with: hunk,
+                for: change,
+                in: repository,
+                reverse: false
+            )
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func unstage(
+        _ hunk: RepositoryDiff.Hunk,
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.updateIndexSynchronously(
+                with: hunk,
+                for: change,
+                in: repository,
+                reverse: true
+            )
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func commit(
+        subject: String,
+        body: String,
+        amend: Bool = false,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.commitSynchronously(subject: subject, body: body, amend: amend, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    private static func stageSynchronously(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        guard !change.isConflicted, change.unstaged != nil else {
+            throw RepositoryIndexError.unavailable
+        }
+        let paths = [change.originalPath, change.path].compactMap(\.self)
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "add", "--all", "--"
+        ] + paths)
+        guard result.status == 0 else {
+            throw RepositoryIndexError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func unstageSynchronously(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        guard !change.isConflicted, change.staged != nil else {
+            throw RepositoryIndexError.unavailable
+        }
+        let paths = [change.originalPath, change.path].compactMap(\.self)
+        let command = repository.isUnborn
+            ? ["rm", "--cached", "--force", "--ignore-unmatch", "--"]
+            : ["restore", "--staged", "--"]
+        let result = try runGit(["-C", repository.rootURL.path] + command + paths)
+        guard result.status == 0 else {
+            throw RepositoryIndexError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func discardSynchronously(
+        _ change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        guard change.canDiscardUnstagedChanges else {
+            throw RepositoryDiscardError.unavailable
+        }
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "restore", "--worktree", "--", literalPathspec(change.path)
+        ])
+        guard result.status == 0 else {
+            throw RepositoryDiscardError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func updateIndexSynchronously(
+        with hunk: RepositoryDiff.Hunk,
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary,
+        reverse: Bool
+    ) throws -> RepositorySummary {
+        let expectedScope: RepositoryDiff.Scope = reverse ? .staged : .unstaged
+        let expectedState = reverse ? change.staged : change.unstaged
+        guard
+            !change.isConflicted,
+            expectedState == .modified,
+            hunk.scope == expectedScope
+        else {
+            throw RepositoryIndexError.unavailable
+        }
+
+        var arguments = ["-C", repository.rootURL.path, "apply", "--cached"]
+        if reverse {
+            arguments.append("--reverse")
+        }
+        let result = try runGit(arguments, standardInput: hunk.patch)
+        guard result.status == 0 else {
+            throw RepositoryIndexError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func commitSynchronously(
+        subject: String,
+        body: String,
+        amend: Bool,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !subject.isEmpty,
+            repository.changes.contains(where: { $0.staged != nil }),
+            !repository.changes.contains(where: \.isConflicted),
+            !amend || !repository.isUnborn
+        else {
+            throw RepositoryCommitError.unavailable
+        }
+        var arguments = [
+            "-C", repository.rootURL.path,
+            "commit", "--quiet"
+        ]
+        if amend {
+            arguments.append("--amend")
+        }
+        arguments += ["--message", subject]
+        if !body.isEmpty {
+            arguments += ["--message", body]
+        }
+        let result = try runGit(arguments)
+        guard result.status == 0 else {
+            throw RepositoryCommitError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
     }
 
     private static func inspectSynchronously(at selectedURL: URL) throws -> RepositorySummary {
@@ -238,6 +524,86 @@ struct RepositoryInspector: Sendable {
         }
 
         return .init(commitCount: commitCount, recentCommits: recentCommits)
+    }
+
+    private static func historySynchronously(
+        in repository: RepositorySummary
+    ) throws -> RepositoryHistory {
+        guard !repository.isUnborn else { return .init(commits: []) }
+
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "log", "-100", "-z", "--no-show-signature",
+            "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b",
+            "HEAD"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryHistoryError.unreadable(result.standardError)
+        }
+
+        var fields = result.standardOutput.split(
+            separator: 0,
+            omittingEmptySubsequences: false
+        )
+        if fields.last?.isEmpty == true {
+            fields.removeLast()
+        }
+        guard fields.count.isMultiple(of: 7) else {
+            throw RepositoryHistoryError.invalidOutput
+        }
+
+        var commits: [RepositoryHistory.Commit] = []
+        commits.reserveCapacity(fields.count / 7)
+        for index in stride(from: 0, to: fields.count, by: 7) {
+            guard let timestamp = TimeInterval(String(decoding: fields[index + 4], as: UTF8.self)) else {
+                throw RepositoryHistoryError.invalidOutput
+            }
+            commits.append(.init(
+                id: String(decoding: fields[index], as: UTF8.self),
+                parentIDs: String(decoding: fields[index + 1], as: UTF8.self)
+                    .split(separator: " ")
+                    .map(String.init),
+                authorName: String(decoding: fields[index + 2], as: UTF8.self),
+                authorEmail: String(decoding: fields[index + 3], as: UTF8.self),
+                committedAt: Date(timeIntervalSince1970: timestamp),
+                subject: String(decoding: fields[index + 5], as: UTF8.self),
+                body: String(decoding: fields[index + 6], as: UTF8.self)
+                    .trimmingCharacters(in: .newlines)
+            ))
+        }
+        return .init(commits: commits)
+    }
+
+    private static func patchSynchronously(
+        for commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary,
+        maximumOutputBytes: Int?
+    ) throws -> RepositoryCommitPatch {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
+            "--find-renames", "--first-parent", "--patch", commit.id
+        ], maximumOutputBytes: maximumOutputBytes)
+        guard result.status == 0 else {
+            throw RepositoryHistoryError.unreadablePatch(result.standardError)
+        }
+
+        if result.standardOutputExceededLimit {
+            return .init(
+                commitID: commit.id,
+                content: .tooLarge(byteLimit: maximumOutputBytes ?? maximumDisplayedDiffBytes)
+            )
+        }
+        guard let text = String(data: result.standardOutput, encoding: .utf8) else {
+            return .init(commitID: commit.id, content: .unsupportedEncoding)
+        }
+        let lines = parseDiffLines(text)
+        return .init(
+            commitID: commit.id,
+            content: lines.isEmpty
+                ? .unavailable("This commit has no patch to display.")
+                : .text(lines)
+        )
     }
 
     private static func diffSynchronously(
@@ -459,7 +825,8 @@ struct RepositoryInspector: Sendable {
 
     private static func runGit(
         _ arguments: [String],
-        maximumOutputBytes: Int? = nil
+        maximumOutputBytes: Int? = nil,
+        standardInput: Data? = nil
     ) throws -> GitResult {
         let process = Process()
         let captureDirectory = FileManager.default.temporaryDirectory
@@ -474,13 +841,23 @@ struct RepositoryInspector: Sendable {
 
         let standardOutput = try FileHandle(forWritingTo: standardOutputURL)
         let standardError = try FileHandle(forWritingTo: standardErrorURL)
+        let standardInputHandle: FileHandle?
+        if let standardInput {
+            let standardInputURL = captureDirectory.appending(path: "stdin")
+            try standardInput.write(to: standardInputURL)
+            standardInputHandle = try FileHandle(forReadingFrom: standardInputURL)
+        } else {
+            standardInputHandle = nil
+        }
         defer {
             try? standardOutput.close()
             try? standardError.close()
+            try? standardInputHandle?.close()
         }
 
         process.executableURL = gitURL
         process.arguments = arguments
+        process.standardInput = standardInputHandle
         process.standardOutput = standardOutput
         process.standardError = standardError
 
@@ -695,6 +1072,23 @@ private struct GitResult: Sendable {
     let standardError: String
 }
 
+enum RepositoryHistoryError: LocalizedError, Equatable {
+    case unreadable(String)
+    case unreadablePatch(String)
+    case invalidOutput
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadable:
+            "Git couldn’t read this Repository’s commit history."
+        case .unreadablePatch:
+            "Git couldn’t read the selected commit’s changes."
+        case .invalidOutput:
+            "Git returned an unexpected commit history."
+        }
+    }
+}
+
 enum RepositoryDiffError: LocalizedError, Equatable {
     case unavailable
     case gitFailed(String)
@@ -705,6 +1099,50 @@ enum RepositoryDiffError: LocalizedError, Equatable {
             "The selected file no longer has a readable diff. Refresh the Repository and try again."
         case .gitFailed:
             "Git couldn’t produce a diff for the selected file. Refresh the Repository and try again."
+        }
+    }
+}
+
+enum RepositoryIndexError: LocalizedError, Equatable {
+    case unavailable
+    case gitFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "The selected file’s index state cannot be changed in its current state."
+        case .gitFailed:
+            "Git couldn’t update the selected file’s index state. Its working tree content was not discarded."
+        }
+    }
+}
+
+enum RepositoryCommitError: LocalizedError, Equatable {
+    case unavailable
+    case gitFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "Enter a commit subject and Stage at least one change."
+        case .gitFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t create the commit."
+                : "Git couldn’t create the commit.\n\n\(message)"
+        }
+    }
+}
+
+enum RepositoryDiscardError: LocalizedError, Equatable {
+    case unavailable
+    case gitFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "Only unstaged changes to tracked files can be discarded."
+        case .gitFailed:
+            "Git couldn’t discard the selected file’s unstaged changes."
         }
     }
 }

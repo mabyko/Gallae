@@ -224,6 +224,77 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(activity.recentCommits.allSatisfy { !$0.id.isEmpty })
     }
 
+    func testReadsCurrentHistoryAndSelectedCommitPatch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("first\n", to: "notes [한글].txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--all"])
+        try runGit([
+            "-C", repositoryURL.path, "commit", "--quiet",
+            "-m", "Initial subject", "-m", "Initial body"
+        ])
+        let initialID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try write("second\n", to: "notes [한글].txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--all"])
+        try runGit([
+            "-C", repositoryURL.path, "commit", "--quiet",
+            "-m", "Second subject", "-m", "Second body\n\nMore details."
+        ])
+        let secondID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+
+        XCTAssertEqual(history.commits.map(\.id), [secondID, initialID])
+        let latest = try XCTUnwrap(history.commits.first)
+        XCTAssertEqual(latest.parentIDs, [initialID])
+        XCTAssertEqual(latest.authorName, "Gallae Tests")
+        XCTAssertEqual(latest.authorEmail, "tests@gallae.local")
+        XCTAssertEqual(latest.subject, "Second subject")
+        XCTAssertEqual(latest.body, "Second body\n\nMore details.")
+        XCTAssertGreaterThan(latest.committedAt, Date(timeIntervalSince1970: 0))
+
+        let patch = try await inspector.patch(for: latest, in: repository)
+        XCTAssertEqual(patch.commitID, secondID)
+        guard case .text(let lines) = patch.content else {
+            return XCTFail("Expected text commit patch")
+        }
+        XCTAssertTrue(lines.contains { $0.kind == .deletion && $0.text == "-first" })
+        XCTAssertTrue(lines.contains { $0.kind == .addition && $0.text == "+second" })
+
+        let initial = try XCTUnwrap(history.commits.last)
+        let initialPatch = try await inspector.patch(for: initial, in: repository)
+        guard case .text(let initialLines) = initialPatch.content else {
+            return XCTFail("Expected text root commit patch")
+        }
+        XCTAssertTrue(initialLines.contains { $0.kind == .addition && $0.text == "+first" })
+    }
+
+    func testFiltersHistoryByMessageAuthorAndSHA() {
+        let commit = RepositoryHistory.Commit(
+            id: "abc123def456",
+            parentIDs: [],
+            authorName: "Gallae Tester",
+            authorEmail: "tester@gallae.local",
+            committedAt: Date(timeIntervalSince1970: 0),
+            subject: "Fix Library selection",
+            body: "Keep the selected Repository visible.",
+        )
+
+        XCTAssertTrue(commit.matches(search: ""))
+        XCTAssertTrue(commit.matches(search: "library tester"))
+        XCTAssertTrue(commit.matches(search: "VISIBLE abc123"))
+        XCTAssertFalse(commit.matches(search: "remote branch"))
+    }
+
     func testScannerStaysInsideAllowedFolderAndSkipsRepositoryDescendants() async throws {
         let fixtureURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixtureURL) }
@@ -624,6 +695,327 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(model.libraryRepositoryActivities[repositoryURL]?.commitCount, 1)
     }
 
+    @MainActor
+    func testStagesSelectedWorkingTreeChangeAndRefreshesWorkspace() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("after\n", to: "file.txt", in: repositoryURL)
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        XCTAssertEqual(model.selectedChangeID, "file.txt")
+        let contentBeforeStage = try Data(
+            contentsOf: repositoryURL.appending(path: "file.txt")
+        )
+
+        await model.stageSelectedChange()
+
+        let change = try XCTUnwrap(model.repository?.changes.first)
+        XCTAssertEqual(change.path, "file.txt")
+        XCTAssertEqual(change.staged, .modified)
+        XCTAssertNil(change.unstaged)
+        XCTAssertEqual(model.selectedChangeID, "file.txt")
+        XCTAssertEqual(
+            try Data(contentsOf: repositoryURL.appending(path: "file.txt")),
+            contentBeforeStage
+        )
+    }
+
+    @MainActor
+    func testKeepsWorkspaceAndFileWhenStageFails() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("after\n", to: "file.txt", in: repositoryURL)
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        let fileURL = repositoryURL.appending(path: "file.txt")
+        let contentBeforeStage = try Data(contentsOf: fileURL)
+        try FileManager.default.removeItem(at: repositoryURL.appending(path: ".git"))
+
+        await model.stageSelectedChange()
+
+        XCTAssertEqual(model.repository?.changes.first?.unstaged, .modified)
+        XCTAssertEqual(try Data(contentsOf: fileURL), contentBeforeStage)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.isWritingRepository)
+    }
+
+    @MainActor
+    func testUnstagesSelectedIndexChangeAndRefreshesWorkspace() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("after\n", to: "file.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "file.txt"])
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        XCTAssertEqual(model.selectedChangeID, "file.txt")
+        let contentBeforeUnstage = try Data(
+            contentsOf: repositoryURL.appending(path: "file.txt")
+        )
+
+        await model.unstageSelectedChange()
+
+        let change = try XCTUnwrap(model.repository?.changes.first)
+        XCTAssertEqual(change.path, "file.txt")
+        XCTAssertNil(change.staged)
+        XCTAssertEqual(change.unstaged, .modified)
+        XCTAssertEqual(model.selectedChangeID, "file.txt")
+        XCTAssertEqual(
+            try Data(contentsOf: repositoryURL.appending(path: "file.txt")),
+            contentBeforeUnstage
+        )
+    }
+
+    @MainActor
+    func testUnstagesRenamedPathWithoutTouchingWorkingTree() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("content\n", to: "old name.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let destinationURL = repositoryURL.appending(path: "새 이름 [1].txt")
+        try runGit([
+            "-C", repositoryURL.path,
+            "mv", "--", "old name.txt", "새 이름 [1].txt"
+        ])
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        let renamed = try XCTUnwrap(model.repository?.changes.first)
+        XCTAssertEqual(renamed.originalPath, "old name.txt")
+        XCTAssertEqual(renamed.path, "새 이름 [1].txt")
+        XCTAssertEqual(renamed.staged, .renamed)
+
+        await model.unstageSelectedChange()
+
+        XCTAssertTrue(model.repository?.changes.allSatisfy { $0.staged == nil } == true)
+        XCTAssertEqual(try String(contentsOf: destinationURL, encoding: .utf8), "content\n")
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: repositoryURL.appending(path: "old name.txt").path
+        ))
+    }
+
+    @MainActor
+    func testUnstagesInitialCommitPathWithoutDeletingWorkingTreeFile() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("draft\n", to: "new file.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "new file.txt"])
+        try write("working draft\n", to: "new file.txt", in: repositoryURL)
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        XCTAssertEqual(model.repository?.isUnborn, true)
+        XCTAssertEqual(model.repository?.changes.first?.staged, .added)
+        let fileURL = repositoryURL.appending(path: "new file.txt")
+        let contentBeforeUnstage = try Data(contentsOf: fileURL)
+
+        await model.unstageSelectedChange()
+
+        let change = try XCTUnwrap(model.repository?.changes.first)
+        XCTAssertNil(change.staged)
+        XCTAssertEqual(change.unstaged, .untracked)
+        XCTAssertEqual(try Data(contentsOf: fileURL), contentBeforeUnstage)
+        XCTAssertNil(model.errorMessage)
+    }
+
+    func testDiscardsOnlySelectedUnstagedChanges() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        let path = "file [한글].txt"
+        try write("before\n", to: path, in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("staged\n", to: path, in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", path])
+        try write("working\n", to: path, in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+
+        let updatedRepository = try await inspector.discard(change, in: repository)
+
+        let updatedChange = try XCTUnwrap(updatedRepository.changes.first)
+        XCTAssertEqual(updatedChange.staged, .modified)
+        XCTAssertNil(updatedChange.unstaged)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: path), encoding: .utf8),
+            "staged\n"
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "show", ":\(path)"]),
+            "staged\n"
+        )
+    }
+
+    func testCommitsSubjectAndBodyUsingOnlyStagedChanges() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("staged\n", to: "file.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "file.txt"])
+        try write("working\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let updatedRepository = try await inspector.commit(
+            subject: "Record staged change",
+            body: "Keep the working copy for the next commit.",
+            in: repository
+        )
+
+        let change = try XCTUnwrap(updatedRepository.changes.first)
+        XCTAssertNil(change.staged)
+        XCTAssertEqual(change.unstaged, .modified)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            "working\n"
+        )
+        let activity = try await inspector.activity(in: updatedRepository)
+        XCTAssertEqual(activity.commitCount, 2)
+        XCTAssertEqual(activity.recentCommits.first?.subject, "Record staged change")
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path,
+                "log", "-1", "--format=%B"
+            ]).trimmingCharacters(in: .newlines),
+            "Record staged change\n\nKeep the working copy for the next commit."
+        )
+    }
+
+    func testAmendsLatestCommitUsingOnlyStagedChanges() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let originalHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        try write("staged\n", to: "file.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "file.txt"])
+        try write("working\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let updatedRepository = try await inspector.commit(
+            subject: "Amended commit",
+            body: "Replace the latest commit.",
+            amend: true,
+            in: repository
+        )
+
+        let change = try XCTUnwrap(updatedRepository.changes.first)
+        XCTAssertNil(change.staged)
+        XCTAssertEqual(change.unstaged, .modified)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            "working\n"
+        )
+        let activity = try await inspector.activity(in: updatedRepository)
+        XCTAssertEqual(activity.commitCount, 1)
+        XCTAssertEqual(activity.recentCommits.first?.subject, "Amended commit")
+        XCTAssertNotEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), originalHead)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "show", "HEAD:file.txt"])
+                .trimmingCharacters(in: .newlines),
+            "staged"
+        )
+    }
+
+    func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        let original = (1...20).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        try write(original, to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        var editedLines = (1...20).map { "line \($0)" }
+        editedLines[1] = "changed two"
+        editedLines[17] = "changed eighteen"
+        let edited = editedLines.joined(separator: "\n") + "\n"
+        try write(edited, to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let workingSection = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+        XCTAssertEqual(workingSection.hunks.count, 2)
+
+        let stagedRepository = try await inspector.stage(
+            try XCTUnwrap(workingSection.hunks.first),
+            for: change,
+            in: repository
+        )
+
+        let stagedChange = try XCTUnwrap(stagedRepository.changes.first)
+        XCTAssertEqual(stagedChange.staged, .modified)
+        XCTAssertEqual(stagedChange.unstaged, .modified)
+        let stagedDiff = try await inspector.diff(for: stagedChange, in: stagedRepository)
+        let stagedLines = try textLines(in: stagedDiff, scope: .staged)
+        XCTAssertTrue(stagedLines.contains { $0.text == "+changed two" })
+        XCTAssertFalse(stagedLines.contains { $0.text == "+changed eighteen" })
+        let remainingLines = try textLines(in: stagedDiff, scope: .unstaged)
+        XCTAssertFalse(remainingLines.contains { $0.text == "+changed two" })
+        XCTAssertTrue(remainingLines.contains { $0.text == "+changed eighteen" })
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            edited
+        )
+
+        let stagedSection = try XCTUnwrap(stagedDiff.sections.first { $0.scope == .staged })
+        let unstagedRepository = try await inspector.unstage(
+            try XCTUnwrap(stagedSection.hunks.first),
+            for: stagedChange,
+            in: stagedRepository
+        )
+
+        let unstagedChange = try XCTUnwrap(unstagedRepository.changes.first)
+        XCTAssertNil(unstagedChange.staged)
+        XCTAssertEqual(unstagedChange.unstaged, .modified)
+        let unstagedDiff = try await inspector.diff(for: unstagedChange, in: unstagedRepository)
+        XCTAssertEqual(
+            try textLines(in: unstagedDiff, scope: .unstaged)
+                .filter { $0.kind == .addition }
+                .map(\.text),
+            ["+changed two", "+changed eighteen"]
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            edited
+        )
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GallaeTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -694,6 +1086,29 @@ final class RepositoryInspectorTests: XCTestCase {
             )
             throw GitFixtureError.failed(status: process.terminationStatus, message: message)
         }
+    }
+
+    private func gitOutput(_ arguments: [String]) throws -> String {
+        let process = Process()
+        let standardOutput = Pipe()
+        let standardError = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.standardOutput = standardOutput
+        process.standardError = standardError
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let message = String(
+                decoding: standardError.fileHandleForReading.readDataToEndOfFile(),
+                as: UTF8.self
+            )
+            throw GitFixtureError.failed(status: process.terminationStatus, message: message)
+        }
+        return String(
+            decoding: standardOutput.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        )
     }
 }
 

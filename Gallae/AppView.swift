@@ -33,7 +33,7 @@ struct AppView: View {
         .frame(minWidth: 720, minHeight: 480)
         .overlay {
             if model.isLoading {
-                ProgressView("Reading Repository…")
+                ProgressView(model.isWritingRepository ? "Updating Repository…" : "Reading Repository…")
                     .padding(20)
                     .background(.regularMaterial, in: .rect(cornerRadius: 12))
             }
@@ -163,6 +163,31 @@ enum RepositoryDiffLoadState: Equatable, Sendable {
     case failed(String)
 }
 
+struct RepositoryHistoryRequest: Equatable, Hashable, Sendable {
+    let rootURL: URL
+    let revision: Int
+}
+
+struct RepositoryCommitPatchRequest: Equatable, Hashable, Sendable {
+    let rootURL: URL
+    let commitID: String
+    let revision: Int
+}
+
+enum RepositoryHistoryLoadState: Equatable, Sendable {
+    case notLoaded
+    case loading
+    case loaded(RepositoryHistory)
+    case failed(String)
+}
+
+enum RepositoryCommitPatchLoadState: Equatable, Sendable {
+    case noSelection
+    case loading
+    case loaded(RepositoryCommitPatch)
+    case failed(String)
+}
+
 @MainActor
 @Observable
 final class AppModel {
@@ -170,7 +195,11 @@ final class AppModel {
     var repository: RepositorySummary?
     var selectedChangeID: String?
     var diffState: RepositoryDiffLoadState = .noSelection
+    var selectedHistoryCommitID: String?
+    var historyState: RepositoryHistoryLoadState = .notLoaded
+    var commitPatchState: RepositoryCommitPatchLoadState = .noSelection
     var isLoading = false
+    var isWritingRepository = false
     var isRepositoryStale = false
     var errorMessage: String?
     var libraryFolders: [RepositoryLibraryFolder] = []
@@ -191,6 +220,8 @@ final class AppModel {
     @ObservationIgnored private var didAttemptRestore = false
     @ObservationIgnored private var inspectionGeneration = 0
     @ObservationIgnored private var diffGeneration = 0
+    @ObservationIgnored private var historyGeneration = 0
+    @ObservationIgnored private var commitPatchGeneration = 0
     @ObservationIgnored private var scanGeneration = 0
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var scanningFolderIDs: [URL] = []
@@ -212,6 +243,62 @@ final class AppModel {
             changeID: selectedChangeID,
             revision: repositoryRevision
         )
+    }
+
+    var selectedChange: RepositorySummary.Change? {
+        guard let selectedChangeID else { return nil }
+        return repository?.changes.first { $0.id == selectedChangeID }
+    }
+
+    var historyRequest: RepositoryHistoryRequest? {
+        guard let repository else { return nil }
+        return .init(rootURL: repository.rootURL, revision: repositoryRevision)
+    }
+
+    var selectedHistoryCommit: RepositoryHistory.Commit? {
+        guard
+            let selectedHistoryCommitID,
+            case .loaded(let history) = historyState
+        else {
+            return nil
+        }
+        return history.commits.first { $0.id == selectedHistoryCommitID }
+    }
+
+    var commitPatchRequest: RepositoryCommitPatchRequest? {
+        guard let repository, let selectedHistoryCommit else { return nil }
+        return .init(
+            rootURL: repository.rootURL,
+            commitID: selectedHistoryCommit.id,
+            revision: repositoryRevision
+        )
+    }
+
+    var canStageSelectedChange: Bool {
+        selectedChange.map { !$0.isConflicted && $0.unstaged != nil } ?? false
+    }
+
+    var canUnstageSelectedChange: Bool {
+        selectedChange.map { !$0.isConflicted && $0.staged != nil } ?? false
+    }
+
+    var canDiscardSelectedChange: Bool {
+        selectedChange?.canDiscardUnstagedChanges == true
+    }
+
+    var canStageSelectedHunks: Bool {
+        selectedChange.map { !$0.isConflicted && $0.unstaged == .modified } ?? false
+    }
+
+    var canUnstageSelectedHunks: Bool {
+        selectedChange.map { !$0.isConflicted && $0.staged == .modified } ?? false
+    }
+
+    var canCommit: Bool {
+        repository.map {
+            $0.changes.contains(where: { $0.staged != nil })
+                && !$0.changes.contains(where: \.isConflicted)
+        } ?? false
     }
 
     var selectedLibraryFolder: RepositoryLibraryFolder? {
@@ -458,10 +545,180 @@ final class AppModel {
         )
     }
 
+    func stageSelectedChange() async {
+        guard
+            !isLoading,
+            let repository,
+            let change = selectedChange,
+            canStageSelectedChange
+        else {
+            return
+        }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.stage(change, in: repository)
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error)
+        }
+    }
+
+    func unstageSelectedChange() async {
+        guard
+            !isLoading,
+            let repository,
+            let change = selectedChange,
+            canUnstageSelectedChange
+        else {
+            return
+        }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.unstage(change, in: repository)
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error)
+        }
+    }
+
+    func discardChange(id: RepositorySummary.Change.ID) async {
+        guard
+            !isLoading,
+            let repository,
+            let change = repository.changes.first(where: { $0.id == id }),
+            change.canDiscardUnstagedChanges
+        else {
+            return
+        }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.discard(change, in: repository)
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error)
+        }
+    }
+
+    func updateSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
+        guard !isLoading, let repository, let change = selectedChange else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository: RepositorySummary
+            switch hunk.scope {
+            case .unstaged where canStageSelectedHunks:
+                updatedRepository = try await inspector.stage(hunk, for: change, in: repository)
+            case .staged where canUnstageSelectedHunks:
+                updatedRepository = try await inspector.unstage(hunk, for: change, in: repository)
+            default:
+                return
+            }
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error)
+        }
+    }
+
+    func commit(subject: String, body: String, amend: Bool) async -> Bool {
+        let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard
+            !isLoading,
+            let repository,
+            canCommit,
+            !subject.isEmpty,
+            !amend || !repository.isUnborn
+        else {
+            return false
+        }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.commit(
+                subject: subject,
+                body: body,
+                amend: amend,
+                in: repository
+            )
+            guard generation == inspectionGeneration else { return false }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
+            libraryRepositoryActivities[cacheID] = nil
+            libraryRepositoryActivityErrors[cacheID] = nil
+            return true
+        } catch {
+            guard generation == inspectionGeneration else { return false }
+            present(error)
+            return false
+        }
+    }
+
     func reconnectRecentRepository(_ oldURL: URL, to newURL: URL) async {
         inspectionGeneration += 1
         let generation = inspectionGeneration
         isLoading = true
+        isWritingRepository = false
         defer {
             if generation == inspectionGeneration {
                 isLoading = false
@@ -607,6 +864,78 @@ final class AppModel {
         }
     }
 
+    func loadHistory() async {
+        guard let request = historyRequest, let repository else {
+            historyState = .notLoaded
+            selectedHistoryCommitID = nil
+            commitPatchState = .noSelection
+            return
+        }
+
+        historyGeneration += 1
+        let generation = historyGeneration
+        historyState = .loading
+
+        do {
+            let history = try await inspector.history(in: repository)
+            guard generation == historyGeneration, request == historyRequest else { return }
+            historyState = .loaded(history)
+            selectedHistoryCommitID = selectedHistoryCommitID.flatMap { selectedID in
+                history.commits.contains(where: { $0.id == selectedID }) ? selectedID : nil
+            } ?? history.commits.first?.id
+            commitPatchState = selectedHistoryCommitID == nil ? .noSelection : .loading
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == historyGeneration, request == historyRequest else { return }
+            historyState = .failed(Self.message(for: error))
+            selectedHistoryCommitID = nil
+            commitPatchState = .noSelection
+        }
+    }
+
+    func loadSelectedCommitPatch(
+        maximumOutputBytes: Int? = RepositoryInspector.maximumDisplayedDiffBytes
+    ) async {
+        guard
+            let request = commitPatchRequest,
+            let repository,
+            let commit = selectedHistoryCommit
+        else {
+            commitPatchState = .noSelection
+            return
+        }
+
+        commitPatchGeneration += 1
+        let generation = commitPatchGeneration
+        commitPatchState = .loading
+
+        do {
+            let patch = try await inspector.patch(
+                for: commit,
+                in: repository,
+                maximumOutputBytes: maximumOutputBytes
+            )
+            guard
+                generation == commitPatchGeneration,
+                request == commitPatchRequest
+            else {
+                return
+            }
+            commitPatchState = .loaded(patch)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard
+                generation == commitPatchGeneration,
+                request == commitPatchRequest
+            else {
+                return
+            }
+            commitPatchState = .failed(Self.message(for: error))
+        }
+    }
+
     private func inspect(
         _ url: URL,
         rememberOnSuccess: Bool,
@@ -618,6 +947,7 @@ final class AppModel {
         inspectionGeneration += 1
         let generation = inspectionGeneration
         isLoading = true
+        isWritingRepository = false
         defer {
             if generation == inspectionGeneration {
                 isLoading = false
@@ -667,17 +997,23 @@ final class AppModel {
         _ inspectedRepository: RepositorySummary,
         showWorkspaceOnSuccess: Bool
     ) {
-        let previousSelection = repository.map {
+        let isSameRepository = repository.map {
             sameFileLocation($0.rootURL, inspectedRepository.rootURL)
         } == true
+        let previousSelection = isSameRepository
             ? selectedChangeID
             : nil
+        if !isSameRepository {
+            selectedHistoryCommitID = nil
+        }
         repository = inspectedRepository
         repositoryRevision += 1
         selectedChangeID = previousSelection.flatMap { selectedID in
             inspectedRepository.changes.contains(where: { $0.id == selectedID }) ? selectedID : nil
         } ?? inspectedRepository.changes.first?.id
         diffState = selectedChangeID == nil ? .noSelection : .loading
+        historyState = .notLoaded
+        commitPatchState = .noSelection
         let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)
         libraryRepositorySummaries[cacheID] = inspectedRepository
         libraryRepositorySummaryErrors[cacheID] = nil

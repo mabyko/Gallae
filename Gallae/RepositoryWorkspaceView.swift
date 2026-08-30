@@ -7,57 +7,43 @@ private enum RepositoryChangeViewMode: Int {
     case status
 }
 
+private enum RepositoryWorkspaceSection: Int {
+    case changes
+    case history
+}
+
 struct RepositoryWorkspaceView: View {
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
     @State private var selectedChangeNodeID: RepositoryChangeHierarchyNode.ID?
     @State private var expandedStatusGroups = Set(RepositoryChangeStatusGroup.ID.allCases)
+    @State private var commitSubject = ""
+    @State private var commitBody = ""
+    @State private var isAmending = false
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
+    @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
 
     var body: some View {
         VStack(spacing: 0) {
             repositoryHeader
             Divider()
 
-            if let repository = model.repository, repository.changes.isEmpty {
-                ContentUnavailableView {
-                    Label("Working Tree Clean", systemImage: "checkmark.circle")
-                } description: {
-                    Text("There are no staged, unstaged, or untracked files.")
-                } actions: {
-                    Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([repository.rootURL])
-                    }
-                    .accessibilityHint("Open the Repository folder in Finder")
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let repository = model.repository {
-                HSplitView {
-                    changeList(repository)
-                        .frame(
-                            minWidth: theme.metrics.changeListMinimumWidth,
-                            idealWidth: theme.metrics.changeListIdealWidth
-                        )
-
-                    RepositoryDiffView(
-                        state: model.diffState,
-                        fileURL: selectedFileURL(in: repository),
-                        retry: { Task { await model.loadSelectedDiff() } },
-                        loadExpanded: {
-                            Task {
-                                await model.loadSelectedDiff(
-                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
-                                )
-                            }
-                        }
-                    )
-                    .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                    .layoutPriority(1)
+            if let repository = model.repository {
+                switch workspaceSection {
+                case .changes:
+                    changesContent(repository)
+                case .history:
+                    RepositoryHistoryView(model: model)
                 }
             }
         }
         .task(id: model.diffRequest) {
             await model.loadSelectedDiff()
+        }
+        .onChange(of: model.repository?.rootURL) {
+            commitSubject = ""
+            commitBody = ""
+            isAmending = false
         }
     }
 
@@ -82,6 +68,16 @@ struct RepositoryWorkspaceView: View {
                 }
 
                 Spacer()
+
+                Picker("Workspace", selection: $workspaceSection) {
+                    Text("Changes").tag(RepositoryWorkspaceSection.changes)
+                    Text("History").tag(RepositoryWorkspaceSection.history)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .help("Switch between working tree changes and commit history")
+                .accessibilityLabel("Repository View")
 
                 VStack(alignment: .trailing, spacing: 5) {
                     Label(repository.head.label, systemImage: repository.head.systemImage)
@@ -114,6 +110,58 @@ struct RepositoryWorkspaceView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func changesContent(_ repository: RepositorySummary) -> some View {
+        if repository.changes.isEmpty {
+            ContentUnavailableView {
+                Label("Working Tree Clean", systemImage: "checkmark.circle")
+            } description: {
+                Text("There are no staged, unstaged, or untracked files.")
+            } actions: {
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([repository.rootURL])
+                }
+                .accessibilityHint("Open the Repository folder in Finder")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            HSplitView {
+                changeList(repository)
+                    .frame(
+                        minWidth: theme.metrics.changeListMinimumWidth,
+                        idealWidth: theme.metrics.changeListIdealWidth
+                    )
+
+                RepositoryDiffView(
+                    state: model.diffState,
+                    fileURL: selectedFileURL(in: repository),
+                    canStage: model.canStageSelectedChange,
+                    canUnstage: model.canUnstageSelectedChange,
+                    canDiscard: model.canDiscardSelectedChange,
+                    canStageHunks: model.canStageSelectedHunks,
+                    canUnstageHunks: model.canUnstageSelectedHunks,
+                    isBusy: model.isLoading,
+                    stage: { Task { await model.stageSelectedChange() } },
+                    unstage: { Task { await model.unstageSelectedChange() } },
+                    discard: { id in Task { await model.discardChange(id: id) } },
+                    updateHunk: { hunk in
+                        Task { await model.updateSelectedHunk(hunk) }
+                    },
+                    retry: { Task { await model.loadSelectedDiff() } },
+                    loadExpanded: {
+                        Task {
+                            await model.loadSelectedDiff(
+                                maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                            )
+                        }
+                    }
+                )
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+            }
+        }
     }
 
     private func changeList(_ repository: RepositorySummary) -> some View {
@@ -154,7 +202,67 @@ struct RepositoryWorkspaceView: View {
             case .status:
                 changeStatusList(repository)
             }
+
+            Divider()
+            commitComposer(repository)
         }
+    }
+
+    private func commitComposer(_ repository: RepositorySummary) -> some View {
+        VStack(spacing: 8) {
+            TextField("Commit subject", text: $commitSubject)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityHint("Describe the staged changes")
+
+            TextField("Commit body (optional)", text: $commitBody, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3, reservesSpace: true)
+                .accessibilityHint("Add optional details about the staged changes")
+
+            Toggle("Amend last commit", isOn: $isAmending)
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(repository.isUnborn || model.isLoading)
+                .help("Replace the latest commit with the staged changes and entered message")
+                .accessibilityHint("Rewrites the latest commit without including unstaged changes")
+
+            HStack {
+                Text("\(repository.changes.filter { $0.staged != nil }.count) staged")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                Spacer()
+
+                Button(isAmending ? "Amend" : "Commit") {
+                    let subject = commitSubject
+                    let body = commitBody
+                    let amend = isAmending
+                    Task {
+                        if await model.commit(subject: subject, body: body, amend: amend) {
+                            commitSubject = ""
+                            commitBody = ""
+                            isAmending = false
+                        }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(
+                    !model.canCommit
+                        || commitSubject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || (isAmending && repository.isUnborn)
+                        || model.isLoading
+                )
+                .help(isAmending ? "Replace the latest commit (⌘↩)" : "Commit staged changes (⌘↩)")
+                .accessibilityHint(
+                    isAmending
+                        ? "Replace the latest commit using the staged changes"
+                        : "Create a commit from the staged changes"
+                )
+            }
+        }
+        .padding(12)
     }
 
     private func changeHierarchyList(_ repository: RepositorySummary) -> some View {
@@ -464,11 +572,335 @@ private struct RepositoryChangeBadge: Identifiable {
     var id: String { label }
 }
 
+private struct RepositoryHistoryView: View {
+    @Bindable var model: AppModel
+    @Environment(\.gallaeTheme) private var theme
+    @State private var searchText = ""
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                VStack(spacing: 7) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("History")
+                                .font(.headline)
+                            Text("Current HEAD · latest 100")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if case .loaded(let history) = model.historyState {
+                            Text(history.commits.count, format: .number)
+                                .font(.caption.weight(.medium))
+                                .monospacedDigit()
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(theme.colors.badgeBackground, in: .capsule)
+                        }
+                    }
+
+                    if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
+                        TextField("Search message, author, or SHA", text: $searchText)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Search Commit History")
+                            .onExitCommand { searchText = "" }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                historyList
+            }
+            .frame(
+                minWidth: theme.metrics.changeListMinimumWidth,
+                idealWidth: theme.metrics.changeListIdealWidth
+            )
+
+            RepositoryCommitDetailView(model: model)
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+        }
+        .task(id: model.historyRequest) {
+            await model.loadHistory()
+        }
+        .task(id: model.commitPatchRequest) {
+            await model.loadSelectedCommitPatch()
+        }
+        .onChange(of: visibleHistoryCommitIDs, initial: true) { _, visibleIDs in
+            guard case .loaded = model.historyState else { return }
+            guard model.selectedHistoryCommitID.map(visibleIDs.contains) != true else { return }
+            model.selectedHistoryCommitID = visibleIDs.first
+        }
+    }
+
+    private var visibleHistoryCommitIDs: [String] {
+        guard case .loaded(let history) = model.historyState else { return [] }
+        return visibleCommits(in: history).map(\.id)
+    }
+
+    private func visibleCommits(in history: RepositoryHistory) -> [RepositoryHistory.Commit] {
+        history.commits.filter { $0.matches(search: searchText) }
+    }
+
+    @ViewBuilder
+    private var historyList: some View {
+        switch model.historyState {
+        case .notLoaded, .loading:
+            ProgressView("Loading History…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load History", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.loadHistory() }
+                }
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let history) where history.commits.isEmpty:
+            ContentUnavailableView(
+                "No Commits Yet",
+                systemImage: "clock.arrow.circlepath",
+                description: Text("Create the first commit to start this Repository’s history.")
+            )
+        case .loaded(let history):
+            let commits = visibleCommits(in: history)
+            if commits.isEmpty {
+                ContentUnavailableView {
+                    Label("No Matching Commits", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Try a different message, author, or SHA.")
+                } actions: {
+                    Button("Clear Search") { searchText = "" }
+                }
+            } else {
+                List(commits, selection: $model.selectedHistoryCommitID) { commit in
+                    RepositoryHistoryRow(
+                        commit: commit,
+                        isHEAD: commit.id == history.commits.first?.id
+                    )
+                    .tag(commit.id)
+                    .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+                }
+                .listStyle(.plain)
+                .accessibilityLabel("Commit History, \(commits.count) commits")
+            }
+        }
+    }
+}
+
+private struct RepositoryHistoryRow: View {
+    let commit: RepositoryHistory.Commit
+    let isHEAD: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 6))
+                .foregroundStyle(Color.accentColor)
+                .opacity(isHEAD ? 1 : 0.45)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if isHEAD {
+                        Text("HEAD")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(.quaternary, in: .capsule)
+                    }
+                    Text(commit.subject)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                HStack(spacing: 4) {
+                    Text(commit.authorName)
+                    Text("·")
+                    Text(commit.committedAt, style: .relative)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(commit.id.prefix(8))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))"
+        )
+    }
+}
+
+private struct RepositoryCommitDetailView: View {
+    @Bindable var model: AppModel
+
+    @ViewBuilder
+    var body: some View {
+        if let commit = model.selectedHistoryCommit {
+            VStack(spacing: 0) {
+                commitHeader(commit)
+                Divider()
+                patchContent
+            }
+        } else {
+            ContentUnavailableView(
+                "Select a Commit",
+                systemImage: "clock.arrow.circlepath",
+                description: Text("Choose a commit to inspect its message and changes.")
+            )
+        }
+    }
+
+    private func commitHeader(_ commit: RepositoryHistory.Commit) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(commit.subject)
+                .font(.headline)
+                .textSelection(.enabled)
+
+            if !commit.body.isEmpty {
+                Text(commit.body)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .textSelection(.enabled)
+            }
+
+            Text("\(commit.authorName) <\(commit.authorEmail)> · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Text("Commit \(commit.id)")
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            if !commit.parentIDs.isEmpty {
+                Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var patchContent: some View {
+        switch model.commitPatchState {
+        case .noSelection:
+            ContentUnavailableView(
+                "No Commit Changes",
+                systemImage: "doc.text.magnifyingglass"
+            )
+        case .loading:
+            ProgressView("Loading Commit Changes…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Commit Changes", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.loadSelectedCommitPatch() }
+                }
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let patch):
+            commitPatch(patch.content)
+        }
+    }
+
+    @ViewBuilder
+    private func commitPatch(_ content: RepositoryDiff.Section.Content) -> some View {
+        switch content {
+        case .text(let lines):
+            GeometryReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines) { line in
+                            RepositoryDiffLineView(line: line)
+                        }
+                    }
+                    .frame(minWidth: proxy.size.width, alignment: .leading)
+                    .textSelection(.enabled)
+                }
+                .defaultScrollAnchor(.topLeading, for: .alignment)
+            }
+            .accessibilityLabel("Selected commit changes")
+        case .binary:
+            RepositoryDiffNotice(
+                title: "Binary Changes",
+                message: "Gallae does not render binary content as text.",
+                fileURL: nil
+            )
+        case .unsupportedEncoding:
+            RepositoryDiffNotice(
+                title: "Unsupported Text Encoding",
+                message: "This patch is not valid UTF-8 and cannot be displayed safely.",
+                fileURL: nil
+            )
+        case .tooLarge(let byteLimit):
+            RepositoryDiffNotice(
+                title: "Commit Changes Too Large",
+                message: "The patch exceeds the \(ByteCountFormatter.string(fromByteCount: Int64(byteLimit), countStyle: .file)) preview limit.",
+                fileURL: nil,
+                primaryAction: byteLimit < RepositoryInspector.maximumExpandedDiffBytes
+                    ? (
+                        "Load Larger Preview",
+                        {
+                            Task {
+                                await model.loadSelectedCommitPatch(
+                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                                )
+                            }
+                        }
+                    )
+                    : nil
+            )
+        case .unavailable(let message):
+            RepositoryDiffNotice(
+                title: "No Commit Changes",
+                message: message,
+                fileURL: nil
+            )
+        }
+    }
+}
+
 private struct RepositoryDiffView: View {
     let state: RepositoryDiffLoadState
     let fileURL: URL?
+    let canStage: Bool
+    let canUnstage: Bool
+    let canDiscard: Bool
+    let canStageHunks: Bool
+    let canUnstageHunks: Bool
+    let isBusy: Bool
+    let stage: () -> Void
+    let unstage: () -> Void
+    let discard: (RepositorySummary.Change.ID) -> Void
+    let updateHunk: (RepositoryDiff.Hunk) -> Void
     let retry: () -> Void
     let loadExpanded: () -> Void
+    @State private var isConfirmingDiscard = false
 
     var body: some View {
         switch state {
@@ -497,43 +929,89 @@ private struct RepositoryDiffView: View {
 
     private func diffContent(_ diff: RepositoryDiff) -> some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(diff.fileName)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(diff.path)
-                Text(diff.path)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                if let originalPath = diff.originalPath {
-                    Text("From \(originalPath)")
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(diff.fileName)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(diff.path)
+                    Text(diff.path)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    if let originalPath = diff.originalPath {
+                        Text("From \(originalPath)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                if canDiscard {
+                    Button("Discard…", role: .destructive) {
+                        isConfirmingDiscard = true
+                    }
+                    .disabled(isBusy)
+                    .help("Discard this file’s unstaged changes")
+                    .accessibilityHint(
+                        "Shows a confirmation before replacing the working tree file"
+                    )
+                }
+                if canUnstage {
+                    Button("Unstage", action: unstage)
+                        .disabled(isBusy)
+                        .help("Remove this file from the next commit without changing it on disk")
+                        .accessibilityHint(
+                            "Remove this file from the next commit without changing its working tree content"
+                        )
+                }
+                if canStage {
+                    Button("Stage", action: stage)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isBusy)
+                        .help("Add this file to the next commit")
+                        .accessibilityHint("Add this file’s current changes to the next commit")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
 
             Divider()
 
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(diff.sections) { section in
-                        RepositoryDiffSectionView(
-                            section: section,
-                            fileURL: fileURL,
-                            loadExpanded: loadExpanded
-                        )
+            GeometryReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(diff.sections) { section in
+                            RepositoryDiffSectionView(
+                                section: section,
+                                fileURL: fileURL,
+                                canStageHunks: canStageHunks,
+                                canUnstageHunks: canUnstageHunks,
+                                isBusy: isBusy,
+                                updateHunk: updateHunk,
+                                loadExpanded: loadExpanded
+                            )
+                        }
                     }
+                    .frame(minWidth: proxy.size.width, alignment: .leading)
+                    .textSelection(.enabled)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+                .defaultScrollAnchor(.topLeading, for: .alignment)
             }
+        }
+        .alert("Discard Unstaged Changes?", isPresented: $isConfirmingDiscard) {
+            Button("Discard Changes", role: .destructive) {
+                discard(diff.path)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This replaces the file on disk with its staged version, or its last committed version when nothing is staged. Gallae cannot undo this action."
+            )
         }
     }
 }
@@ -541,6 +1019,10 @@ private struct RepositoryDiffView: View {
 private struct RepositoryDiffSectionView: View {
     let section: RepositoryDiff.Section
     let fileURL: URL?
+    let canStageHunks: Bool
+    let canUnstageHunks: Bool
+    let isBusy: Bool
+    let updateHunk: (RepositoryDiff.Hunk) -> Void
     let loadExpanded: () -> Void
     @Environment(\.gallaeTheme) private var theme
 
@@ -558,7 +1040,24 @@ private struct RepositoryDiffSectionView: View {
             switch section.content {
             case .text(let lines):
                 ForEach(lines) { line in
-                    RepositoryDiffLineView(line: line)
+                    if let hunk = section.hunks.first(where: { $0.id == line.id }),
+                       let actionLabel = hunkActionLabel {
+                        HStack(spacing: 8) {
+                            RepositoryDiffLineView(line: line, fillsWidth: false)
+                            Button(actionLabel) {
+                                updateHunk(hunk)
+                            }
+                            .controlSize(.small)
+                            .disabled(isBusy)
+                            .help("\(actionLabel) without changing the working tree file")
+                            .accessibilityHint("Update only this hunk in the Git index")
+                            Spacer(minLength: 8)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.colors.diffHunkBackground)
+                    } else {
+                        RepositoryDiffLineView(line: line)
+                    }
                 }
             case .binary:
                 RepositoryDiffNotice(
@@ -586,10 +1085,19 @@ private struct RepositoryDiffSectionView: View {
             }
         }
     }
+
+    private var hunkActionLabel: String? {
+        switch section.scope {
+        case .staged where canUnstageHunks: "Unstage Hunk"
+        case .unstaged where canStageHunks: "Stage Hunk"
+        default: nil
+        }
+    }
 }
 
 private struct RepositoryDiffLineView: View {
     let line: RepositoryDiff.Line
+    var fillsWidth = true
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -605,7 +1113,7 @@ private struct RepositoryDiffLineView: View {
         }
         .font(.callout.monospaced())
         .foregroundStyle(foregroundColor)
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
         .background(backgroundColor)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(line.accessibilityLabel)

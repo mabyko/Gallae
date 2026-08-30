@@ -1,16 +1,18 @@
-# Gallae 첫 공개 버전 구현 계획
+# Gallae 구현 계획
 
-> 상태: 첫 공개 범위 구현·개발 검증 완료 · 배포 전 최종 재확인 대기 · 2026-08-28
-> 범위: 조회 전용 Open & Inspect
+> 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 진행 중 · 2026-08-30
+> 현재 범위: 현재 HEAD의 최근 commit 검색
 
 ## 사용자 결과
 
-첫 공개 버전은 사용자가 Repository를 찾고, 열고, 현재 브랜치와 작업 트리 변경을 읽는 데까지 제공한다. 구현은 작게 검증하기 위해 두 단계로 나눈다.
+Open & Inspect는 사용자가 Repository를 찾고, 열고, 현재 브랜치와 작업 트리 변경을 읽는 데까지 제공한다. 구현은 작게 검증하기 위해 두 단계로 나눈다.
 
 - **1A · 열기와 검사**: Repository 직접 열기 → HEAD와 상태 표시 → 파일 선택 → 텍스트 diff
 - **1B · Library와 복원**: Library Folder 등록 → 점진적 탐색 → Repository 열기 → 재실행 복원
 
 1A와 1B는 같은 Repository Workspace를 사용한다. 첫 공개 버전에는 둘 다 포함하지만 반드시 1A를 먼저 동작하게 만든다.
+
+그 위에서 Commit 단계를 완성했고, 같은 Workspace 안에서 조회 전용 History를 작은 수직 슬라이스로 잇는다.
 
 ## 앱 진입 흐름
 
@@ -42,6 +44,8 @@ Library에서 선택은 요약만 바꾸고, 명시적인 Open 명령이 Workspa
 | Clean | 변경 파일이 없음 | Finder에서 열기 또는 이후 History로 이동 |
 | detached HEAD | 브랜치 대신 현재 commit | 이후 브랜치 선택 |
 | unborn branch | 브랜치 이름과 아직 commit이 없다는 상태 | 현재 상태 계속 검사 |
+| History가 비어 있음 | 아직 commit이 없음 | Changes로 돌아가 첫 commit 작성 |
+| History 읽기 실패 | 선택한 Repository와 Git 오류 | 같은 화면에서 다시 시도 |
 | upstream 없음 | 로컬 브랜치와 upstream 미설정 상태 | 이후 Remote 설정 |
 | 충돌 있음 | 충돌 파일과 읽을 수 있는 내용 | 이후 충돌 해결 기능 |
 | diff를 바로 표시할 수 없음 | 파일 유형, 크기 또는 실패 원인 | 외부에서 열기 또는 명시적으로 추가 로드 |
@@ -58,7 +62,7 @@ Library에서 선택은 요약만 바꾸고, 명시적인 Open 명령이 Workspa
 - 시스템 Git을 `Foundation.Process`로 실행
 - 외부 패키지, libgit2, 데이터베이스 없음
 - 하나의 메인 윈도우에서 Repository Library와 Workspace 전환
-- 첫 버전의 모든 Git 기능은 조회 전용
+- Open & Inspect와 History는 조회 전용이며, Commit 단계는 사용자가 명시적으로 실행한 index 변경과 commit만 수행
 - 오픈소스 라이선스는 [MIT License](../LICENSE)
 
 ## 코드 경계
@@ -71,11 +75,13 @@ GallaeApp
    │  └─ LibraryStore
    ├─ Changes
    │  └─ RepositoryInspector
+   ├─ History
+   │  └─ RepositoryInspector
    └─ GallaeTheme
 ```
 
 - `AppModel`은 화면 전환, 선택과 비동기 작업 취소만 맡는다.
-- `RepositoryInspector`는 Git 실행과 출력을 숨기고 불변 snapshot과 file diff를 돌려준다.
+- `RepositoryInspector`는 Git 실행과 출력을 숨기고 불변 snapshot, file diff와 commit history/patch를 돌려준다.
 - `RepositoryScanner`는 허용된 Library Folder 안에서만 후보를 찾고 결과를 점진적으로 전달한다.
 - `LibraryStore`는 URL bookmark, 최근 Repository와 마지막 Workspace를 저장한다.
 - 구현체가 하나뿐인 protocol, DI container, coordinator, database layer는 만들지 않는다.
@@ -138,7 +144,7 @@ GallaeApp
 - VoiceOver 이름과 포커스 순서가 명확하다.
 - System, Light, Dark와 Reduce Motion을 확인한다.
 - 많은 Repository, 많은 변경 파일과 큰 diff fixture에서 창 조작이 멈추지 않는다.
-- 스테이징, 커밋, 원격 통신, 그래프, 여러 창과 지속적인 파일 감시는 포함하지 않는다.
+- untracked 파일 삭제, rename·hunk discard, 충돌 해결, 원격 통신, 그래프, 여러 창과 지속적인 파일 감시는 포함하지 않는다.
 - 첫 화면에서 Repository와 HEAD를 바로 식별할 수 있다.
 - 탐색이 끝나기 전에도 발견한 Repository를 열 수 있다.
 - Repository, 파일과 diff를 키보드로 선택할 수 있다.
@@ -152,6 +158,73 @@ GallaeApp
 실제 53개 Repository Library의 전체 탐색은 Repository당 Git 검증을 한 번으로 줄이고 최대 4개씩 실행한 뒤 3회 0.20~0.27초로 측정했다.
 
 공식 Git 저장소 `f78ce2f7b6`의 4,850개 파일에 500 commit 전 tree를 적용한 실제 fixture에서는 tracked 1,335개와 untracked 47개를 합쳐 변경 1,382개가 나왔다. 전체 diff는 약 7.1MB, 가장 큰 단일 파일 diff는 약 283KB였고 `RepositoryInspector`가 모든 파일을 19.8초에 읽는 동안 2MB 기본 한계에 걸린 파일은 없었다. 기본 2MB와 사용자 요청 시 16MB 확장 한계를 유지한다.
+
+### 2A-1 · 파일 단위 Stage/Unstage — 완료
+
+- 선택한 파일의 diff 헤더에서 전체 파일을 Stage하거나 Unstage한다.
+- staged와 unstaged가 함께 있으면 두 동작을 모두 제공하고, 충돌 파일에는 제공하지 않는다.
+- 실행 중에는 중복 입력을 막고, 성공하면 Repository snapshot과 선택한 diff를 다시 읽는다. 실패하면 기존 상태를 유지하고 오류를 알린다.
+- 공백·한글·특수문자와 rename의 원본·새 경로를 명시적인 pathspec으로 전달한다.
+- 최초 commit 전 Unstage도 파일을 삭제하지 않고 untracked 상태로 되돌린다.
+- 일반 Commit 생성은 2A-2, hunk 단위 Stage/Unstage는 2A-3, 선택적 본문은 2A-4, Amend는 2A-5, 파일 단위 discard는 2A-6으로 분리한다. 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+### 2A-2 · 일반 Commit 생성 — 완료
+
+- Changes 하단에서 한 줄 제목을 입력하고 staged 변경으로 일반 commit을 만든다. `⌘Return`도 같은 동작을 실행한다.
+- 빈 제목, staged 변경 없음과 미해결 충돌 상태에서는 Commit을 실행하지 않는다.
+- 현재 index만 기록하고 unstaged 변경은 자동으로 포함하지 않는다.
+- 사용자의 기존 Git identity, hook과 서명 설정을 우회하지 않는다.
+- 실행 중 중복 입력을 막고, 성공하면 Repository snapshot과 최근 활동을 다시 읽을 수 있게 한다. 실패하면 staged 상태와 입력한 제목을 유지하고 Git 오류를 표시한다.
+- hunk 단위 Stage/Unstage는 2A-3, 선택적 Commit 본문은 2A-4, Amend는 2A-5, 파일 단위 discard는 2A-6으로 분리한다. 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+### 2A-3 · hunk 단위 Stage/Unstage — 완료
+
+- 수정된 tracked 텍스트 파일은 diff의 각 hunk 헤더에서 해당 hunk만 Stage하거나 Unstage한다.
+- Stage는 working tree diff의 선택 hunk만 index에 적용하고, Unstage는 staged diff의 선택 hunk만 index에서 되돌린다. 두 동작 모두 working tree 파일은 바꾸지 않는다.
+- 실행 중 중복 입력을 막고, 성공하면 Repository snapshot과 선택 파일 diff를 다시 읽는다. 파일이 다시 바뀌어 patch를 적용할 수 없으면 기존 상태를 유지하고 Git 오류를 표시한다.
+- 추적하지 않는 파일, 추가·삭제·rename, binary와 지원하지 않는 인코딩에는 hunk 동작을 제공하지 않고 파일 전체 Stage/Unstage를 유지한다.
+- 선택적 Commit 본문은 2A-4, Amend는 2A-5, 파일 단위 discard는 2A-6으로 분리하고 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+### 2A-4 · 선택적 Commit 본문 — 완료
+
+- Changes 하단에서 필수 제목과 선택적 여러 줄 본문을 함께 작성한다. 본문이 없어도 기존 일반 Commit 흐름은 그대로 동작한다.
+- 제목과 본문은 서로 다른 commit 문단으로 기록하며, 사용자의 Git identity, hook과 서명 설정을 우회하지 않는다.
+- `⌘Return`은 두 입력 중 어디에 포커스가 있어도 현재 staged 변경을 Commit한다.
+- 성공하면 두 입력을 비우고 Repository 상태를 다시 읽는다. 실패하면 staged 상태와 입력한 제목·본문을 유지한다.
+- Amend는 2A-5, 파일 단위 discard는 2A-6으로 분리하고 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+### 2A-5 · 최근 Commit Amend — 완료
+
+- Changes 하단에서 `Amend last commit`을 명시적으로 선택하면 현재 staged 변경과 입력한 제목·본문으로 최신 commit을 교체한다.
+- unstaged 변경은 포함하지 않고, 아직 commit이 없는 Repository와 미해결 충돌 상태에서는 실행하지 않는다.
+- 사용자의 기존 Git identity, hook과 서명 설정을 우회하지 않으며 commit 수는 늘어나지 않는다.
+- 성공하면 최신 HEAD와 Repository 상태를 다시 읽고 제목·본문·Amend 선택을 비운다. 실패하면 staged 상태와 입력·선택을 유지한다.
+- 메시지만 바꾸는 Amend와 충돌 해결은 이후 수직 슬라이스로 남기고, 파일 단위 discard는 2A-6에서 다룬다.
+
+### 2A-6 · tracked 파일의 unstaged 변경 Discard — 완료
+
+- 선택한 tracked 파일의 unstaged 수정·타입 변경·삭제에만 `Discard…`를 제공한다.
+- 확인 대화상자는 파일을 index 상태로 되돌리며 Gallae에서 실행 취소할 수 없음을 먼저 설명한다.
+- staged와 unstaged 변경이 함께 있으면 working tree만 index 상태로 되돌려 staged 내용은 그대로 유지한다.
+- 성공하면 Repository snapshot과 선택한 diff를 다시 읽고, 실패하면 기존 화면을 유지하며 오류를 표시한다.
+- 충돌·untracked·rename 파일에는 제공하지 않는다. untracked 파일 삭제와 rename·hunk discard, 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+### 3A-1 · 현재 HEAD의 최근 History — 완료
+
+- Repository 헤더의 `Changes`/`History` 전환으로 같은 Workspace에서 이동한다.
+- 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 읽고, 제목·작성자·시간·축약 SHA를 목록에 표시한다.
+- 선택한 commit은 제목·본문·작성자 이메일·전체 SHA·parent와 first-parent 기준 전체 patch를 보여 준다. root commit도 빈 tree 기준 patch를 표시한다.
+- 목록·patch 로딩, commit이 없는 빈 상태와 각각의 실패·재시도 상태를 구분한다. 목록은 키보드 선택과 VoiceOver 이름을 제공한다.
+- patch는 기본 2MB, 사용자 요청 시 16MB까지 확장하고 그보다 크거나 UTF-8이 아니면 원인을 표시한다.
+- 이 단계는 조회 전용이다. commit 그래프, 모든 branch/ref, 검색·필터, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
+
+### 3A-2 · 최근 History 검색 — 완료
+
+- 현재 HEAD에서 읽은 최대 100개 commit을 메시지·작성자·이메일·SHA로 즉시 검색한다.
+- 공백으로 나눈 검색어는 서로 다른 필드에 있어도 모두 일치해야 하며 대소문자를 구분하지 않는다.
+- 검색은 추가 Git 실행 없이 메모리에서 수행하고, 선택한 commit이 결과에서 사라지면 첫 결과로 이동한다.
+- 결과가 없으면 History 읽기 실패와 다른 빈 상태를 표시하고 같은 화면에서 검색을 지울 수 있다.
+- 이 단계는 조회 전용이다. commit 그래프, 모든 branch/ref, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
 
 ## 각 단계의 검증
 

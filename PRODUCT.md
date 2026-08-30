@@ -117,6 +117,48 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 스테이징, 커밋, 원격 통신, 그래프, 충돌 편집, 지속적인 파일 시스템 감시는 넣지 않는다. Library Folder는 추가 시점, 앱 실행 시점, 사용자의 새로고침 요청에 다시 탐색한다. 열린 Repository는 실행·복원·앱 활성화 시점과 사용자의 새로고침 요청에 다시 읽는다. 이후 흐름이 자연스럽게 이어지는지 확인할 수 있도록 시안에는 비활성 또는 예시 영역이 나타날 수 있다.
 
+## Commit 첫 수직 슬라이스
+
+검토한 파일 전체를 Stage하거나 Unstage하고, staged 변경이 있으면 한 줄 제목으로 일반 commit을 만든다. Stage/Unstage는 working tree 파일 내용을 바꾸지 않으며 충돌 파일에는 제공하지 않는다. Commit은 현재 index만 기록하고 unstaged 변경을 자동으로 포함하지 않으며, 성공한 Repository 상태와 diff를 같은 Workspace에서 바로 다시 읽는다.
+
+hunk 단위 Stage, commit 본문, amend, discard와 충돌 해결은 파일 단위 경계와 일반 commit 흐름이 실제 사용에서 검증된 뒤 추가한다.
+
+## Commit 두 번째 수직 슬라이스
+
+수정된 tracked 텍스트 파일은 diff의 각 hunk를 따로 Stage하거나 Unstage할 수 있다. 선택한 hunk만 index에 반영하고 working tree 파일은 바꾸지 않으며, 성공 뒤 staged와 working tree diff를 같은 Workspace에서 다시 읽는다.
+
+추적하지 않는 파일, 추가·삭제·rename, binary와 지원하지 않는 인코딩은 파일 전체 동작을 유지한다. amend, discard와 충돌 해결은 다음 수직 슬라이스로 남긴다.
+
+## Commit 세 번째 수직 슬라이스
+
+Commit 제목은 계속 필수이며, 사용자는 필요할 때 여러 줄 본문을 선택적으로 입력할 수 있다. Gallae는 제목과 본문을 서로 다른 commit 문단으로 기록하고, 기존 Git identity, hook과 서명 설정을 그대로 사용한다.
+
+성공하면 제목과 본문 입력을 함께 비우고 최신 Repository 상태를 다시 읽는다. 실패하면 staged 상태와 두 입력을 유지한다. Amend는 다음 수직 슬라이스로, discard와 충돌 해결은 이후로 남긴다.
+
+## Commit 네 번째 수직 슬라이스
+
+사용자는 명시적인 `Amend last commit` 선택 뒤 현재 staged 변경과 입력한 제목·본문으로 최신 commit을 교체할 수 있다. unstaged 변경은 포함하지 않으며, 아직 commit이 없는 Repository에서는 Amend를 제공하지 않는다.
+
+성공하면 commit 수는 늘리지 않고 최신 HEAD와 Repository 상태를 다시 읽으며 입력과 Amend 선택을 비운다. 실패하면 staged 상태와 입력·선택을 유지한다. discard와 충돌 해결은 이후 수직 슬라이스로 남긴다.
+
+## Commit 다섯 번째 수직 슬라이스
+
+사용자는 선택한 tracked 파일의 unstaged 수정·타입 변경·삭제를 명시적인 확인 뒤 discard할 수 있다. 파일에 staged 변경도 있으면 working tree만 index 상태로 되돌려 staged 내용은 보존하고, staged 변경이 없으면 마지막 commit 상태로 되돌린다.
+
+성공하면 Repository 상태와 diff를 같은 Workspace에서 다시 읽는다. 충돌·untracked·rename 파일에는 이 동작을 제공하지 않으며, untracked 파일 삭제와 rename·hunk discard는 이후 수직 슬라이스로 남긴다.
+
+## History 첫 수직 슬라이스
+
+사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다.
+
+commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent와 first-parent 기준 전체 patch를 같은 Workspace에서 읽는다. root commit도 표시하며 목록과 patch의 로딩·빈 상태·오류·재시도를 구분한다. 이 단계는 조회 전용이고, commit 그래프, 모든 branch/ref, 검색·필터, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
+
+## History 두 번째 수직 슬라이스
+
+사용자는 현재 HEAD에서 읽은 최근 commit을 메시지·작성자·이메일·SHA로 즉시 검색한다. 검색은 추가 Git 실행 없이 이미 읽은 최대 100개 안에서 이루어지며, 여러 검색어는 서로 다른 필드에 있어도 모두 일치하면 결과에 남는다.
+
+결과가 없으면 검색 실패와 History 읽기 실패를 구분하고 바로 검색을 지울 수 있다. commit 그래프, 모든 branch/ref, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
+
 ## 디자인 시안 2
 
 `Repository Library`, `Changes`, `History`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 세 상태를 모두 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.
@@ -129,7 +171,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 | Changes | Repository를 열었을 때의 기본 상태 | 현재 브랜치와 작업 트리를 파악하고 diff를 읽는다 | 저장소 문맥, 상태별 파일 목록, 선택 파일 diff |
 | History | 사용자가 히스토리로 이동했을 때 | 커밋 관계와 선택한 변경의 맥락을 읽는다 | 참조 탐색, 커밋 그래프/목록, 커밋 상세와 변경 파일 |
 
-첫 수직 슬라이스가 실제로 구현하는 상태는 Repository Library와 조회 전용 Changes다. History 시안은 이후 기능이 같은 작업공간 안에 자연스럽게 들어가는지만 검증한다.
+초기 수직 슬라이스는 Repository Library와 조회 전용 Changes를 먼저 구현했다. 현재는 같은 작업공간 안에 현재 HEAD 기준 History 첫 수직 슬라이스도 이어 붙였다.
 
 ### 검토한 디자인 방향
 
