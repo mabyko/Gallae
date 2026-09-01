@@ -62,8 +62,8 @@ struct AppView: View {
             showsDelayedLocalProgress = true
         }
         .toolbar {
-            ToolbarItemGroup {
-                if model.screen == .library {
+            if model.screen == .library {
+                ToolbarItemGroup {
                     Button("Choose Folder…", systemImage: "folder.badge.plus") {
                         chooseFolder()
                     }
@@ -71,7 +71,9 @@ struct AppView: View {
                     .accessibilityHint(
                         "Open a Git Repository, or add the selected folder to the Library"
                     )
-                } else {
+                }
+            } else {
+                ToolbarItemGroup {
                     Button {
                         model.showLibrary()
                     } label: {
@@ -81,10 +83,13 @@ struct AppView: View {
                     .help("Return to the Repository Library in this window (⇧⌘L)")
                     .accessibilityHint("Return to the Repository Library in this window")
                     .disabled(model.isLoading)
+                }
 
+                ToolbarItemGroup {
                     Button("Remotes", systemImage: "network") {
                         model.showRemotes()
                     }
+                    .labelStyle(.titleAndIcon)
                     .disabled(model.repository == nil || model.isLoading)
                     .help("Remotes · show the configured Git remote names and URLs")
                     .accessibilityHint("Show the configured Git remote names and URLs")
@@ -92,12 +97,15 @@ struct AppView: View {
                     Button("Integrate", systemImage: "arrow.triangle.merge") {
                         model.showIntegrateBranch()
                     }
+                    .labelStyle(.titleAndIcon)
                     .disabled(!model.canIntegrateBranch || model.isLoading)
                     .help("Integrate · fast-forward, merge, or rebase with another local branch")
                     .accessibilityHint(
                         "Fast-forward, merge, or rebase with another local branch"
                     )
+                }
 
+                ToolbarItemGroup {
                     Menu {
                         Button("Fetch & Prune", systemImage: "scissors") {
                             model.fetchRepository(pruning: true)
@@ -120,6 +128,7 @@ struct AppView: View {
                         )
                     } label: {
                         Label("Fetch", systemImage: "arrow.down.circle")
+                            .labelStyle(.titleAndIcon)
                     } primaryAction: {
                         model.fetchRepository()
                     }
@@ -132,6 +141,7 @@ struct AppView: View {
                     Button("Pull", systemImage: "arrow.down.to.line") {
                         model.pullRepository()
                     }
+                    .labelStyle(.titleAndIcon)
                     .disabled(!model.canPullRepository || model.isLoading)
                     .help(
                         model.canPullRepository
@@ -145,6 +155,7 @@ struct AppView: View {
                     Button(model.pushTitle, systemImage: "arrow.up.to.line") {
                         model.pushRepository()
                     }
+                    .labelStyle(.titleAndIcon)
                     .disabled(!model.canPushRepository || model.isLoading)
                     .help(
                         model.repository?.upstream == nil
@@ -156,7 +167,9 @@ struct AppView: View {
                             ? "Publish the current local branch to its only remote and start tracking it without force"
                             : "Push the current branch to its configured destination without force"
                     )
+                }
 
+                ToolbarItemGroup {
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
                     }
@@ -710,6 +723,8 @@ private struct RepositoryIntegrateBranchSheet: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .frame(maxWidth: 140)
+                        .layoutPriority(2)
                         .help(worktreeURL.path)
                     }
                 }

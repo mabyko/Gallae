@@ -208,7 +208,10 @@ struct RepositoryWorkspaceView: View {
                             )
                         }
                         if let upstream = repository.upstream {
-                            Label(upstream.label, systemImage: "arrow.up.arrow.down")
+                            Label(
+                                upstreamDisplayLabel(upstream, head: repository.head),
+                                systemImage: "arrow.up.arrow.down"
+                            )
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -603,6 +606,23 @@ struct RepositoryWorkspaceView: View {
         guard let selectedChangeID = model.selectedChangeID else { return nil }
         return repository.rootURL.appending(path: selectedChangeID)
     }
+
+    // remote branch 이름이 현재 branch와 같으면 remote 이름만 남겨 긴 이름의 중복 잘림을 줄인다.
+    private func upstreamDisplayLabel(
+        _ upstream: RepositorySummary.Upstream,
+        head: RepositorySummary.Head
+    ) -> String {
+        guard
+            case .branch(let branch) = head,
+            upstream.name.hasSuffix("/\(branch)"),
+            upstream.name.count > branch.count + 1
+        else {
+            return upstream.label
+        }
+        let remote = String(upstream.name.dropLast(branch.count + 1))
+        guard let ahead = upstream.ahead, let behind = upstream.behind else { return remote }
+        return "\(remote) · ↑\(ahead) ↓\(behind)"
+    }
 }
 
 private struct RepositoryBranchPicker: View {
@@ -800,6 +820,8 @@ private struct RepositoryBranchPicker: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                                .frame(maxWidth: 140)
+                                .layoutPriority(2)
                                 .help(worktreeURL.path)
                         }
                     }
@@ -1580,7 +1602,7 @@ private struct RepositoryReflogRow: View {
                     Text(entry.selector)
                         .font(.caption.monospaced())
                     Text("·")
-                    Text(entry.occurredAt, style: .relative)
+                    Text(RelativeTimeLabel.string(for: entry.occurredAt))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1747,7 +1769,7 @@ private struct RepositoryStashRow: View {
                     Text(stash.reference)
                         .font(.caption.monospaced())
                     Text("·")
-                    Text(stash.createdAt, style: .relative)
+                    Text(RelativeTimeLabel.string(for: stash.createdAt))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1766,6 +1788,19 @@ private struct RepositoryStashRow: View {
         .accessibilityLabel(
             "\(stash.reference), \(stash.subject), \(stash.createdAt.formatted(date: .abbreviated, time: .shortened)), revision \(stash.id.prefix(8))"
         )
+    }
+}
+
+@MainActor
+enum RelativeTimeLabel {
+    private static let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    static func string(for date: Date) -> String {
+        formatter.localizedString(for: date, relativeTo: .now)
     }
 }
 
@@ -1848,7 +1883,7 @@ private struct RepositoryHistoryRow: View {
                 HStack(spacing: 4) {
                     Text(commit.authorName)
                     Text("·")
-                    Text(commit.committedAt, style: .relative)
+                    Text(RelativeTimeLabel.string(for: commit.committedAt))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -2119,37 +2154,29 @@ private struct RepositoryCommitDetailView: View {
     }
 
     private func commitHeader(_ commit: RepositoryHistory.Commit) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(commit.subject)
-                    .font(.headline)
-                    .textSelection(.enabled)
-
-                if !commit.body.isEmpty {
-                    Text(commit.body)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(4)
-                        .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                HStack(spacing: 9) {
+                    RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(commit.authorName)
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                        Text("\(commit.authorEmail) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "Author \(commit.authorName), \(commit.authorEmail), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
+                )
 
-                Text("Commit \(commit.id)")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
+                Spacer(minLength: 12)
 
-                if !commit.parentIDs.isEmpty {
-                    Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            VStack(alignment: .trailing, spacing: 12) {
             HStack(spacing: 8) {
                 let rebasePlanUnavailableReason = rebasePlanUnavailableReason
                 Button("Rebase Plan…", systemImage: "list.number") {
@@ -2201,28 +2228,34 @@ private struct RepositoryCommitDetailView: View {
                         ?? "Choose whether reset changes stay staged or unstaged"
                 )
             }
+            .fixedSize()
+            }
 
-            HStack(spacing: 9) {
-                RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(commit.authorName)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Text(commit.authorEmail)
-                        .font(.caption)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(commit.subject)
+                    .font(.headline)
+                    .textSelection(.enabled)
+
+                if !commit.body.isEmpty {
+                    Text(commit.body)
+                        .font(.callout)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .lineLimit(4)
                         .textSelection(.enabled)
-                    Text(commit.committedAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
+                }
+
+                Text("Commit \(commit.id)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                if !commit.parentIDs.isEmpty {
+                    Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
+                        .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(
-                "Author \(commit.authorName), \(commit.authorEmail), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
-            )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

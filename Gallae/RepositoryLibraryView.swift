@@ -720,7 +720,7 @@ struct RepositoryLibraryView: View {
                             Text(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
                                 .lineLimit(2)
                                 .help(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
-                            Text("\(commit.id.prefix(8)) · \(commit.committedAt, style: .relative)")
+                            Text("\(commit.id.prefix(8)) · \(RelativeTimeLabel.string(for: commit.committedAt))")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
