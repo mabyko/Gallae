@@ -453,6 +453,26 @@ History 목록에서 commit 행의 local branch ref 배지를 우클릭하면, �
 
 remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
 
+## Advanced 열두 번째 수직 슬라이스
+
+`From` 방향에서 대상 branch가 현재 branch와 갈라져 있으면 fast-forward 대신 `Create Merge Commit on <대상>`을 제공한다. Gallae는 실행 전에 in-memory merge(`merge-tree`)로 결과를 계산해 충돌이 없으면 그대로 실행할 수 있음을, 충돌이 있으면 실행하지 않고 충돌 파일 수와 목록을 미리 보여 준다.
+
+실행은 계산한 tree로 대상과 현재 branch를 부모로 하는 merge commit을 만들고, 이전 값 검증과 함께 대상 ref만 옮긴다. HEAD·index·working tree는 바꾸지 않으므로 현재 working tree가 dirty해도 실행할 수 있고, 이동 사유는 대상 branch의 reflog에 남는다. commit은 Git 기본 merge message 형식과 사용자의 identity·서명 설정을 따르되, worktree 없이 실행되므로 merge hook이 실행되지 않는다는 점을 실행 전에 알린다.
+
+ref 이동은 Git의 Worktree 체크아웃 보호를 우회하므로, 이 경로는 어느 Worktree에도 체크아웃되지 않은 대상에만 제공하고 실행 직전에 체크아웃 여부를 다시 확인한다. 실행 사이에 대상이 움직여 이전 값 검증이 실패하면 ref를 바꾸지 않고 다시 읽는다. rebase와 force 계열은 계속 제공하지 않는다.
+
+## Advanced 열세 번째 수직 슬라이스
+
+`From` 방향의 갈라진 대상 branch가 다른 Worktree에 체크아웃된 경우, 해당 Worktree 폴더에서 `--no-ff --no-edit` merge를 실행해 branch와 그 working tree를 함께 갱신한다. 이 경로는 일반 merge이므로 사용자의 identity·hook·서명 설정이 그대로 실행된다. 실행 전에는 같은 in-memory 예측으로 충돌 여부와 파일을 미리 보여 준다.
+
+실행 직전에 그 Worktree가 여전히 대상 branch를 체크아웃 중인지 다시 확인한다. 그 Worktree에 진행 중인 Git 작업이 있거나 merge 대상과 겹치는 local 변경이 있으면 실행하지 않고 원인을 표시한다. merge가 충돌하면 강제로 덮어쓰지 않고 사용자가 고른다. 그 Worktree를 같은 창의 Workspace로 열어 기존 충돌 해결·Continue·Abort 흐름으로 잇거나, 즉시 Abort해 실행 전 상태 복원을 확인한다. 성공·실패 뒤에는 현재 Workspace의 Repository와 History를 다시 읽는다.
+
+## Advanced 열네 번째 수직 슬라이스
+
+어느 Worktree에도 체크아웃되지 않은 대상과의 merge가 충돌을 예측하면, 사용자가 명시적으로 선택한 경우에만 Gallae가 임시 linked Worktree를 만들어 대상 branch를 체크아웃하고 거기서 merge를 실행한다. 충돌은 그 Worktree를 같은 창의 Workspace로 열어 기존 충돌 해결·Continue·Abort 흐름으로 해결한다.
+
+임시 Worktree는 Workspace에 Gallae가 만든 것임을 표시하고 Recent에 남기지 않는다. 충돌 없이 merge가 끝나면 바로 제거하고, 충돌 해결을 거친 Worktree는 Continue·Abort 뒤 사용자 확인을 거쳐 제거한다. local 변경이나 진행 중인 작업이 남아 있으면 제거하지 않는다. 앱을 다시 실행하면 남은 임시 Worktree는 일반 Worktree로 취급해 기존 branch picker와 Worktree 흐름에서 다룬다. 이 슬라이스는 이 흐름에 필요한 생성·제거만 다루며, 일반적인 Worktree 생성·관리 UI는 이후 범위로 남긴다.
+
 ## 디자인 시안 2
 
 `Repository Library`, `Changes`, `History`, `Stashes`, `Reflog`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 이 상태를 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.

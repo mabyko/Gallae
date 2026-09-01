@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 2026-09-01
-> 현재 범위: 6C Integrate 방향 선택·reverse Fast-Forward 완료 · 다음 범위 결정 대기
+> 현재 범위: 6D checkout 없는 merge commit — in-memory merge와 충돌 예측(Advanced 열두 번째), Worktree 경유 merge와 충돌 해결 연결(열세 번째), 임시 Worktree(열네 번째)
 
 ## 사용자 결과
 
