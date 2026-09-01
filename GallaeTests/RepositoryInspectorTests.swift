@@ -4356,6 +4356,31 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(GitHubAvatarLookup.avatarURL(fromSearchResponse: Data("not json".utf8)))
     }
 
+    func testGPGKeyParserReadsSecretKeysAndMatchesConfiguredValues() {
+        let output = """
+        sec:u:4096:1:ABCDEF1234567890:1600000000:::u:::scESC:::+:::23::0:
+        fpr:::::::::00112233445566778899ABCDEF1234567890AABB:
+        uid:u::::1600000000::HASH::Eugene Epilo9er <epilo9er@gmail.com>::::::::::0:
+        ssb:u:4096:1:1122334455667788:1600000000::::::e:::+:::23:
+        sec:u:255:22:FEDCBA0987654321:1700000000:::u:::scESC:::+:::ed25519::0:
+        uid:u::::1700000000::HASH2::Second Key <second@example.com>::::::::::0:
+        """
+
+        let keys = GPGKeyParser.keys(fromColonOutput: output)
+        XCTAssertEqual(keys.count, 2)
+        XCTAssertEqual(keys.first?.id, "ABCDEF1234567890")
+        XCTAssertEqual(keys.first?.userID, "Eugene Epilo9er <epilo9er@gmail.com>")
+        XCTAssertEqual(keys.first?.shortID, "34567890")
+
+        XCTAssertEqual(GPGKeyParser.matchedKeyID("34567890", in: keys), "ABCDEF1234567890")
+        XCTAssertEqual(
+            GPGKeyParser.matchedKeyID("00112233445566778899abcdef1234567890", in: keys),
+            "ABCDEF1234567890"
+        )
+        XCTAssertNil(GPGKeyParser.matchedKeyID("DEADBEEF", in: keys))
+        XCTAssertNil(GPGKeyParser.matchedKeyID("", in: keys))
+    }
+
     func testAuthorIdentityInitialsAndStableColorIndex() {
         XCTAssertEqual(AuthorIdentity.initials(for: "Eugene Epilo9er"), "EE")
         XCTAssertEqual(AuthorIdentity.initials(for: "홍길동"), "홍")

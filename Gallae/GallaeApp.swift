@@ -178,13 +178,239 @@ enum CommandLineToolInstaller {
     }
 }
 
+struct GPGSecretKey: Identifiable, Equatable, Sendable {
+    let id: String
+    let userID: String
+
+    var shortID: String {
+        String(id.suffix(8))
+    }
+}
+
+enum GPGKeyParser {
+    static func keys(fromColonOutput output: String) -> [GPGSecretKey] {
+        var keys: [GPGSecretKey] = []
+        var pendingKeyID: String?
+        for line in output.split(whereSeparator: \.isNewline) {
+            let fields = line.split(separator: ":", omittingEmptySubsequences: false)
+            guard let type = fields.first else { continue }
+            if type == "sec", fields.count > 4 {
+                pendingKeyID = String(fields[4])
+            } else if type == "uid", let keyID = pendingKeyID, fields.count > 9 {
+                keys.append(.init(id: keyID, userID: String(fields[9])))
+                pendingKeyID = nil
+            }
+        }
+        return keys
+    }
+
+    // 설정값은 짧은 ID·긴 ID·전체 fingerprint 어느 쪽이든 올 수 있어 양방향 접미사로 맞춘다.
+    static func matchedKeyID(_ configured: String, in keys: [GPGSecretKey]) -> String? {
+        let configured = configured.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !configured.isEmpty else { return nil }
+        return keys.first {
+            $0.id.uppercased().hasSuffix(configured) || configured.hasSuffix($0.id.uppercased())
+        }?.id
+    }
+}
+
+enum CommitSigningState: Equatable, Sendable {
+    case loading
+    case sshConfigured
+    case gpgUnavailable
+    case failed(String)
+    case ready(keys: [GPGSecretKey], selectedKeyID: String?)
+}
+
+enum CommitSigningConfiguration {
+    private static let gitPath = "/usr/bin/git"
+
+    struct RunResult {
+        let status: Int32
+        let output: String
+        let error: String
+    }
+
+    nonisolated static func loadSynchronously() -> CommitSigningState {
+        if configValue("gpg.format") == "ssh" {
+            return .sshConfigured
+        }
+        guard let gpgPath = gpgProgramPath() else {
+            return .gpgUnavailable
+        }
+        let list = run(gpgPath, ["--list-secret-keys", "--with-colons"])
+        guard list.status == 0 else {
+            return .failed(list.error.isEmpty ? list.output : list.error)
+        }
+        let keys = GPGKeyParser.keys(fromColonOutput: list.output)
+        let signsCommits = configValue("commit.gpgsign") == "true"
+        let selectedKeyID = signsCommits
+            ? GPGKeyParser.matchedKeyID(configValue("user.signingkey"), in: keys)
+            : nil
+        return .ready(keys: keys, selectedKeyID: selectedKeyID)
+    }
+
+    nonisolated static func applySynchronously(keyID: String?) -> String? {
+        if let keyID {
+            let setKey = run(gitPath, ["config", "--global", "user.signingkey", keyID])
+            guard setKey.status == 0 else { return failureMessage(setKey) }
+            let enable = run(gitPath, ["config", "--global", "commit.gpgsign", "true"])
+            guard enable.status == 0 else { return failureMessage(enable) }
+        } else {
+            let disable = run(gitPath, ["config", "--global", "commit.gpgsign", "false"])
+            guard disable.status == 0 else { return failureMessage(disable) }
+        }
+        return nil
+    }
+
+    private nonisolated static func failureMessage(_ result: RunResult) -> String {
+        result.error.isEmpty
+            ? "Git couldn’t update the global signing configuration."
+            : result.error
+    }
+
+    private nonisolated static func configValue(_ key: String) -> String {
+        let result = run(gitPath, ["config", "--get", key])
+        guard result.status == 0 else { return "" }
+        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func gpgProgramPath() -> String? {
+        var candidates = ["gpg.openpgp.program", "gpg.program"]
+            .map(configValue)
+            .filter { $0.contains("/") }
+        candidates += [
+            "/opt/homebrew/bin/gpg",
+            "/usr/local/bin/gpg",
+            "/usr/local/MacGPG2/bin/gpg2",
+            "/usr/bin/gpg"
+        ]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private nonisolated static func run(_ executable: String, _ arguments: [String]) -> RunResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+        do {
+            try process.run()
+        } catch {
+            return .init(status: -1, output: "", error: error.localizedDescription)
+        }
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return .init(
+            status: process.terminationStatus,
+            output: String(decoding: outputData, as: UTF8.self),
+            error: String(decoding: errorData, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+}
+
 private struct GallaeSettingsView: View {
     @Environment(\.gallaeTheme) private var theme
     @AppStorage("loadsGitHubAvatars") private var loadsGitHubAvatars = true
     @State private var installedURL: URL?
     @State private var errorMessage: String?
+    @State private var signingState: CommitSigningState = .loading
+    @State private var selectedSigningKeyID: String?
+    @State private var signingErrorMessage: String?
 
     var body: some View {
+        TabView {
+            Tab("General", systemImage: "gearshape") {
+                generalSettings
+            }
+            Tab("Git", systemImage: "arrow.triangle.branch") {
+                gitSettings
+            }
+            Tab("Command Line", systemImage: "terminal") {
+                commandLineSettings
+            }
+        }
+        .frame(width: 480)
+    }
+
+    private var gitSettings: some View {
+        Form {
+            Section("Commit Signing") {
+                switch signingState {
+                case .loading:
+                    Text("Reading the Git signing configuration…")
+                        .foregroundStyle(.secondary)
+                case .sshConfigured:
+                    Label(
+                        "SSH commit signing is configured in Git. Gallae keeps that configuration unchanged.",
+                        systemImage: "key"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                case .gpgUnavailable:
+                    Label(
+                        "No GPG program was found. Install GnuPG, or set gpg.program in your Git configuration, to sign commits.",
+                        systemImage: "exclamationmark.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                case .failed(let message):
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(theme.colors.statusConflict)
+                    Button("Try Again") {
+                        Task { await loadSigningState() }
+                    }
+                case .ready(let keys, _):
+                    Picker("Sign Commits With", selection: $selectedSigningKeyID) {
+                        Text("No Signing Key").tag(String?.none)
+                        ForEach(keys) { key in
+                            Text("\(key.shortID) — \(key.userID)").tag(Optional(key.id))
+                        }
+                    }
+                    .accessibilityHint(
+                        "Choose the GPG key Git uses to sign new commits, or turn signing off"
+                    )
+
+                    if keys.isEmpty {
+                        Text("No secret GPG keys were found. Create or import a key with GnuPG first.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Applies to the global Git configuration (user.signingkey, commit.gpgsign). Repositories with their own signing setting keep it.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let signingErrorMessage {
+                        Label(signingErrorMessage, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(theme.colors.statusConflict)
+                            .accessibilityLabel("Signing update failed: \(signingErrorMessage)")
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .task {
+            await loadSigningState()
+        }
+        .onChange(of: selectedSigningKeyID) { _, newKeyID in
+            guard
+                case .ready(let keys, let currentKeyID) = signingState,
+                currentKeyID != newKeyID
+            else {
+                return
+            }
+            Task { await applySigningKey(newKeyID, keys: keys, previousKeyID: currentKeyID) }
+        }
+    }
+
+    private var generalSettings: some View {
         Form {
             Section("Author Avatars") {
                 Toggle("Load GitHub Avatars", isOn: $loadsGitHubAvatars)
@@ -196,7 +422,12 @@ private struct GallaeSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
 
+    private var commandLineSettings: some View {
+        Form {
             Section("Command Line Tool") {
                 LabeledContent("gallae command") {
                     Text(installedURL?.path ?? "Not installed")
@@ -227,12 +458,40 @@ private struct GallaeSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
         .onAppear(perform: refresh)
     }
 
     private func refresh() {
         installedURL = CommandLineToolInstaller.installedLocation()
+    }
+
+    private func loadSigningState() async {
+        signingState = .loading
+        signingErrorMessage = nil
+        let state = await Task.detached(priority: .userInitiated) {
+            CommitSigningConfiguration.loadSynchronously()
+        }.value
+        signingState = state
+        if case .ready(_, let selectedKeyID) = state {
+            selectedSigningKeyID = selectedKeyID
+        }
+    }
+
+    private func applySigningKey(
+        _ keyID: String?,
+        keys: [GPGSecretKey],
+        previousKeyID: String?
+    ) async {
+        signingErrorMessage = nil
+        let failure = await Task.detached(priority: .userInitiated) {
+            CommitSigningConfiguration.applySynchronously(keyID: keyID)
+        }.value
+        if let failure {
+            signingErrorMessage = failure
+            selectedSigningKeyID = previousKeyID
+        } else {
+            signingState = .ready(keys: keys, selectedKeyID: keyID)
+        }
     }
 
     private func install() {

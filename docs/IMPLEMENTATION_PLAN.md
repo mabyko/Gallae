@@ -655,6 +655,13 @@ GallaeApp
 - 같은 정리 동작을 branch 선택기의 행 우클릭 메뉴에서도 같은 확인·규칙으로 제공하고, 실행 뒤 Repository revision을 따라 branch 목록을 다시 읽는다.
 - 실제 임시 Repository 통합 테스트로 합쳐진 branch 삭제, 합쳐지지 않은 branch·현재 branch 거부와 ref 유지를 확인한다.
 
+### 6F-1 · 설정의 GPG commit 서명 키 선택 — 완료
+
+- 설정의 `Commit Signing`은 `gpg.openpgp.program`·`gpg.program` 설정과 표준 설치 경로에서 GPG를 찾아 secret key 목록을 키 ID·사용자 정보로 보여 준다.
+- 키 선택은 global Git 설정의 `user.signingkey`·`commit.gpgsign`만 바꾸고, `No Signing Key`는 `commit.gpgsign`만 끄고 기존 키 값은 남긴다. 적용 실패는 이전 선택으로 되돌리고 오류를 표시한다.
+- `gpg.format=ssh`는 SSH 서명 안내만 하고 바꾸지 않는다. GPG 없음·목록 실패·키 없음을 각각 구분해 안내하며 키 생성·가져오기는 하지 않는다.
+- colon 출력 파싱과 설정값(짧은 ID·긴 ID·fingerprint) 매칭은 단위 테스트로 검증한다.
+
 ## 각 단계의 검증
 
 모든 단계는 실행 가능한 앱과 `xcodebuild test` 성공으로 끝낸다. Git parser와 탐색처럼 분기나 반복이 있는 로직은 임시 디렉터리와 임시 Repository를 사용한 작은 통합 테스트를 남긴다. 경쟁 앱의 코드, 에셋, 문구, 정확한 수치와 동작을 fixture나 기준값으로 사용하지 않는다.

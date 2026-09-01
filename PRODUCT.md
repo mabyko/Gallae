@@ -484,6 +484,12 @@ History의 commit 행 메뉴는 현재 branch가 아닌 local branch에 정리 �
 
 같은 정리 동작은 branch 선택기의 행 우클릭 메뉴에서도 같은 확인과 규칙으로 제공하며, 실행 뒤 branch 목록을 다시 읽는다.
 
+## Advanced 열여섯 번째 수직 슬라이스
+
+사용자는 설정의 `Commit Signing`에서 commit 서명에 쓸 GPG 키를 고른다. Gallae는 Git의 `gpg.openpgp.program`·`gpg.program` 설정과 표준 설치 경로에서 GPG를 찾아 secret key 목록을 키 ID와 사용자 정보로 보여 준다. 키를 고르면 global Git 설정의 `user.signingkey`와 `commit.gpgsign`만 바꾸고, `No Signing Key`는 `commit.gpgsign`을 끄되 기존 `user.signingkey` 값은 지우지 않는다.
+
+Repository별 서명 설정은 Git 규칙대로 계속 우선하며, Gallae는 키를 만들거나 가져오지 않는다. `gpg.format`이 `ssh`면 SSH 서명이 설정돼 있음을 알리고 아무것도 바꾸지 않는다. GPG가 없거나 키 목록을 읽지 못하면 원인과 설치 안내를 표시하고, 적용 실패는 이전 선택을 유지한 채 오류를 보여 준다.
+
 ## 디자인 시안 2
 
 `Repository Library`, `Changes`, `History`, `Stashes`, `Reflog`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 이 상태를 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.
