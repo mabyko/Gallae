@@ -468,7 +468,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                         )
                     }
                 } else {
-                    Button("Fast-Forward \(selectedBranch ?? "Branch") to \(currentBranch)") {
+                    Button("Fast-Forward \(selectedBranch ?? "Branch")") {
                         fastForwardSelectedBranch()
                     }
                     .buttonStyle(.borderedProminent)

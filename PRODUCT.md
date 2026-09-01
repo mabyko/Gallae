@@ -440,7 +440,7 @@ Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실�
 
 사용자는 Integrate에서 통합 방향을 먼저 고른다. `Into <현재 branch>`는 기존과 같이 선택한 local branch를 현재 branch로 fast-forward·merge commit·rebase한다. 새 방향 `From <현재 branch>`는 현재 branch가 이미 포함한 다른 local branch를 checkout 없이 현재 HEAD로 fast-forward한다. 두 방향은 같은 branch 목록과 divergence 표시를 공유하고, 각 방향에서 성립하지 않는 동작은 이유와 함께 비활성으로 표시한다.
 
-어느 ref가 움직이는지는 안내 문장과 실행 버튼 제목에 함께 명시한다(`Fast-Forward main to bakekujira`). `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
+움직이는 ref는 실행 버튼 제목에(`Fast-Forward main`), 도착 지점은 방향 선택기와 안내 문장에 명시한다. 버튼에는 전치사를 넣지 않아 `From` 표기와 방향 프레임이 충돌하지 않게 한다. `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
 
 `From` 방향의 merge commit과 rebase는 checkout 없이 충돌을 해결할 수 없으므로 제공하지 않고, force 계열 갱신도 제공하지 않는다. 이 슬라이스는 어느 Worktree에도 체크아웃되지 않은 대상 branch만 갱신하며, 다른 Worktree에 체크아웃된 branch는 폴더 배지와 함께 비활성으로 표시하고 다음 수직 슬라이스에서 다룬다.
 

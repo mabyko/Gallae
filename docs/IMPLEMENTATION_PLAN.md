@@ -607,7 +607,7 @@ GallaeApp
 ### 6C-1 · Integrate 방향 선택과 checkout 없는 reverse Fast-Forward — 완료
 
 - Integrate 시트에 `Into <현재 branch>`·`From <현재 branch>` 방향 선택기를 두고, 두 방향이 같은 branch 목록·divergence 표시를 공유한다. `From`은 현재 branch가 이미 포함한 branch를 checkout 없이 현재 HEAD로 fast-forward한다.
-- 어느 ref가 움직이는지 안내 문장과 버튼 제목(`Fast-Forward main to bakekujira`)에 명시하고, `From`은 dirty working tree에서도 실행할 수 있으며 ref 외에는 아무것도 바꾸지 않는다는 캡션을 보여 준다.
+- 움직이는 ref는 버튼 제목에(`Fast-Forward main`), 도착 지점은 방향 선택기와 안내 문장에 명시한다. 버튼에 전치사를 넣지 않아 `From` 표기와 충돌하지 않으며, `From`은 dirty working tree에서도 실행할 수 있고 ref 외에는 아무것도 바꾸지 않는다는 캡션을 보여 준다.
 - 실행 직전 대상이 현재 HEAD의 ancestor인지 `merge-base --is-ancestor`로 재확인하고, `git fetch . <현재>:<대상>` 실행 뒤 결과 ref가 HEAD와 일치하는지 검증한다. fetch는 non-fast-forward 거부를 종료 코드 0으로 보고하므로 결과 검증이 필수다.
 - merge commit·rebase·force는 `From` 방향에 제공하지 않는다. 이동은 대상 branch reflog에 남는다.
 - 실제 임시 Repository 통합 테스트로 checkout 없는 갱신과 dirty 파일 보존, diverged 거부와 ref 불변을 확인한다.
