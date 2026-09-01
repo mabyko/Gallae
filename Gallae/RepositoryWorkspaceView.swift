@@ -740,16 +740,25 @@ private struct RepositoryBranchPicker: View {
                     }
                     .tag(branch)
                     .contentShape(.rect)
-                    .simultaneousGesture(
-                        TapGesture(count: 2).onEnded {
-                            selectedBranch = branch
-                            performPrimaryAction(for: branch)
-                        }
-                    )
                     .accessibilityElement(children: .combine)
                     .accessibilityValue(accessibilityValue(for: branch))
                 }
                 .listStyle(.plain)
+                .contextMenu(forSelectionType: String.self) { branches in
+                    if let branch = branches.first, branch != currentBranch {
+                        Button(
+                            model.localBranchWorktreeURLs[branch] == nil
+                                ? "Switch"
+                                : "Open Worktree"
+                        ) {
+                            performPrimaryAction(for: branch)
+                        }
+                        .disabled(model.isLoading)
+                    }
+                } primaryAction: { branches in
+                    guard let branch = branches.first else { return }
+                    performPrimaryAction(for: branch)
+                }
                 .accessibilityLabel("Local Branches")
             }
         }
