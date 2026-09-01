@@ -342,9 +342,15 @@ enum RepositoryBranchIntegrationAction: Sendable {
 }
 
 private struct RepositoryIntegrateBranchSheet: View {
+    private enum Direction: Hashable {
+        case into
+        case from
+    }
+
     @Environment(\.dismiss) private var dismiss
     @Bindable var model: AppModel
     let repositoryRootURL: URL
+    @State private var direction: Direction = .into
     @State private var selectedBranch: String?
     @State private var divergence: RepositoryBranchDivergence?
 
@@ -353,9 +359,24 @@ private struct RepositoryIntegrateBranchSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Integrate Local Branch", systemImage: "arrow.triangle.merge")
                     .font(.title2.bold())
-                Text("Bring the selected branch into \(currentBranch), or rebase \(currentBranch) onto it.")
-                    .foregroundStyle(.secondary)
+                Text(
+                    direction == .into
+                        ? "Bring the selected branch into \(currentBranch), or rebase \(currentBranch) onto it."
+                        : "Fast-forward the selected branch to \(currentBranch) without switching."
+                )
+                .foregroundStyle(.secondary)
             }
+
+            Picker("Direction", selection: $direction) {
+                Text("Into \(currentBranch)").tag(Direction.into)
+                Text("From \(currentBranch)").tag(Direction.from)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Integration Direction")
+            .accessibilityHint(
+                "Choose whether the selected branch updates \(currentBranch), or \(currentBranch) updates the selected branch"
+            )
 
             branchContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -366,21 +387,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            if hasCleanRepository {
-                Label(
-                    "Rebase rewrites commits unique to \(currentBranch); Gallae won’t force-push them.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } else {
-                Label(
-                    "Commit or stash the current changes before creating a merge commit or rebasing.",
-                    systemImage: "exclamationmark.circle"
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+            directionCaption
 
             HStack {
                 Spacer()
@@ -389,39 +396,53 @@ private struct RepositoryIntegrateBranchSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Rebase Current Branch") {
-                    integrateBranch(.rebase)
-                }
-                .disabled(
-                    selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
-                        || model.isLoading
-                )
-                .accessibilityHint(
-                    "Replay the current branch commits onto the selected local branch"
-                )
+                if direction == .into {
+                    Button("Rebase Current Branch") {
+                        integrateBranch(.rebase)
+                    }
+                    .disabled(
+                        selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
+                            || model.isLoading
+                    )
+                    .accessibilityHint(
+                        "Replay the current branch commits onto the selected local branch"
+                    )
 
-                Button("Create Merge Commit") {
-                    integrateBranch(.mergeCommit)
-                }
-                .disabled(
-                    selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
-                        || model.isLoading
-                )
-                .accessibilityHint(
-                    "Create a merge commit from the selected divergent local branch"
-                )
+                    Button("Create Merge Commit") {
+                        integrateBranch(.mergeCommit)
+                    }
+                    .disabled(
+                        selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
+                            || model.isLoading
+                    )
+                    .accessibilityHint(
+                        "Create a merge commit from the selected divergent local branch"
+                    )
 
-                Button("Fast-Forward") {
-                    integrateBranch(.fastForward)
+                    Button("Fast-Forward") {
+                        integrateBranch(.fastForward)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedBranch == nil || !canFastForward || model.isLoading)
+                    .accessibilityHint(
+                        "Fast-forward the current branch to the selected local branch"
+                    )
+                } else {
+                    Button("Fast-Forward \(selectedBranch ?? "Branch") to \(currentBranch)") {
+                        fastForwardSelectedBranch()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedBranch == nil || !canFastForwardOut || model.isLoading)
+                    .accessibilityHint(
+                        "Move the selected branch forward to the current branch without switching"
+                    )
                 }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(selectedBranch == nil || !canFastForward || model.isLoading)
-                .accessibilityHint("Fast-forward the current branch to the selected local branch")
             }
         }
         .padding(24)
-        .frame(minWidth: 560, idealWidth: 600, minHeight: 320, idealHeight: 400)
+        .frame(minWidth: 560, idealWidth: 600, minHeight: 360, idealHeight: 440)
         .task(id: repositoryRootURL) {
             await model.loadLocalBranches()
         }
@@ -442,15 +463,65 @@ private struct RepositoryIntegrateBranchSheet: View {
         guard let selectedBranch, let divergence else { return nil }
         let ours = divergence.uniqueToCurrent
         let theirs = divergence.uniqueToOther
-        switch (ours, theirs) {
-        case (0, 0):
-            return "\(currentBranch) and \(selectedBranch) point at the same commit."
-        case (_, 0):
-            return "\(currentBranch) already contains every commit of \(selectedBranch)."
-        case (0, _):
-            return "\(selectedBranch) is \(theirs) commit\(theirs == 1 ? "" : "s") ahead. Fast-Forward applies them to \(currentBranch)."
-        default:
-            return "Diverged · \(currentBranch) has \(ours) and \(selectedBranch) has \(theirs) unique commit\(theirs == 1 ? "" : "s"). Fast-Forward isn’t possible."
+        switch direction {
+        case .into:
+            switch (ours, theirs) {
+            case (0, 0):
+                return "\(currentBranch) and \(selectedBranch) point at the same commit."
+            case (_, 0):
+                return "\(currentBranch) already contains every commit of \(selectedBranch). Switch to From \(currentBranch) to update it here."
+            case (0, _):
+                return "\(selectedBranch) is \(theirs) commit\(theirs == 1 ? "" : "s") ahead. Fast-Forward applies them to \(currentBranch)."
+            default:
+                return "Diverged · \(currentBranch) has \(ours) and \(selectedBranch) has \(theirs) unique commit\(theirs == 1 ? "" : "s"). Fast-Forward isn’t possible."
+            }
+        case .from:
+            switch (ours, theirs) {
+            case (0, 0):
+                return "\(currentBranch) and \(selectedBranch) point at the same commit — nothing to fast-forward."
+            case (_, 0):
+                return "\(selectedBranch) is \(ours) commit\(ours == 1 ? "" : "s") behind. Fast-Forward updates it to \(currentBranch) without switching."
+            default:
+                return "\(currentBranch) doesn’t contain every commit of \(selectedBranch). Fast-Forward isn’t possible."
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var directionCaption: some View {
+        if direction == .into {
+            if hasCleanRepository {
+                Label(
+                    "Rebase rewrites commits unique to \(currentBranch); Gallae won’t force-push them.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                Label(
+                    "Commit or stash the current changes before creating a merge commit or rebasing.",
+                    systemImage: "exclamationmark.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        } else if let selectedBranch,
+                  let worktreeURL = model.localBranchWorktreeURLs[selectedBranch] {
+            Label(
+                "Fast-Forward runs in the Worktree at \(worktreeURL.path) and updates its files.",
+                systemImage: "folder"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .help(worktreeURL.path)
+        } else {
+            Label(
+                "Only the selected branch reference moves. No working files change, and uncommitted changes here are fine.",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
@@ -458,8 +529,21 @@ private struct RepositoryIntegrateBranchSheet: View {
         divergence.map { $0.uniqueToCurrent == 0 && $0.uniqueToOther > 0 } ?? true
     }
 
+    private var canFastForwardOut: Bool {
+        divergence.map { $0.uniqueToCurrent > 0 && $0.uniqueToOther == 0 } ?? true
+    }
+
     private var hasCommitsToIntegrate: Bool {
         divergence.map { $0.uniqueToOther > 0 } ?? true
+    }
+
+    private func fastForwardSelectedBranch() {
+        guard let selectedBranch else { return }
+        Task {
+            if await model.fastForwardBranchToCurrent(selectedBranch) {
+                dismiss()
+            }
+        }
     }
 
     @ViewBuilder
@@ -488,7 +572,22 @@ private struct RepositoryIntegrateBranchSheet: View {
             List(availableBranches, id: \.self, selection: $selectedBranch) { branch in
                 HStack {
                     Label(branch, systemImage: "arrow.triangle.branch")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Spacer()
+                    if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                        Label(
+                            worktreeURL.lastPathComponent == branch
+                                ? "Worktree"
+                                : worktreeURL.lastPathComponent,
+                            systemImage: "folder"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(worktreeURL.path)
+                    }
                 }
                     .tag(branch)
                     .contentShape(.rect)
@@ -2415,6 +2514,51 @@ final class AppModel {
             case .rebase: "Couldn’t Rebase"
             }
             present(error, title: title)
+            return false
+        }
+    }
+
+    func fastForwardBranchToCurrent(_ branch: String) async -> Bool {
+        guard !isLoading, let repository else { return false }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let worktrees = try await inspector.localBranchWorktrees(in: repository)
+            guard generation == inspectionGeneration else { return false }
+            let updatedRepository: RepositorySummary
+            if let worktreeURL = worktrees[branch] {
+                updatedRepository = try await inspector.fastForwardBranch(
+                    branch,
+                    inWorktreeAt: worktreeURL,
+                    toCurrentIn: repository
+                )
+            } else {
+                updatedRepository = try await inspector.fastForwardBranch(
+                    branch,
+                    toCurrentIn: repository
+                )
+            }
+            guard generation == inspectionGeneration else { return false }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
+            libraryRepositoryActivities[cacheID] = nil
+            libraryRepositoryActivityErrors[cacheID] = nil
+            return true
+        } catch is CancellationError {
+            return false
+        } catch {
+            guard generation == inspectionGeneration else { return false }
+            present(error, title: "Couldn’t Fast-Forward \(branch)")
             return false
         }
     }

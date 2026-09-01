@@ -1172,13 +1172,20 @@ private struct RepositoryHistoryView: View {
                     Button("Clear Search") { searchText = "" }
                 }
             } else {
+                let reachableCommitIDs = history.headReachableCommitIDs()
                 VStack(spacing: 0) {
                     List(commits, selection: $model.selectedHistoryCommitID) { commit in
                         RepositoryHistoryRow(
                             commit: commit,
                             isHEAD: commit.id == history.headCommitID,
                             graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
-                            graphLaneCount: history.graphLaneCount
+                            graphLaneCount: history.graphLaneCount,
+                            currentBranchName: currentBranchName,
+                            canFastForwardBranchRefs: commit.id != history.headCommitID
+                                && reachableCommitIDs.contains(commit.id),
+                            fastForward: { branch in
+                                Task { await model.fastForwardBranchToCurrent(branch) }
+                            }
                         )
                         .tag(commit.id)
                         .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
@@ -1202,6 +1209,25 @@ private struct RepositoryHistoryView: View {
 
     private var showsCommitGraph: Bool {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var currentBranchName: String? {
+        guard case .branch(let name) = model.repository?.head else { return nil }
+        return name
+    }
+}
+
+private extension RepositoryHistory {
+    func headReachableCommitIDs() -> Set<String> {
+        guard let headCommitID else { return [] }
+        let commitsByID = Dictionary(uniqueKeysWithValues: commits.map { ($0.id, $0) })
+        var visited: Set<String> = []
+        var stack = [headCommitID]
+        while let id = stack.popLast() {
+            guard visited.insert(id).inserted, let commit = commitsByID[id] else { continue }
+            stack.append(contentsOf: commit.parentIDs)
+        }
+        return visited
     }
 }
 
@@ -1603,6 +1629,9 @@ private struct RepositoryHistoryRow: View {
     let isHEAD: Bool
     let graphRow: RepositoryHistory.GraphRow?
     let graphLaneCount: Int
+    var currentBranchName: String? = nil
+    var canFastForwardBranchRefs = false
+    var fastForward: (String) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1642,6 +1671,16 @@ private struct RepositoryHistoryRow: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(.quaternary, in: .capsule)
+                                .contextMenu {
+                                    if let target = fastForwardTarget(for: reference) {
+                                        Button(
+                                            "Fast-Forward \(reference.name) to \(target)",
+                                            systemImage: "arrow.forward.to.line"
+                                        ) {
+                                            fastForward(reference.name)
+                                        }
+                                    }
+                                }
                         }
                         if commit.references.count > 2 {
                             Text("+\(commit.references.count - 2)")
@@ -1671,6 +1710,29 @@ private struct RepositoryHistoryRow: View {
         .accessibilityLabel(
             "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))\(topologyAccessibilityLabel)\(referenceAccessibilityLabel)"
         )
+        .accessibilityActions {
+            ForEach(fastForwardableReferences) { reference in
+                Button("Fast-Forward \(reference.name) to \(currentBranchName ?? "the current branch")") {
+                    fastForward(reference.name)
+                }
+            }
+        }
+    }
+
+    private func fastForwardTarget(for reference: RepositoryHistory.Reference) -> String? {
+        guard
+            canFastForwardBranchRefs,
+            reference.kind == .branch,
+            let currentBranchName,
+            reference.name != currentBranchName
+        else {
+            return nil
+        }
+        return currentBranchName
+    }
+
+    private var fastForwardableReferences: [RepositoryHistory.Reference] {
+        commit.references.filter { fastForwardTarget(for: $0) != nil }
     }
 
     private var topologyAccessibilityLabel: String {

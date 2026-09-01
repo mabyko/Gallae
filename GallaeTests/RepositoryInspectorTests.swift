@@ -3825,6 +3825,143 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(identical, .init(uniqueToCurrent: 0, uniqueToOther: 0))
     }
 
+    func testFastForwardsBranchToCurrentWithoutCheckout() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try write("dirty\n", to: "dirty.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let updated = try await inspector.fastForwardBranch("main", toCurrentIn: repository)
+
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let mainID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(mainID, headID)
+        XCTAssertEqual(updated.head, .branch("feature"))
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "dirty.txt"), encoding: .utf8),
+            "dirty\n"
+        )
+    }
+
+    func testFastForwardBranchToCurrentRejectsDivergedBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main only")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+
+        do {
+            _ = try await inspector.fastForwardBranch("main", toCurrentIn: repository)
+            XCTFail("Expected the diverged fast-forward to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .fastForwardOutRequiresAncestor)
+        }
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            mainBefore
+        )
+    }
+
+    func testFastForwardBranchToCurrentRefusesWorktreeCheckedOutBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let worktreeParent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: worktreeParent)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        let worktreeURL = worktreeParent.appending(path: "main-worktree")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+
+        do {
+            _ = try await inspector.fastForwardBranch("main", toCurrentIn: repository)
+            XCTFail("Expected the checked-out branch fast-forward to fail")
+        } catch let error as RepositoryBranchError {
+            guard case .fastForwardOutFailed = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            mainBefore
+        )
+    }
+
+    func testFastForwardsBranchInsideItsWorktree() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let worktreeParent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: worktreeParent)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("advanced\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        let worktreeURL = worktreeParent.appending(path: "main-worktree")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let updated = try await inspector.fastForwardBranch(
+            "main",
+            inWorktreeAt: worktreeURL,
+            toCurrentIn: repository
+        )
+
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let mainID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(mainID, headID)
+        XCTAssertEqual(updated.head, .branch("feature"))
+        XCTAssertEqual(
+            try String(contentsOf: worktreeURL.appending(path: "shared.txt"), encoding: .utf8),
+            "advanced\n"
+        )
+    }
+
     func testInstallsCommandLineToolIntoWritableDirectory() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 2026-09-01
-> 현재 범위: 계획된 구현 완료 · 다음 범위 결정 대기
+> 현재 범위: 6C Integrate 방향 선택·reverse Fast-Forward 완료 · 다음 범위 결정 대기
 
 ## 사용자 결과
 
@@ -603,6 +603,27 @@ GallaeApp
 - 성공·실패 뒤 실제 Repository 상태를 다시 읽는다. 충돌은 자동으로 숨기거나 중단하지 않고 기존 Rebase 충돌 해결·Continue·Abort 흐름으로 넘긴다.
 - 실행 중 Cancel은 Rebase를 Abort하고 원래 branch·HEAD와 깨끗한 working tree가 복원됐는지 확인한다. 복원 실패는 별도 오류로 구분한다.
 - 실제 임시 Repository 통합 테스트로 재정렬·`reword`·`squash`·`drop`, 다른 branch ref 보존과 충돌 뒤 Abort 원복을 확인한다.
+
+### 6C-1 · Integrate 방향 선택과 checkout 없는 reverse Fast-Forward — 완료
+
+- Integrate 시트에 `Into <현재 branch>`·`From <현재 branch>` 방향 선택기를 두고, 두 방향이 같은 branch 목록·divergence 표시를 공유한다. `From`은 현재 branch가 이미 포함한 branch를 checkout 없이 현재 HEAD로 fast-forward한다.
+- 어느 ref가 움직이는지 안내 문장과 버튼 제목(`Fast-Forward main to bakekujira`)에 명시하고, `From`은 dirty working tree에서도 실행할 수 있으며 ref 외에는 아무것도 바꾸지 않는다는 캡션을 보여 준다.
+- 실행 직전 대상이 현재 HEAD의 ancestor인지 `merge-base --is-ancestor`로 재확인하고, `git fetch . <현재>:<대상>` 실행 뒤 결과 ref가 HEAD와 일치하는지 검증한다. fetch는 non-fast-forward 거부를 종료 코드 0으로 보고하므로 결과 검증이 필수다.
+- merge commit·rebase·force는 `From` 방향에 제공하지 않는다. 이동은 대상 branch reflog에 남는다.
+- 실제 임시 Repository 통합 테스트로 checkout 없는 갱신과 dirty 파일 보존, diverged 거부와 ref 불변을 확인한다.
+
+### 6C-2 · Worktree에 체크아웃된 branch의 Fast-Forward — 완료
+
+- `From` 대상이 다른 Worktree에 체크아웃된 경우 ref만 옮기지 않고 해당 Worktree 폴더에서 `merge --ff-only`를 실행해 branch와 그 working tree를 함께 전진시킨다.
+- 대상 행과 캡션에 branch picker와 같은 폴더 배지·경로를 표시하고, 실행 직전 그 Worktree가 여전히 대상 branch를 체크아웃 중인지 재확인한다.
+- 겹치는 local 수정이나 진행 중인 작업으로 git이 거부하면 덮어쓰지 않고 원인을 표시한다. 해당 Worktree를 열지는 않는다.
+- 실제 임시 linked Worktree 통합 테스트로 branch·Worktree 파일 동시 전진과, 체크아웃된 branch에 대한 ref-only 경로의 거부를 확인한다.
+
+### 6C-3 · History ref 배지 Fast-Forward 진입점 — 완료
+
+- History 행의 local branch ref 배지를 우클릭하면, 그 commit이 현재 HEAD에서 도달 가능하고 HEAD가 아니며 현재 branch가 아닐 때 `Fast-Forward <branch> to <현재 branch>`를 제공한다.
+- 도달 가능성은 읽어 둔 commit의 parent 관계로 판정하고, 실행은 6C-1·6C-2와 같은 검사·실행 경로를 재사용한다. remote-tracking branch·tag 배지와 detached HEAD에는 제공하지 않는다.
+- 같은 동작을 VoiceOver 사용자 지정 액션으로도 제공하며, 키보드로는 같은 명령 모델의 Integrate 시트를 사용한다.
 
 ## 각 단계의 검증
 

@@ -433,6 +433,26 @@ Gallae는 별도 편집기를 열지 않고 Git의 기본 메시지로 작업을
 
 Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실행하지 않는다. 성공하면 새 History를 다시 읽고, 충돌하면 진행 중인 Rebase와 충돌 파일을 기존 Workspace에 보여 준다. 실패 뒤에는 실제 상태를 다시 읽으며, 사용자가 실행 중 취소하면 Rebase를 Abort하고 원래 branch·HEAD와 깨끗한 상태가 복원됐는지 확인한다.
 
+## Advanced 아홉 번째 수직 슬라이스
+
+사용자는 Integrate에서 통합 방향을 먼저 고른다. `Into <현재 branch>`는 기존과 같이 선택한 local branch를 현재 branch로 fast-forward·merge commit·rebase한다. 새 방향 `From <현재 branch>`는 현재 branch가 이미 포함한 다른 local branch를 checkout 없이 현재 HEAD로 fast-forward한다. 두 방향은 같은 branch 목록과 divergence 표시를 공유하고, 각 방향에서 성립하지 않는 동작은 이유와 함께 비활성으로 표시한다.
+
+어느 ref가 움직이는지는 안내 문장과 실행 버튼 제목에 함께 명시한다(`Fast-Forward main to bakekujira`). `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
+
+`From` 방향의 merge commit과 rebase는 checkout 없이 충돌을 해결할 수 없으므로 제공하지 않고, force 계열 갱신도 제공하지 않는다. 이 슬라이스는 어느 Worktree에도 체크아웃되지 않은 대상 branch만 갱신하며, 다른 Worktree에 체크아웃된 branch는 폴더 배지와 함께 비활성으로 표시하고 다음 수직 슬라이스에서 다룬다.
+
+## Advanced 열 번째 수직 슬라이스
+
+`From` 방향의 대상 branch가 다른 Worktree에 체크아웃된 경우, ref만 옮기면 그 Worktree의 파일과 어긋나므로 Gallae는 대신 해당 Worktree 폴더에서 `--ff-only` merge를 실행해 branch와 그 Worktree의 working tree를 함께 전진시킨다. 대상 행은 branch picker와 같은 폴더 배지로 Worktree를 표시하고, 실행 문구는 어느 폴더가 갱신되는지 밝힌다.
+
+fast-forward와 겹치지 않는 그 Worktree의 local 수정은 보존하고, 겹치거나 진행 중인 Git 작업이 있으면 강제로 덮어쓰지 않고 원인을 표시한다. 누락되었거나 정리 가능한 Worktree는 대상으로 하지 않는다. 성공·실패 뒤에는 현재 Workspace의 Repository와 History를 다시 읽으며, 해당 Worktree를 열지는 않는다. 열기는 기존 branch picker의 Open Worktree를 유지한다.
+
+## Advanced 열한 번째 수직 슬라이스
+
+History 목록에서 commit 행의 local branch ref 배지를 우클릭하면, 그 branch가 현재 HEAD의 ancestor이고 현재 branch가 아닐 때 `Fast-Forward <branch> to <현재 branch>`를 제공한다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 같은 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
+
+remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
+
 ## 디자인 시안 2
 
 `Repository Library`, `Changes`, `History`, `Stashes`, `Reflog`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 이 상태를 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.

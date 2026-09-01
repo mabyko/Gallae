@@ -714,6 +714,35 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
+    func fastForwardBranch(
+        _ branch: String,
+        toCurrentIn repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.fastForwardBranchSynchronously(branch, toCurrentIn: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func fastForwardBranch(
+        _ branch: String,
+        inWorktreeAt worktreeURL: URL,
+        toCurrentIn repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.fastForwardBranchSynchronously(
+                branch,
+                inWorktreeAt: worktreeURL,
+                toCurrentIn: repository
+            )
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
     func mergeBranchCreatingCommit(
         _ branch: String,
         in repository: RepositorySummary
@@ -1766,6 +1795,94 @@ struct RepositoryInspector: Sendable {
             throw RepositoryBranchError.mergeFailed(result.standardError)
         }
         return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func fastForwardBranchSynchronously(
+        _ branch: String,
+        toCurrentIn repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let currentBranch = try fastForwardOutCurrentBranch(of: branch, in: repository)
+
+        let head = try runGit([
+            "-C", repository.rootURL.path,
+            "rev-parse", "--verify", "HEAD"
+        ])
+        guard head.status == 0 else {
+            throw RepositoryBranchError.fastForwardOutFailed(head.standardError)
+        }
+        let headID = line(from: head.standardOutput)
+
+        // 목적지를 refs/heads/로 완전 수식하면 fetch가 기존 ref를 삭제 후 갱신하려다
+        // 실패할 수 있어, 비수식 branch 이름으로 fast-forward 갱신만 요청한다.
+        let fetch = try runGit([
+            "-C", repository.rootURL.path,
+            "fetch", ".", "\(currentBranch):\(branch)"
+        ])
+        guard fetch.status == 0 else {
+            throw RepositoryBranchError.fastForwardOutFailed(fetch.standardError)
+        }
+
+        // fetch는 non-fast-forward 거부를 종료 코드 0으로 보고하므로 결과 ref를 직접 확인한다.
+        let updated = try runGit([
+            "-C", repository.rootURL.path,
+            "rev-parse", "--verify", "refs/heads/\(branch)"
+        ])
+        guard updated.status == 0, line(from: updated.standardOutput) == headID else {
+            throw RepositoryBranchError.fastForwardOutFailed(fetch.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func fastForwardBranchSynchronously(
+        _ branch: String,
+        inWorktreeAt worktreeURL: URL,
+        toCurrentIn repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let currentBranch = try fastForwardOutCurrentBranch(of: branch, in: repository)
+
+        let worktrees = try localBranchWorktreesSynchronously(in: repository)
+        guard worktrees[branch].map({ sameFileLocation($0, worktreeURL) }) == true else {
+            throw RepositoryBranchError.fastForwardOutUnavailable
+        }
+
+        let result = try runGit([
+            "-C", worktreeURL.path,
+            "merge", "--quiet", "--ff-only", "--", currentBranch
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.fastForwardOutFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func fastForwardOutCurrentBranch(
+        of branch: String,
+        in repository: RepositorySummary
+    ) throws -> String {
+        let currentRepository = try inspectSynchronously(at: repository.rootURL)
+        let branches = try localBranchesSynchronously(in: currentRepository)
+        guard branches.contains(branch) else {
+            throw RepositoryBranchError.unavailable
+        }
+        guard
+            case .branch(let currentBranch) = currentRepository.head,
+            !currentRepository.isUnborn,
+            currentBranch != branch
+        else {
+            throw RepositoryBranchError.fastForwardOutUnavailable
+        }
+
+        let ancestry = try runGit([
+            "-C", repository.rootURL.path,
+            "merge-base", "--is-ancestor", branch, "HEAD"
+        ])
+        if ancestry.status == 1 {
+            throw RepositoryBranchError.fastForwardOutRequiresAncestor
+        }
+        guard ancestry.status == 0 else {
+            throw RepositoryBranchError.fastForwardOutFailed(ancestry.standardError)
+        }
+        return currentBranch
     }
 
     private static func mergeBranchCreatingCommitSynchronously(
@@ -3747,6 +3864,9 @@ enum RepositoryBranchError: LocalizedError, Equatable {
     case rebaseRequiresCleanRepository
     case rebaseFailed(String)
     case rebaseRecoveryFailed(String)
+    case fastForwardOutUnavailable
+    case fastForwardOutRequiresAncestor
+    case fastForwardOutFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -3780,6 +3900,14 @@ enum RepositoryBranchError: LocalizedError, Equatable {
             message.isEmpty
                 ? "Git couldn’t create or fully abort the merge. Inspect the current changes before continuing."
                 : "Git couldn’t create or fully abort the merge. Inspect the current changes before continuing.\n\n\(message)"
+        case .fastForwardOutUnavailable:
+            "Choose another local branch to fast-forward from a current branch that has a commit."
+        case .fastForwardOutRequiresAncestor:
+            "The current branch doesn’t contain every commit of the selected branch, so it can’t be fast-forwarded without switching."
+        case .fastForwardOutFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t fast-forward the selected branch. No references were changed."
+                : "Git couldn’t fast-forward the selected branch.\n\n\(message)"
         case .rebaseUnavailable:
             "Choose another local branch to rebase a current branch that has a commit."
         case .rebaseRequiresCleanRepository:
