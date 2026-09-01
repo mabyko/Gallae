@@ -67,6 +67,7 @@ struct AppView: View {
                     Button("Choose Folder…", systemImage: "folder.badge.plus") {
                         chooseFolder()
                     }
+                    .help("Open a Git Repository, or add the selected folder to the Library")
                     .accessibilityHint(
                         "Open a Git Repository, or add the selected folder to the Library"
                     )
@@ -77,6 +78,7 @@ struct AppView: View {
                         Label("Library", systemImage: "chevron.backward")
                             .labelStyle(.titleAndIcon)
                     }
+                    .help("Return to the Repository Library in this window (⇧⌘L)")
                     .accessibilityHint("Return to the Repository Library in this window")
                     .disabled(model.isLoading)
 
@@ -84,12 +86,14 @@ struct AppView: View {
                         model.showRemotes()
                     }
                     .disabled(model.repository == nil || model.isLoading)
+                    .help("Remotes · show the configured Git remote names and URLs")
                     .accessibilityHint("Show the configured Git remote names and URLs")
 
                     Button("Integrate", systemImage: "arrow.triangle.merge") {
                         model.showIntegrateBranch()
                     }
                     .disabled(!model.canIntegrateBranch || model.isLoading)
+                    .help("Integrate · fast-forward, merge, or rebase with another local branch")
                     .accessibilityHint(
                         "Fast-forward, merge, or rebase with another local branch"
                     )
@@ -120,6 +124,7 @@ struct AppView: View {
                         model.fetchRepository()
                     }
                     .disabled(model.repository == nil || model.isLoading)
+                    .help("Fetch Remote changes (⌥⌘F) · the menu has Fetch & Prune and automatic Fetch")
                     .accessibilityHint(
                         "Fetch Remote changes, or open the menu to also prune stale tracking references"
                     )
@@ -141,6 +146,11 @@ struct AppView: View {
                         model.pushRepository()
                     }
                     .disabled(!model.canPushRepository || model.isLoading)
+                    .help(
+                        model.repository?.upstream == nil
+                            ? "Publish the current branch to its remote and start tracking it"
+                            : "Push the current branch to its configured destination"
+                    )
                     .accessibilityHint(
                         model.repository?.upstream == nil
                             ? "Publish the current local branch to its only remote and start tracking it without force"
@@ -151,6 +161,7 @@ struct AppView: View {
                         Task { await model.refreshRepository() }
                     }
                     .disabled(model.repository == nil || model.isLoading)
+                    .help("Refresh · read the current Repository state again (⌘R)")
                     .accessibilityHint("Read the current Repository state again")
                 }
             }
