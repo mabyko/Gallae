@@ -3962,6 +3962,303 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testCreatesMergeCommitOnBranchWithoutCheckout() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main only")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+        try write("dirty\n", to: "dirty.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let updated = try await inspector.createMergeCommit(on: "main", in: repository)
+
+        XCTAssertEqual(updated.head, .branch("feature"))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "main^1"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            mainBefore
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "main^2"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            headID
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "log", "-1", "--format=%s", "main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "Merge branch 'feature' into main"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "dirty.txt"), encoding: .utf8),
+            "dirty\n"
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            headID
+        )
+    }
+
+    func testMergePredictionReportsConflictedFiles() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        let prediction = try await inspector.mergePrediction(into: "main", in: repository)
+        XCTAssertFalse(prediction.isClean)
+        XCTAssertEqual(prediction.conflictedPaths, ["shared.txt"])
+
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+        do {
+            _ = try await inspector.createMergeCommit(on: "main", in: repository)
+            XCTFail("Expected the conflicted merge to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .mergeOutConflicts(["shared.txt"]))
+        }
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            mainBefore
+        )
+    }
+
+    func testCreateMergeCommitRequiresDivergence() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        do {
+            _ = try await inspector.createMergeCommit(on: "main", in: repository)
+            XCTFail("Expected the non-diverged merge to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .mergeCommitRequiresDivergence)
+        }
+    }
+
+    func testCreateMergeCommitRefusesWorktreeCheckedOutBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let worktreeParent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: worktreeParent)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main only")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+        let worktreeURL = worktreeParent.appending(path: "main-worktree")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+
+        do {
+            _ = try await inspector.createMergeCommit(on: "main", in: repository)
+            XCTFail("Expected the checked-out branch merge to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .mergeOutCheckedOut)
+        }
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            mainBefore
+        )
+    }
+
+    func testMergesCurrentBranchInsideTargetWorktree() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let worktreeParent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: worktreeParent)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main only")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+        let worktreeURL = worktreeParent.appending(path: "main-worktree")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let updated = try await inspector.mergeCurrentBranch(
+            into: "main",
+            inWorktreeAt: worktreeURL,
+            in: repository
+        )
+
+        XCTAssertEqual(updated.head, .branch("feature"))
+        // git은 기본 브랜치로 merge할 때 " into <branch>" 접미사를 생략한다.
+        XCTAssertTrue(
+            try gitOutput(["-C", worktreeURL.path, "log", "-1", "--format=%s"])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix("Merge branch 'feature'")
+        )
+        XCTAssertEqual(
+            try String(contentsOf: worktreeURL.appending(path: "feature.txt"), encoding: .utf8),
+            "feature\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: worktreeURL.appending(path: "main.txt"), encoding: .utf8),
+            "main\n"
+        )
+    }
+
+    func testWorktreeMergeConflictLeavesResolvableStateAndAborts() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let worktreeParent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: worktreeParent)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+        let worktreeURL = worktreeParent.appending(path: "main-worktree")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+
+        do {
+            _ = try await inspector.mergeCurrentBranch(
+                into: "main",
+                inWorktreeAt: worktreeURL,
+                in: repository
+            )
+            XCTFail("Expected the conflicted worktree merge to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .mergeInWorktreeConflicted(worktreeURL))
+        }
+        XCTAssertEqual(
+            try gitOutput(["-C", worktreeURL.path, "rev-parse", "--verify", "MERGE_HEAD"])
+                .isEmpty,
+            false
+        )
+
+        _ = try await inspector.abortMerge(inWorktreeAt: worktreeURL, in: repository)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            mainBefore
+        )
+        XCTAssertEqual(
+            try String(contentsOf: worktreeURL.appending(path: "shared.txt"), encoding: .utf8),
+            "main\n"
+        )
+    }
+
+    func testAddsAndRemovesTemporaryWorktree() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let baseDirectory = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: baseDirectory)
+        }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        let worktreeURL = try await inspector.addTemporaryWorktree(
+            for: "main",
+            in: repository,
+            baseDirectory: baseDirectory
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", worktreeURL.path, "branch", "--show-current"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "main"
+        )
+
+        try write("blocking\n", to: worktreeURL.appending(path: "blocking.txt").lastPathComponent, in: worktreeURL)
+        do {
+            _ = try await inspector.removeWorktree(at: worktreeURL, in: repository)
+            XCTFail("Expected removal of a dirty worktree to fail")
+        } catch let error as RepositoryBranchError {
+            guard case .worktreeRemovalFailed = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        try FileManager.default.removeItem(at: worktreeURL.appending(path: "blocking.txt"))
+        _ = try await inspector.removeWorktree(at: worktreeURL, in: repository)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
+    }
+
     func testInstallsCommandLineToolIntoWritableDirectory() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

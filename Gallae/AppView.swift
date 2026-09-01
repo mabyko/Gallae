@@ -353,6 +353,8 @@ private struct RepositoryIntegrateBranchSheet: View {
     @State private var direction: Direction = .into
     @State private var selectedBranch: String?
     @State private var divergence: RepositoryBranchDivergence?
+    @State private var mergePrediction: RepositoryMergePrediction?
+    @State private var conflictedWorktreeURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -428,6 +430,30 @@ private struct RepositoryIntegrateBranchSheet: View {
                     .accessibilityHint(
                         "Fast-forward the current branch to the selected local branch"
                     )
+                } else if isDivergedSelection {
+                    if selectedWorktreeURL == nil, mergePrediction?.isClean == false {
+                        Button("Merge in Temporary Worktree…") {
+                            mergeInTemporaryWorktree()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(selectedBranch == nil || model.isLoading)
+                        .accessibilityHint(
+                            "Create a temporary Worktree for the selected branch, merge there, and resolve the conflicts in Gallae"
+                        )
+                    } else {
+                        Button("Create Merge Commit on \(selectedBranch ?? "Branch")") {
+                            mergeIntoSelectedBranch()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(
+                            selectedBranch == nil || !canCreateMergeCommitOut || model.isLoading
+                        )
+                        .accessibilityHint(
+                            "Create a merge commit on the selected branch without switching to it"
+                        )
+                    }
                 } else {
                     Button("Fast-Forward \(selectedBranch ?? "Branch") to \(currentBranch)") {
                         fastForwardSelectedBranch()
@@ -453,10 +479,87 @@ private struct RepositoryIntegrateBranchSheet: View {
             guard !Task.isCancelled, branch == selectedBranch else { return }
             divergence = result
         }
+        .task(id: predictionBranch) {
+            mergePrediction = nil
+            guard let branch = predictionBranch else { return }
+            let result = await model.mergePrediction(into: branch)
+            guard !Task.isCancelled, branch == predictionBranch else { return }
+            mergePrediction = result
+        }
         .onChange(of: model.localBranchesState, initial: true) { _, _ in
             reconcileSelection()
         }
+        .confirmationDialog(
+            "Merge Conflicted in Worktree",
+            isPresented: Binding(
+                get: { conflictedWorktreeURL != nil },
+                set: { if !$0 { conflictedWorktreeURL = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: conflictedWorktreeURL
+        ) { worktreeURL in
+            Button("Open Worktree") {
+                Task {
+                    if await model.openRepository(at: worktreeURL) {
+                        dismiss()
+                    }
+                }
+            }
+            Button("Abort Merge", role: .destructive) {
+                Task { await model.abortMergeInWorktree(at: worktreeURL) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { worktreeURL in
+            Text(
+                "The merge stopped with conflicts in \(worktreeURL.path). Open the Worktree to resolve the conflicts and Continue, or abort to restore its earlier state."
+            )
+        }
         .interactiveDismissDisabled(model.isLoading)
+    }
+
+    private var predictionBranch: String? {
+        guard direction == .from, isDivergedSelection else { return nil }
+        return selectedBranch
+    }
+
+    private var isDivergedSelection: Bool {
+        divergence.map { $0.uniqueToCurrent > 0 && $0.uniqueToOther > 0 } == true
+    }
+
+    private var selectedWorktreeURL: URL? {
+        guard let selectedBranch else { return nil }
+        return model.localBranchWorktreeURLs[selectedBranch]
+    }
+
+    private var canCreateMergeCommitOut: Bool {
+        if selectedWorktreeURL != nil {
+            // Worktree 경로는 충돌해도 열어서 해결할 수 있으므로 예측과 무관하게 실행한다.
+            return true
+        }
+        return mergePrediction?.isClean == true
+    }
+
+    private func mergeIntoSelectedBranch() {
+        guard let selectedBranch else { return }
+        Task {
+            switch await model.mergeCurrentBranchIntoBranch(selectedBranch) {
+            case .completed:
+                dismiss()
+            case .conflictedInWorktree(let worktreeURL):
+                conflictedWorktreeURL = worktreeURL
+            case .failed:
+                break
+            }
+        }
+    }
+
+    private func mergeInTemporaryWorktree() {
+        guard let selectedBranch else { return }
+        Task {
+            if await model.mergeInTemporaryWorktree(selectedBranch) {
+                dismiss()
+            }
+        }
     }
 
     private var divergenceDescription: String? {
@@ -481,8 +584,18 @@ private struct RepositoryIntegrateBranchSheet: View {
                 return "\(currentBranch) and \(selectedBranch) point at the same commit — nothing to fast-forward."
             case (_, 0):
                 return "\(selectedBranch) is \(ours) commit\(ours == 1 ? "" : "s") behind. Fast-Forward updates it to \(currentBranch) without switching."
+            case (0, _):
+                return "\(selectedBranch) is ahead of \(currentBranch) — there is nothing to bring into it."
             default:
-                return "\(currentBranch) doesn’t contain every commit of \(selectedBranch). Fast-Forward isn’t possible."
+                guard let mergePrediction else {
+                    return "Diverged · checking whether a merge commit would conflict…"
+                }
+                if mergePrediction.isClean {
+                    return "Diverged · a merge commit can bring \(currentBranch) into \(selectedBranch) without conflicts."
+                }
+                let paths = mergePrediction.conflictedPaths
+                let shown = paths.prefix(3).joined(separator: ", ")
+                return "Merging would conflict in \(paths.count) file\(paths.count == 1 ? "" : "s"): \(shown)\(paths.count > 3 ? ", …" : "")"
             }
         }
     }
@@ -505,16 +618,27 @@ private struct RepositoryIntegrateBranchSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-        } else if let selectedBranch,
-                  let worktreeURL = model.localBranchWorktreeURLs[selectedBranch] {
+        } else if let worktreeURL = selectedWorktreeURL {
             Label(
-                "Fast-Forward runs in the Worktree at \(worktreeURL.path) and updates its files.",
+                isDivergedSelection
+                    ? "The merge runs in the Worktree at \(worktreeURL.path). Conflicts can be resolved there in Gallae."
+                    : "Fast-Forward runs in the Worktree at \(worktreeURL.path) and updates its files.",
                 systemImage: "folder"
             )
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .help(worktreeURL.path)
+        } else if isDivergedSelection {
+            Label(
+                mergePrediction?.isClean == false
+                    ? "A temporary Worktree checks out \(selectedBranch ?? "the branch") so the conflicts can be resolved in Gallae."
+                    : "The merge commit is created without a checkout, so merge hooks don’t run. Only the selected branch reference moves.",
+                systemImage: "info.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
         } else {
             Label(
                 "Only the selected branch reference moves. No working files change, and uncommitted changes here are fine.",
@@ -1353,6 +1477,12 @@ enum AppScreen: Equatable, Sendable {
     case workspace
 }
 
+enum RepositoryMergeIntoBranchResult: Equatable, Sendable {
+    case completed
+    case conflictedInWorktree(URL)
+    case failed
+}
+
 enum RepositoryRemoteOperation: Equatable, Sendable {
     case fetch(remote: String?, pruning: Bool)
     case automaticFetch
@@ -1559,6 +1689,10 @@ final class AppModel {
     var recentRepositories: [RepositoryLocation] = []
     var selectedLibrarySource: RepositoryLibrarySource? = .recent
     var selectedLibraryRepositoryID: URL?
+    // ponytail: 임시 Worktree 추적은 세션 안에서만 유지한다. 재실행 뒤 남은
+    // 임시 Worktree는 일반 Worktree로 취급해 기존 흐름에서 다룬다(명세 6D-3).
+    private(set) var temporaryWorktrees: [URL: URL] = [:]
+    var pendingTemporaryWorktreeRemovalURL: URL?
     private(set) var repositoryRevision = 0
     private(set) var libraryRepositorySummaries: [URL: RepositorySummary] = [:]
 
@@ -2563,6 +2697,198 @@ final class AppModel {
         }
     }
 
+    func mergePrediction(into branch: String) async -> RepositoryMergePrediction? {
+        guard let repository else { return nil }
+        return try? await inspector.mergePrediction(into: branch, in: repository)
+    }
+
+    var isCurrentWorkspaceTemporaryWorktree: Bool {
+        guard let repository else { return false }
+        return temporaryWorktreeEntry(for: repository.rootURL) != nil
+    }
+
+    private func temporaryWorktreeEntry(for url: URL) -> (worktree: URL, origin: URL)? {
+        temporaryWorktrees
+            .first { sameFileLocation($0.key, url) }
+            .map { ($0.key, $0.value) }
+    }
+
+    func mergeCurrentBranchIntoBranch(_ branch: String) async -> RepositoryMergeIntoBranchResult {
+        guard !isLoading, let repository else { return .failed }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let worktrees = try await inspector.localBranchWorktrees(in: repository)
+            guard generation == inspectionGeneration else { return .failed }
+            let updatedRepository: RepositorySummary
+            if let worktreeURL = worktrees[branch] {
+                updatedRepository = try await inspector.mergeCurrentBranch(
+                    into: branch,
+                    inWorktreeAt: worktreeURL,
+                    in: repository
+                )
+            } else {
+                updatedRepository = try await inspector.createMergeCommit(
+                    on: branch,
+                    in: repository
+                )
+            }
+            guard generation == inspectionGeneration else { return .failed }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
+            libraryRepositoryActivities[cacheID] = nil
+            libraryRepositoryActivityErrors[cacheID] = nil
+            return .completed
+        } catch is CancellationError {
+            return .failed
+        } catch RepositoryBranchError.mergeInWorktreeConflicted(let worktreeURL) {
+            guard generation == inspectionGeneration else { return .failed }
+            return .conflictedInWorktree(worktreeURL)
+        } catch {
+            guard generation == inspectionGeneration else { return .failed }
+            present(error, title: "Couldn’t Create Merge Commit")
+            return .failed
+        }
+    }
+
+    func abortMergeInWorktree(at worktreeURL: URL) async {
+        guard !isLoading, let repository else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.abortMerge(
+                inWorktreeAt: worktreeURL,
+                in: repository
+            )
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Abort Merge")
+        }
+    }
+
+    func mergeInTemporaryWorktree(_ branch: String) async -> Bool {
+        guard !isLoading, let repository else { return false }
+        let originRootURL = repository.rootURL
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let worktreeURL = try await inspector.addTemporaryWorktree(for: branch, in: repository)
+            guard generation == inspectionGeneration else { return false }
+            do {
+                let updatedRepository = try await inspector.mergeCurrentBranch(
+                    into: branch,
+                    inWorktreeAt: worktreeURL,
+                    in: repository
+                )
+                guard generation == inspectionGeneration else { return false }
+                // 충돌 없이 끝났으면 임시 Worktree를 바로 제거한다(명세 6D-3).
+                let cleanedRepository = try await inspector.removeWorktree(
+                    at: worktreeURL,
+                    in: updatedRepository
+                )
+                guard generation == inspectionGeneration else { return false }
+                apply(cleanedRepository, showWorkspaceOnSuccess: false)
+                let cacheID = repositoryCacheID(for: cleanedRepository.rootURL)
+                libraryRepositoryActivities[cacheID] = nil
+                libraryRepositoryActivityErrors[cacheID] = nil
+                return true
+            } catch RepositoryBranchError.mergeInWorktreeConflicted {
+                guard generation == inspectionGeneration else { return false }
+                temporaryWorktrees[worktreeURL] = originRootURL
+                return await inspect(
+                    worktreeURL,
+                    rememberOnSuccess: false,
+                    markCurrentStaleOnFailure: false,
+                    showWorkspaceOnSuccess: true,
+                    presentFailure: true,
+                    failureTitle: "Couldn’t Open Temporary Worktree"
+                )
+            }
+        } catch is CancellationError {
+            return false
+        } catch {
+            guard generation == inspectionGeneration else { return false }
+            present(error, title: "Couldn’t Merge in Temporary Worktree")
+            return false
+        }
+    }
+
+    func removeTemporaryWorktree(at worktreeURL: URL) async {
+        guard let entry = temporaryWorktreeEntry(for: worktreeURL) else { return }
+        pendingTemporaryWorktreeRemovalURL = nil
+
+        guard await inspect(
+            entry.origin,
+            rememberOnSuccess: false,
+            markCurrentStaleOnFailure: false,
+            showWorkspaceOnSuccess: true,
+            presentFailure: true,
+            failureTitle: "Couldn’t Open Repository"
+        ), let repository else {
+            return
+        }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.removeWorktree(
+                at: entry.worktree,
+                in: repository
+            )
+            guard generation == inspectionGeneration else { return }
+            temporaryWorktrees.removeValue(forKey: entry.worktree)
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Remove Worktree")
+        }
+    }
+
     func createStash(
         message: String,
         includeUntracked: Bool,
@@ -2997,6 +3323,10 @@ final class AppModel {
             guard generation == inspectionGeneration else { return }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
+            if updatedRepository.operation == nil,
+               let entry = temporaryWorktreeEntry(for: updatedRepository.rootURL) {
+                pendingTemporaryWorktreeRemovalURL = entry.worktree
+            }
         } catch is CancellationError {
             return
         } catch {

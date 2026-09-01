@@ -93,6 +93,12 @@ struct RepositoryBranchDivergence: Equatable, Sendable {
     let uniqueToOther: Int
 }
 
+struct RepositoryMergePrediction: Equatable, Sendable {
+    let isClean: Bool
+    let conflictedPaths: [String]
+    let treeID: String
+}
+
 struct RepositoryHistory: Equatable, Sendable {
     struct GraphEdge: Equatable, Sendable {
         let fromLane: Int
@@ -738,6 +744,88 @@ struct RepositoryInspector: Sendable {
                 inWorktreeAt: worktreeURL,
                 toCurrentIn: repository
             )
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func mergePrediction(
+        into branch: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositoryMergePrediction {
+        try Task.checkCancellation()
+        let prediction = try await Task.detached(priority: .userInitiated) {
+            try Self.mergePredictionSynchronously(into: branch, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return prediction
+    }
+
+    func createMergeCommit(
+        on branch: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.createMergeCommitSynchronously(on: branch, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func mergeCurrentBranch(
+        into branch: String,
+        inWorktreeAt worktreeURL: URL,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.mergeCurrentBranchSynchronously(
+                into: branch,
+                inWorktreeAt: worktreeURL,
+                in: repository
+            )
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func abortMerge(
+        inWorktreeAt worktreeURL: URL,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.abortMergeSynchronously(inWorktreeAt: worktreeURL, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
+    func addTemporaryWorktree(
+        for branch: String,
+        in repository: RepositorySummary,
+        baseDirectory: URL? = nil
+    ) async throws -> URL {
+        try Task.checkCancellation()
+        let worktreeURL = try await Task.detached(priority: .userInitiated) {
+            try Self.addTemporaryWorktreeSynchronously(
+                for: branch,
+                in: repository,
+                baseDirectory: baseDirectory
+            )
+        }.value
+        try Task.checkCancellation()
+        return worktreeURL
+    }
+
+    func removeWorktree(
+        at worktreeURL: URL,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.removeWorktreeSynchronously(at: worktreeURL, in: repository)
         }.value
         try Task.checkCancellation()
         return updatedRepository
@@ -1851,6 +1939,224 @@ struct RepositoryInspector: Sendable {
         ])
         guard result.status == 0 else {
             throw RepositoryBranchError.fastForwardOutFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func mergePredictionSynchronously(
+        into branch: String,
+        in repository: RepositorySummary
+    ) throws -> RepositoryMergePrediction {
+        guard case .branch(let currentBranch) = repository.head else {
+            throw RepositoryBranchError.mergeOutUnavailable
+        }
+
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "merge-tree", "--write-tree", "-z", "--name-only",
+            branch, currentBranch
+        ])
+        guard result.status == 0 || result.status == 1 else {
+            throw RepositoryBranchError.mergeOutFailed(result.standardError)
+        }
+
+        let fields = result.standardOutput
+            .split(separator: 0, omittingEmptySubsequences: false)
+            .map { String(decoding: $0, as: UTF8.self) }
+        guard let treeID = fields.first, !treeID.isEmpty else {
+            throw RepositoryInspectionError.invalidGitOutput
+        }
+        var conflictedPaths: [String] = []
+        for field in fields.dropFirst() {
+            guard !field.isEmpty else { break }
+            conflictedPaths.append(field)
+        }
+        return .init(
+            isClean: result.status == 0,
+            conflictedPaths: conflictedPaths,
+            treeID: treeID
+        )
+    }
+
+    private static func createMergeCommitSynchronously(
+        on branch: String,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let currentRepository = try inspectSynchronously(at: repository.rootURL)
+        let branches = try localBranchesSynchronously(in: currentRepository)
+        guard branches.contains(branch) else {
+            throw RepositoryBranchError.unavailable
+        }
+        guard
+            case .branch(let currentBranch) = currentRepository.head,
+            !currentRepository.isUnborn,
+            currentBranch != branch
+        else {
+            throw RepositoryBranchError.mergeOutUnavailable
+        }
+
+        // ref 이동은 Git의 Worktree 체크아웃 보호를 우회하므로 직접 재확인한다.
+        let worktrees = try localBranchWorktreesSynchronously(in: currentRepository)
+        guard worktrees[branch] == nil else {
+            throw RepositoryBranchError.mergeOutCheckedOut
+        }
+
+        for revisions in [["HEAD", branch], [branch, "HEAD"]] {
+            let ancestry = try runGit([
+                "-C", repository.rootURL.path,
+                "merge-base", "--is-ancestor"
+            ] + revisions)
+            if ancestry.status == 0 {
+                throw RepositoryBranchError.mergeCommitRequiresDivergence
+            }
+            guard ancestry.status == 1 else {
+                throw RepositoryBranchError.mergeOutFailed(ancestry.standardError)
+            }
+        }
+
+        let targetHead = try runGit([
+            "-C", repository.rootURL.path,
+            "rev-parse", "--verify", "refs/heads/\(branch)"
+        ])
+        guard targetHead.status == 0 else {
+            throw RepositoryBranchError.mergeOutFailed(targetHead.standardError)
+        }
+        let targetID = line(from: targetHead.standardOutput)
+
+        let currentHead = try runGit([
+            "-C", repository.rootURL.path,
+            "rev-parse", "--verify", "HEAD"
+        ])
+        guard currentHead.status == 0 else {
+            throw RepositoryBranchError.mergeOutFailed(currentHead.standardError)
+        }
+        let currentID = line(from: currentHead.standardOutput)
+
+        let prediction = try mergePredictionSynchronously(into: branch, in: currentRepository)
+        guard prediction.isClean else {
+            throw RepositoryBranchError.mergeOutConflicts(prediction.conflictedPaths)
+        }
+
+        // commit-tree는 commit.gpgsign을 스스로 읽지 않을 수 있어 설정을 확인해 서명을 명시한다.
+        let signingConfig = try runGit([
+            "-C", repository.rootURL.path,
+            "config", "--type=bool", "--default=false", "commit.gpgsign"
+        ])
+        let shouldSign = signingConfig.status == 0
+            && line(from: signingConfig.standardOutput) == "true"
+
+        var commitArguments = [
+            "-C", repository.rootURL.path,
+            "commit-tree", prediction.treeID,
+            "-p", targetID, "-p", currentID,
+            "-m", "Merge branch '\(currentBranch)' into \(branch)"
+        ]
+        if shouldSign {
+            commitArguments.append("-S")
+        }
+        let commit = try runGit(commitArguments)
+        guard commit.status == 0 else {
+            throw RepositoryBranchError.mergeOutFailed(commit.standardError)
+        }
+        let mergeCommitID = line(from: commit.standardOutput)
+
+        let update = try runGit([
+            "-C", repository.rootURL.path,
+            "update-ref",
+            "-m", "merge \(currentBranch): merge commit created without checkout",
+            "refs/heads/\(branch)", mergeCommitID, targetID
+        ])
+        guard update.status == 0 else {
+            throw RepositoryBranchError.mergeOutFailed(update.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func mergeCurrentBranchSynchronously(
+        into branch: String,
+        inWorktreeAt worktreeURL: URL,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let currentRepository = try inspectSynchronously(at: repository.rootURL)
+        guard
+            case .branch(let currentBranch) = currentRepository.head,
+            !currentRepository.isUnborn,
+            currentBranch != branch
+        else {
+            throw RepositoryBranchError.mergeOutUnavailable
+        }
+
+        let worktrees = try localBranchWorktreesSynchronously(in: currentRepository)
+        guard worktrees[branch].map({ sameFileLocation($0, worktreeURL) }) == true else {
+            throw RepositoryBranchError.mergeOutUnavailable
+        }
+
+        let result = try runGit([
+            "-C", worktreeURL.path,
+            "merge", "--quiet", "--no-ff", "--no-edit", "--", currentBranch
+        ])
+        if result.status != 0 {
+            let mergeHead = try runGit([
+                "-C", worktreeURL.path,
+                "rev-parse", "--quiet", "--verify", "MERGE_HEAD"
+            ])
+            if mergeHead.status == 0 {
+                throw RepositoryBranchError.mergeInWorktreeConflicted(worktreeURL)
+            }
+            throw RepositoryBranchError.mergeOutFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func abortMergeSynchronously(
+        inWorktreeAt worktreeURL: URL,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let result = try runGit([
+            "-C", worktreeURL.path,
+            "merge", "--abort"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.mergeOutFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func addTemporaryWorktreeSynchronously(
+        for branch: String,
+        in repository: RepositorySummary,
+        baseDirectory: URL?
+    ) throws -> URL {
+        let baseURL = baseDirectory
+            ?? URL.applicationSupportDirectory
+                .appending(path: "Gallae/Temporary Worktrees", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        let safeBranch = branch.replacingOccurrences(of: "/", with: "-")
+        let worktreeURL = baseURL.appending(
+            path: "\(repository.name)-\(safeBranch)-\(UUID().uuidString.prefix(8))",
+            directoryHint: .isDirectory
+        )
+
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "worktree", "add", "--quiet", worktreeURL.path, branch
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.worktreeCreationFailed(result.standardError)
+        }
+        return worktreeURL
+    }
+
+    private static func removeWorktreeSynchronously(
+        at worktreeURL: URL,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "worktree", "remove", worktreeURL.path
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.worktreeRemovalFailed(result.standardError)
         }
         return try inspectSynchronously(at: repository.rootURL)
     }
@@ -3867,6 +4173,13 @@ enum RepositoryBranchError: LocalizedError, Equatable {
     case fastForwardOutUnavailable
     case fastForwardOutRequiresAncestor
     case fastForwardOutFailed(String)
+    case mergeOutUnavailable
+    case mergeOutCheckedOut
+    case mergeOutConflicts([String])
+    case mergeOutFailed(String)
+    case mergeInWorktreeConflicted(URL)
+    case worktreeCreationFailed(String)
+    case worktreeRemovalFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -3908,6 +4221,26 @@ enum RepositoryBranchError: LocalizedError, Equatable {
             message.isEmpty
                 ? "Git couldn’t fast-forward the selected branch. No references were changed."
                 : "Git couldn’t fast-forward the selected branch.\n\n\(message)"
+        case .mergeOutUnavailable:
+            "Choose another local branch to merge from a current branch that has a commit."
+        case .mergeOutCheckedOut:
+            "The selected branch is now checked out in a Worktree. Gallae merges in that Worktree instead — try again."
+        case .mergeOutConflicts(let paths):
+            "Merging would conflict in \(paths.count) file\(paths.count == 1 ? "" : "s"): \(paths.prefix(5).joined(separator: ", "))\(paths.count > 5 ? ", …" : ""). No references were changed."
+        case .mergeOutFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t create the merge commit. No references were changed."
+                : "Git couldn’t create the merge commit. No references were changed.\n\n\(message)"
+        case .mergeInWorktreeConflicted(let worktreeURL):
+            "The merge stopped with conflicts in the Worktree at \(worktreeURL.path). Open it to resolve the conflicts, or abort the merge."
+        case .worktreeCreationFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t create the temporary Worktree."
+                : "Git couldn’t create the temporary Worktree.\n\n\(message)"
+        case .worktreeRemovalFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t remove the Worktree. Changes may remain inside it."
+                : "Git couldn’t remove the Worktree. Changes may remain inside it.\n\n\(message)"
         case .rebaseUnavailable:
             "Choose another local branch to rebase a current branch that has a commit."
         case .rebaseRequiresCleanRepository:

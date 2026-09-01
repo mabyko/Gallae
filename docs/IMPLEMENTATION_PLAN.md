@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 2026-09-01
-> 현재 범위: 6D checkout 없는 merge commit — in-memory merge와 충돌 예측(Advanced 열두 번째), Worktree 경유 merge와 충돌 해결 연결(열세 번째), 임시 Worktree(열네 번째)
+> 현재 범위: 6D checkout 없는 merge commit·충돌 예측·임시 Worktree 완료 · 다음 범위 결정 대기
 
 ## 사용자 결과
 
@@ -624,6 +624,27 @@ GallaeApp
 - History 행의 local branch ref 배지를 우클릭하면, 그 commit이 현재 HEAD에서 도달 가능하고 HEAD가 아니며 현재 branch가 아닐 때 `Fast-Forward <branch> to <현재 branch>`를 제공한다.
 - 도달 가능성은 읽어 둔 commit의 parent 관계로 판정하고, 실행은 6C-1·6C-2와 같은 검사·실행 경로를 재사용한다. remote-tracking branch·tag 배지와 detached HEAD에는 제공하지 않는다.
 - 같은 동작을 VoiceOver 사용자 지정 액션으로도 제공하며, 키보드로는 같은 명령 모델의 Integrate 시트를 사용한다.
+
+### 6D-1 · checkout 없는 merge commit과 충돌 예측 — 완료
+
+- `From` 방향의 갈라진 대상에 `Create Merge Commit on <대상>`을 제공하고, `merge-tree --write-tree`로 계산한 in-memory 예측을 divergence 캡션에 먼저 보여 준다. 충돌 파일이 있으면 수·목록을 표시하고 ref-only 경로는 비활성화한다.
+- 실행은 예측된 tree로 대상·현재를 부모로 하는 commit을 만들고 `update-ref`를 이전 값 검증과 함께 실행한다. 모든 object 생성이 ref 이동보다 먼저 끝나므로 서명 실패를 포함한 어떤 실패에서도 ref는 바뀌지 않는다.
+- `commit-tree`는 `commit.gpgsign`을 스스로 읽지 않을 수 있어 설정을 확인해 `-S`를 명시한다. merge hook이 실행되지 않는다는 점은 실행 전 캡션으로 알린다.
+- `update-ref`는 Worktree 체크아웃 보호를 우회하므로 실행 직전에 체크아웃 여부와 divergence를 재확인한다.
+- 실제 임시 Repository 통합 테스트로 부모·메시지·dirty 파일 보존, 충돌 예측과 거부, 비divergence 거부, 체크아웃된 대상 거부와 ref 불변을 확인한다.
+
+### 6D-2 · Worktree에서의 merge와 충돌 해결 연결 — 완료
+
+- 갈라진 대상이 다른 Worktree에 체크아웃된 경우 그 폴더에서 `merge --no-ff --no-edit`를 실행한다. 이 경로는 일반 merge라 identity·hook·서명 설정이 그대로 동작한다.
+- 실행 직전 그 Worktree가 여전히 대상 branch를 체크아웃 중인지 재확인한다. 충돌하면 `MERGE_HEAD`로 진행 중 상태를 판별해 사용자가 고른다. Worktree를 같은 창의 Workspace로 열어 기존 충돌 해결·Continue·Abort로 잇거나, 즉시 Abort해 복원한다.
+- 실제 임시 linked Worktree 통합 테스트로 깨끗한 merge의 branch·파일 동시 갱신과, 충돌 시 해결 가능한 상태·Abort 복원을 확인한다.
+
+### 6D-3 · 임시 Worktree 경유 충돌 해결 — 완료
+
+- 어디에도 체크아웃되지 않은 대상이 충돌을 예측하면 `Merge in Temporary Worktree…`로 임시 linked Worktree를 만들어 merge하고, 충돌 상태의 Worktree를 Recent에 남기지 않고 같은 창의 Workspace로 연다. Workspace 헤더에 Temporary Worktree 표시를 둔다.
+- 충돌 없이 끝나면 임시 Worktree를 바로 제거하고, Continue·Abort로 작업이 끝나면 확인을 거쳐 제거한다. 변경이 남아 있으면 `worktree remove`가 거부하므로 강제로 지우지 않는다.
+- 임시 추적은 세션 안에서만 유지하며, 앱 재실행 뒤 남은 임시 Worktree는 일반 Worktree로 취급해 기존 branch picker·Worktree 흐름에서 다룬다.
+- 실제 임시 Repository 통합 테스트로 생성·체크아웃 branch, dirty 상태의 제거 거부와 정리 뒤 제거를 확인한다.
 
 ## 각 단계의 검증
 

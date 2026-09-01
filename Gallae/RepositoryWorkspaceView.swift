@@ -110,6 +110,24 @@ struct RepositoryWorkspaceView: View {
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
         .confirmationDialog(
+            "Remove Temporary Worktree?",
+            isPresented: Binding(
+                get: { model.pendingTemporaryWorktreeRemovalURL != nil },
+                set: { if !$0 { model.pendingTemporaryWorktreeRemovalURL = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: model.pendingTemporaryWorktreeRemovalURL
+        ) { worktreeURL in
+            Button("Remove Temporary Worktree", role: .destructive) {
+                Task { await model.removeTemporaryWorktree(at: worktreeURL) }
+            }
+            Button("Keep Worktree", role: .cancel) {}
+        } message: { worktreeURL in
+            Text(
+                "The merge is finished. Removing deletes the folder at \(worktreeURL.path); the branch and its commits stay. Gallae won’t remove it while changes remain inside."
+            )
+        }
+        .confirmationDialog(
             "Abort Repository Operation?",
             isPresented: $isConfirmingOperationAbort,
             titleVisibility: .visible,
@@ -204,6 +222,12 @@ struct RepositoryWorkspaceView: View {
                             Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
                                 .font(.caption)
                                 .foregroundStyle(theme.colors.statusConflict)
+                        }
+                        if model.isCurrentWorkspaceTemporaryWorktree {
+                            Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
                         }
                     }
                 }
