@@ -75,6 +75,24 @@ final class RepositoryInspectorTests: XCTestCase {
         let statusGroups = RepositoryChangeStatusGroup.make(repository.changes)
         XCTAssertEqual(statusGroups.map(\.id), [.changes, .untracked])
         XCTAssertEqual(statusGroups.map { $0.changes.count }, [3, 3])
+        XCTAssertEqual(
+            RepositoryChangeStatusGroup.selectAllIDs(
+                containing: both.id,
+                in: repository.changes
+            ),
+            Set(["both.txt", "deleted.txt", "새 이름 [1].txt"])
+        )
+        XCTAssertEqual(
+            RepositoryChangeStatusGroup.selectAllIDs(
+                containing: untracked.id,
+                in: repository.changes
+            ),
+            Set([
+                " 한글 file [1].txt",
+                "Sources/Feature/First.swift",
+                "Sources/Feature/Second.swift"
+            ])
+        )
 
         let inspector = RepositoryInspector()
         let bothDiff = try await inspector.diff(for: both, in: repository)
@@ -242,6 +260,34 @@ final class RepositoryInspectorTests: XCTestCase {
             try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
             "local\n"
         )
+    }
+
+    func testMapsLocalBranchesToExistingWorktreeFolders() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+        let repositoryURL = fixtureURL.appending(path: "main repository", directoryHint: .isDirectory)
+        let linkedURL = fixtureURL.appending(path: "연결 작업 폴더", directoryHint: .isDirectory)
+        let detachedURL = fixtureURL.appending(path: "detached", directoryHint: .isDirectory)
+
+        try initializeRepository(at: repositoryURL)
+        try write("main\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", "-b", "feature/topic", linkedURL.path
+        ])
+        try runGit([
+            "-C", repositoryURL.path,
+            "worktree", "add", "--quiet", "--detach", detachedURL.path, "main"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let worktrees = try await inspector.localBranchWorktrees(in: repository)
+
+        XCTAssertEqual(worktrees["main"], repositoryURL.standardizedFileURL)
+        XCTAssertEqual(worktrees["feature/topic"], linkedURL.standardizedFileURL)
+        XCTAssertEqual(Set(worktrees.keys), ["main", "feature/topic"])
     }
 
     func testCreatesAndSafelySwitchesToRecoveryBranchAtReflogCommit() async throws {
@@ -3304,6 +3350,39 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testRemovesMultipleRecentRepositoriesWithoutDeletingThem() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+        let firstURL = fixtureURL.appending(path: "first", directoryHint: .isDirectory)
+        let secondURL = fixtureURL.appending(path: "second", directoryHint: .isDirectory)
+        let thirdURL = fixtureURL.appending(path: "third", directoryHint: .isDirectory)
+        try initializeRepository(at: firstURL)
+        try initializeRepository(at: secondURL)
+        try initializeRepository(at: thirdURL)
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryStore(defaults: defaults)
+        try store.rememberOpenedRepository(firstURL)
+        try store.rememberOpenedRepository(secondURL)
+        try store.rememberOpenedRepository(thirdURL)
+
+        let model = AppModel(store: store)
+        await model.restoreState()
+        model.showLibrary()
+        model.selectLibrarySource(.recent)
+        model.removeRecentRepositories(Set([firstURL, thirdURL].map(\.standardizedFileURL)))
+
+        XCTAssertEqual(model.recentRepositories.map(\.rootURL), [secondURL.standardizedFileURL])
+        XCTAssertEqual(model.selectedLibraryRepositoryID, secondURL.standardizedFileURL)
+        XCTAssertEqual(store.restoreRecentRepositories().map(\.url), [secondURL.standardizedFileURL])
+        XCTAssertNil(store.restoreLastWorkspace())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: thirdURL.path))
+    }
+
+    @MainActor
     func testRetriesRecentActivityAfterRepositoryReturns() async throws {
         let fixtureURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixtureURL) }
@@ -3358,6 +3437,55 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(
             try Data(contentsOf: repositoryURL.appending(path: "file.txt")),
             contentBeforeStage
+        )
+    }
+
+    @MainActor
+    func testStagesAndUnstagesMultipleSelectedChangesTogether() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("before one\n", to: "one.txt", in: repositoryURL)
+        try write("before two\n", to: "two.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("after one\n", to: "one.txt", in: repositoryURL)
+        try write("after two\n", to: "two.txt", in: repositoryURL)
+        try write("new\n", to: "new.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "one.txt"])
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        let changeIDs: Set<RepositorySummary.Change.ID> = ["one.txt", "two.txt", "new.txt"]
+
+        XCTAssertTrue(model.canStageChanges(ids: changeIDs))
+        await model.stageChanges(ids: changeIDs)
+
+        XCTAssertEqual(model.repository?.changes.count, 3)
+        XCTAssertTrue(model.repository?.changes.allSatisfy { $0.staged != nil } == true)
+        XCTAssertTrue(model.repository?.changes.allSatisfy { $0.unstaged == nil } == true)
+        XCTAssertTrue(model.canUnstageChanges(ids: changeIDs))
+
+        await model.unstageChanges(ids: changeIDs)
+
+        let changes = try XCTUnwrap(model.repository?.changes)
+        XCTAssertTrue(changes.allSatisfy { $0.staged == nil })
+        XCTAssertEqual(changes.first { $0.id == "one.txt" }?.unstaged, .modified)
+        XCTAssertEqual(changes.first { $0.id == "two.txt" }?.unstaged, .modified)
+        XCTAssertEqual(changes.first { $0.id == "new.txt" }?.unstaged, .untracked)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "one.txt"), encoding: .utf8),
+            "after one\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "two.txt"), encoding: .utf8),
+            "after two\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "new.txt"), encoding: .utf8),
+            "new\n"
         )
     }
 

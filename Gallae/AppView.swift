@@ -1317,6 +1317,7 @@ final class AppModel {
     var selectedHistoryCommitID: String?
     var historyState: RepositoryHistoryLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
+    private(set) var localBranchWorktreeURLs: [String: URL] = [:]
     var remotesState: RepositoryRemotesLoadState = .notLoaded
     var selectedHistoryFileID: String?
     var commitFilesState: RepositoryCommitFilesLoadState = .noSelection
@@ -1525,6 +1526,18 @@ final class AppModel {
 
     var canUnstageSelectedChange: Bool {
         selectedChange.map { !$0.isConflicted && $0.staged != nil } ?? false
+    }
+
+    func canStageChanges(ids: Set<RepositorySummary.Change.ID>) -> Bool {
+        repository?.changes.contains {
+            ids.contains($0.id) && !$0.isConflicted && $0.unstaged != nil
+        } == true
+    }
+
+    func canUnstageChanges(ids: Set<RepositorySummary.Change.ID>) -> Bool {
+        repository?.changes.contains {
+            ids.contains($0.id) && !$0.isConflicted && $0.staged != nil
+        } == true
     }
 
     var canDiscardSelectedChange: Bool {
@@ -1762,8 +1775,9 @@ final class AppModel {
         await openLibraryRepository(at: url)
     }
 
-    func openRepository(at url: URL) async {
-        _ = await inspect(
+    @discardableResult
+    func openRepository(at url: URL) async -> Bool {
+        await inspect(
             url,
             rememberOnSuccess: true,
             markCurrentStaleOnFailure: false,
@@ -1840,6 +1854,7 @@ final class AppModel {
     func showIntegrateBranch() {
         guard canIntegrateBranch, let repository else { return }
         localBranchesState = .notLoaded
+        localBranchWorktreeURLs = [:]
         repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL)
     }
 
@@ -2100,20 +2115,25 @@ final class AppModel {
     func loadLocalBranches() async {
         guard let repository else {
             localBranchesState = .notLoaded
+            localBranchWorktreeURLs = [:]
             return
         }
         let rootURL = repository.rootURL
         let revision = repositoryRevision
         localBranchesState = .loading
+        localBranchWorktreeURLs = [:]
 
         do {
-            let branches = try await inspector.localBranches(in: repository)
+            async let branchesRequest = inspector.localBranches(in: repository)
+            async let worktreesRequest = inspector.localBranchWorktrees(in: repository)
+            let (branches, worktrees) = try await (branchesRequest, worktreesRequest)
             guard
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
                 return
             }
+            localBranchWorktreeURLs = worktrees
             localBranchesState = .loaded(branches)
         } catch is CancellationError {
             return
@@ -2124,6 +2144,7 @@ final class AppModel {
             else {
                 return
             }
+            localBranchWorktreeURLs = [:]
             localBranchesState = .failed(Self.message(for: error))
         }
     }
@@ -2465,14 +2486,22 @@ final class AppModel {
     }
 
     func stageSelectedChange() async {
+        guard let selectedChangeID else { return }
+        await stageChanges(ids: [selectedChangeID])
+    }
+
+    func stageChanges(ids: Set<RepositorySummary.Change.ID>) async {
         guard
             !isLoading,
             let repository,
-            let change = selectedChange,
-            canStageSelectedChange
+            !ids.isEmpty
         else {
             return
         }
+        let changes = repository.changes.filter {
+            ids.contains($0.id) && !$0.isConflicted && $0.unstaged != nil
+        }
+        guard !changes.isEmpty else { return }
 
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -2486,7 +2515,7 @@ final class AppModel {
         }
 
         do {
-            let updatedRepository = try await inspector.stage(change, in: repository)
+            let updatedRepository = try await inspector.stage(changes, in: repository)
             guard generation == inspectionGeneration else { return }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
@@ -2496,14 +2525,22 @@ final class AppModel {
     }
 
     func unstageSelectedChange() async {
+        guard let selectedChangeID else { return }
+        await unstageChanges(ids: [selectedChangeID])
+    }
+
+    func unstageChanges(ids: Set<RepositorySummary.Change.ID>) async {
         guard
             !isLoading,
             let repository,
-            let change = selectedChange,
-            canUnstageSelectedChange
+            !ids.isEmpty
         else {
             return
         }
+        let changes = repository.changes.filter {
+            ids.contains($0.id) && !$0.isConflicted && $0.staged != nil
+        }
+        guard !changes.isEmpty else { return }
 
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -2517,7 +2554,7 @@ final class AppModel {
         }
 
         do {
-            let updatedRepository = try await inspector.unstage(change, in: repository)
+            let updatedRepository = try await inspector.unstage(changes, in: repository)
             guard generation == inspectionGeneration else { return }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
@@ -2799,11 +2836,26 @@ final class AppModel {
     }
 
     func removeRecentRepository(_ url: URL) {
-        store.removeRecentRepository(url)
-        recentRepositories.removeAll { sameFileLocation($0.id, url) }
-        discardUnusedCaches(for: [.init(rootURL: url)])
+        removeRecentRepositories([url])
+    }
+
+    func removeRecentRepositories(_ urls: Set<URL>) {
+        guard !urls.isEmpty else { return }
+        for url in urls {
+            store.removeRecentRepository(url)
+        }
+        let removedRepositories = recentRepositories.filter { repository in
+            urls.contains { sameFileLocation($0, repository.id) }
+        }
+        recentRepositories.removeAll { repository in
+            urls.contains { sameFileLocation($0, repository.id) }
+        }
+        discardUnusedCaches(for: removedRepositories)
         if selectedLibrarySource == .recent,
-           selectedLibraryRepositoryID.map({ sameFileLocation($0, url) }) == true {
+           selectedLibraryRepositoryID == nil
+            || selectedLibraryRepositoryID.map({ selectedID in
+                urls.contains { sameFileLocation($0, selectedID) }
+            }) == true {
             selectedLibraryRepositoryID = recentRepositories.first?.id
         }
         if recentRepositories.isEmpty, selectedLibrarySource == .recent {
@@ -3308,6 +3360,7 @@ final class AppModel {
         diffState = selectedChangeID == nil ? .noSelection : .loading
         historyState = .notLoaded
         localBranchesState = .notLoaded
+        localBranchWorktreeURLs = [:]
         remotesState = .notLoaded
         selectedHistoryFileID = nil
         commitFilesState = .noSelection

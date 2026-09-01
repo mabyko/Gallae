@@ -22,6 +22,7 @@
 - Repository를 선택하면 요약만 바뀐다.
 - 선택만으로 Workspace를 열지 않는다.
 - Open은 Active Repository를 바꾸는 별도 명령이다.
+- Recent는 macOS 표준 다중 선택을 지원한다. 여러 항목을 고르면 Open 대신 선택 수와 일괄 제거 동작을 보여 주며, 제거해도 디스크의 Repository는 바뀌지 않는다.
 - 같은 앱 실행 안에서 Workspace를 열었다가 Library로 돌아오면 선택과 폴더 계층의 펼침 상태를 유지하고, 선택 강조가 다시 보이는 Repository 목록으로 키보드 포커스를 되돌린다.
 - 마우스와 키보드 어느 쪽으로도 같은 흐름을 마칠 수 있어야 한다.
 

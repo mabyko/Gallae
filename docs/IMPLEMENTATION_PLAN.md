@@ -102,6 +102,7 @@ GallaeApp
 
 - macOS 15 대상 Xcode 프로젝트가 빌드되고 테스트 명령이 동작한다.
 - 추적 설정은 `forked.gallae.local`을 사용하며 개인 ID와 서명 팀은 로컬 xcconfig에만 존재한다.
+- Debug는 `Gallae for Git Dev`와 전용 아이콘을 사용해 Release 빌드와 함께 설치해도 구분된다.
 - 표준 폴더 선택기로 받은 URL을 bookmark로 저장하고 재실행 뒤 복원한다.
 - 복원한 범위 안에서 시스템 Git을 실행할 수 있음을 확인한다.
 - `/usr/bin/git`의 `xcrun` 진입점은 App Sandbox 안에서 실행을 거부한다. 첫 버전은 Sandbox를 끄고 Hardened Runtime과 직접 배포를 사용한다.
@@ -138,7 +139,7 @@ GallaeApp
 - Scan Again은 기존 결과와 선택을 유지하고, 완료되면 사라진 Repository를 목록에서 정리한다.
 - 선택은 요약만 바꾸며 Return, 이중 클릭 또는 Open 명령이 같은 윈도우를 Workspace로 전환한다. Workspace의 Library 명령은 같은 창을 Repository Library로 되돌린다.
 - 같은 앱 실행 안에서 Workspace와 Library를 오가면 선택과 Library Folder 계층의 펼침 상태를 유지하고, 선택 강조가 다시 보이는 Repository 목록으로 키보드 포커스를 되돌린다.
-- Library Folder 결과는 실제 상대 경로 계층으로 보여 주며, 폴더 행은 disclosure 또는 이중 클릭으로 접고 펼친다. 중간 폴더와 Repository는 서로 다른 아이콘으로 구분하고, 중간 폴더를 선택하면 경로와 하위 Repository 수만 요약한다. Recent는 최근 순서의 평면 목록을 유지한다. Recent 항목은 디스크의 Repository를 바꾸지 않고 목록에서 제거할 수 있다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
+- Library Folder 결과는 실제 상대 경로 계층으로 보여 주며, 폴더 행은 disclosure 또는 이중 클릭으로 접고 펼친다. 중간 폴더와 Repository는 서로 다른 아이콘으로 구분하고, 중간 폴더를 선택하면 경로와 하위 Repository 수만 요약한다. Recent는 최근 순서의 평면 목록을 유지한다. Recent 항목은 macOS 표준 다중 선택(⌘A·⌘클릭·Shift 클릭)으로 함께 골라, 디스크의 Repository를 바꾸지 않고 목록에서 제거할 수 있다. Repository 행은 이름부터 보여 주고 Recent에서는 경로도 함께 보여 준다. 브랜치와 변경 상태는 보이는 행부터 읽고, commit 수와 최근 활동은 선택한 Repository에서만 계산한다.
 
 ### 1B-2 · 복원 — 완료
 
@@ -172,6 +173,7 @@ GallaeApp
 ### 2A-1 · 파일 단위 Stage/Unstage — 완료
 
 - 선택한 파일의 diff 헤더에서 전체 파일을 Stage하거나 Unstage한다.
+- Status와 Folders 목록은 ⌘클릭·Shift 클릭 다중 선택과 우클릭 `Stage Selected`·`Unstage Selected`를 지원한다. Status의 ⌘A는 현재 선택 파일이 속한 그룹만, Folders의 ⌘A는 모든 변경 파일을 선택하며 diff는 마지막으로 선택한 한 파일을 유지한다.
 - staged와 unstaged가 함께 있으면 두 동작을 모두 제공하고, 충돌 파일에는 제공하지 않는다.
 - 실행 중에는 중복 입력을 막고, 성공하면 Repository snapshot과 선택한 diff를 다시 읽는다. 실패하면 기존 상태를 유지하고 오류를 알린다.
 - 공백·한글·특수문자와 rename의 원본·새 경로를 명시적인 pathspec으로 전달한다.
@@ -271,6 +273,7 @@ GallaeApp
 
 - Repository 헤더의 현재 branch를 누르면 기존 local branch를 읽고 이름으로 즉시 검색한다.
 - 현재 branch를 표시하며 detached HEAD에서도 local branch를 선택할 수 있다.
+- 연결된 Worktree가 없는 branch는 `Switch`, Return 또는 행 이중 클릭으로 같은 전환 동작을 실행한다.
 - 전환은 force·merge 옵션 없이 실행한다. local 변경과 충돌하면 기존 branch·index·working tree를 유지하고 오류를 표시한다.
 - 성공하면 Repository snapshot, Changes와 History를 다시 읽고 새 HEAD를 선택한다.
 - branch 생성, remote-tracking branch 전환과 stash 보조 동작은 이후 수직 슬라이스로 남긴다.
@@ -282,6 +285,14 @@ GallaeApp
 - 빈 이름, 유효하지 않은 이름이나 이미 존재하는 branch는 만들지 않고 현재 branch·index·working tree와 입력값을 유지한다.
 - 성공하면 Repository snapshot, Changes와 History를 다시 읽고 새 HEAD를 선택한다.
 - 임의의 시작점 선택과 force-create는 포함하지 않으며, remote 게시와 upstream 설정은 branch 생성 뒤 4A-4 Publish에서 별도로 수행한다.
+
+### 3A-9 · 연결된 Worktree 열기 — 완료
+
+- branch 선택기는 `git worktree list --porcelain -z`로 existing Worktree와 local branch의 관계를 읽고, 다른 Worktree에서 체크아웃된 branch를 폴더 배지로 구분한다. 폴더명이 branch와 다르면 행 높이를 늘리지 않고 실제 폴더명을 표시하며, 긴 이름은 말줄임하고 전체 경로를 도움말과 VoiceOver로 제공한다.
+- 해당 branch의 기본 동작은 현재 Repository의 HEAD·index·working tree를 바꾸는 Switch 대신 `Open Worktree`, Return 또는 행 이중 클릭으로 연결된 폴더를 같은 창의 Repository Workspace로 여는 것이다.
+- 연결된 Worktree가 없는 branch는 기존의 안전한 Switch를 유지하고, detached·bare·prunable Worktree는 열기 대상으로 사용하지 않는다.
+- `--ignore-other-worktrees` 같은 강제 전환과 Worktree 생성·삭제는 포함하지 않는다.
+- 공백과 한글이 있는 경로를 포함한 실제 임시 linked Worktree 통합 테스트로 branch·폴더 관계를 확인한다.
 
 ### 4A-1 · 기본 remote Fetch — 완료
 

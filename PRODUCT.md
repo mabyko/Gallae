@@ -50,6 +50,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 - 사용자는 하나 이상의 Library Folder를 표준 macOS 폴더 선택기로 직접 등록할 수도 있다.
 - Gallae는 사용자가 허용한 폴더 안에서만 하위 폴더를 탐색하고, 발견한 **Repository**를 Library Folder별로 묶어 보여 준다. 디스크 전체를 임의로 검색하지 않는다.
 - 직접 연 Repository는 Library Folder 밖에 있어도 최근 항목에 나타난다.
+- Recent에서는 ⌘A·⌘클릭·Shift 클릭으로 여러 항목을 선택해 디스크의 Repository를 바꾸지 않고 목록에서 함께 제거할 수 있다.
 - Repository를 선택하면 요약을 확인할 수 있고, 열면 같은 메인 윈도우가 그 저장소의 **Repository Workspace**로 전환된다.
 - 경로를 전달받아 실행된 경우에는 해당 Repository를 바로 열고, 복원할 작업공간이 없으면 Repository Library를 보여 준다.
 
@@ -90,7 +91,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 | 3. History | 변경의 맥락과 브랜치 관계를 읽는다 | 커밋 목록/그래프, 커밋 상세와 diff, 검색·필터, 브랜치 이동·생성 |
 | 4. Sync | 기존 인증 환경으로 원격과 동기화한다 | fetch, pull, push, 진행·오류 표시 |
 | 5. Recovery | 실수와 분기 작업에서 복구한다 | stash, revert, reset, merge, rebase, reflog 기반 복구 보조 |
-| 6. Advanced | 복잡한 저장소도 앱 안에서 다룬다 | 충돌 해결, interactive rebase, worktree, submodule, LFS, 서명, 이미지 diff, 서비스 연동 |
+| 6. Advanced | 복잡한 저장소도 앱 안에서 다룬다 | 충돌 해결, interactive rebase, worktree 생성·관리, submodule, LFS, 서명, 이미지 diff, 서비스 연동 |
 
 각 단계는 독립적으로 쓸 수 있는 상태로 끝낸다. 뒤 단계의 UI나 추상화를 미리 만들지 않는다.
 
@@ -120,7 +121,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 ## Commit 첫 수직 슬라이스
 
-검토한 파일 전체를 Stage하거나 Unstage하고, staged 변경이 있으면 한 줄 제목으로 일반 commit을 만든다. Stage/Unstage는 working tree 파일 내용을 바꾸지 않으며 충돌 파일에는 제공하지 않는다. Commit은 현재 index만 기록하고 unstaged 변경을 자동으로 포함하지 않으며, 성공한 Repository 상태와 diff를 같은 Workspace에서 바로 다시 읽는다.
+검토한 파일 전체를 Stage하거나 Unstage하고, staged 변경이 있으면 한 줄 제목으로 일반 commit을 만든다. Changes의 Status와 Folders 목록에서는 ⌘클릭·Shift 클릭으로 여러 파일을 선택하고 우클릭 메뉴에서 선택한 파일을 함께 Stage하거나 Unstage할 수 있다. Status의 ⌘A는 현재 선택 파일이 속한 그룹만, Folders의 ⌘A는 모든 변경 파일을 선택한다. diff는 마지막으로 선택한 한 파일을 계속 보여 준다. Stage/Unstage는 working tree 파일 내용을 바꾸지 않으며 충돌 파일에는 제공하지 않는다. Commit은 현재 index만 기록하고 unstaged 변경을 자동으로 포함하지 않으며, 성공한 Repository 상태와 diff를 같은 Workspace에서 바로 다시 읽는다.
 
 hunk 단위 Stage, commit 본문, amend, discard와 충돌 해결은 파일 단위 경계와 일반 commit 흐름이 실제 사용에서 검증된 뒤 추가한다.
 
@@ -195,6 +196,12 @@ commit을 선택하면 first-parent 기준 변경 파일을 상태와 함께 보
 사용자는 같은 branch 선택기에서 현재 HEAD를 시작점으로 새 local branch를 만들고 바로 전환한다. 이름 입력은 인라인으로 열리며 Create 또는 Return으로 실행한다. detached HEAD와 아직 commit이 없는 branch에서도 같은 흐름을 사용한다.
 
 빈 이름, 유효하지 않은 이름이나 이미 존재하는 branch는 만들지 않고 현재 branch·index·working tree와 입력값을 유지한 채 오류를 표시한다. 임의의 시작점 선택과 기존 branch 강제 재생성은 포함하지 않으며, remote 게시와 upstream 설정은 branch 생성 뒤 Publish에서 별도로 수행한다.
+
+## History 아홉 번째 수직 슬라이스
+
+branch 선택기는 local branch가 다른 기존 Worktree에서 체크아웃된 경우 폴더를 함께 구분한다. 사용자가 해당 branch를 고르면 현재 Repository를 전환하지 않고 연결된 Worktree 폴더를 같은 창의 새 Repository Workspace로 연다.
+
+연결된 Worktree가 없는 branch는 기존의 안전한 Switch를 유지한다. 누락되었거나 정리 가능한 Worktree는 열지 않으며, Worktree 생성·삭제와 branch 강제 전환은 이후 Advanced 범위로 남긴다.
 
 ## Sync 첫 수직 슬라이스
 
@@ -434,7 +441,7 @@ Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실�
 | Stashes | 사용자가 보관된 작업으로 이동했을 때 | 저장된 변경을 읽고 안전하게 복원·정리한다 | Stash 목록, 변경 파일, 선택 파일 patch, Apply, Delete |
 | Reflog | 사용자가 이전 HEAD를 찾을 때 | branch 전환·Reset 전 복구 지점을 확인하고 보존한다 | HEAD 이동 목록, action, 기록자·시각, 전체 commit SHA, 복구 branch 생성 |
 
-초기 수직 슬라이스는 Repository Library와 조회 전용 Changes를 먼저 구현했다. 현재는 같은 작업공간 안에 local·remote-tracking branch와 tag를 함께 읽는 History 검색·ref·commit graph, commit별 변경 파일 검사와 기존 local branch 전환·현재 HEAD 기반 생성, Fetch 대상 Remote 선택·Fetch & Prune·자동 Fetch·fast-forward Pull·비강제 Push, upstream 없는 branch Publish와 Remote 추가·선택·조회·URL·이름 편집·제거·Fetch 연결 시험, Stash 검사·생성·적용·삭제, 일반·merge commit Revert, soft·mixed·hard Reset, Reflog 조회·복구 branch 생성, local branch fast-forward Merge·divergent Merge commit·현재 branch Rebase, 충돌 파일의 Base·Ours·Theirs 검사, 한쪽 전체 버전 적용과 현재 working tree 상태의 명시적 해결 표시, 진행 중인 Merge·Rebase 상태 검사·Continue·Abort와 Interactive Rebase 계획 미리보기·편집·검토·실행까지 이어 붙였다.
+초기 수직 슬라이스는 Repository Library와 조회 전용 Changes를 먼저 구현했다. 현재는 같은 작업공간 안에 local·remote-tracking branch와 tag를 함께 읽는 History 검색·ref·commit graph, commit별 변경 파일 검사와 기존 local branch 전환·현재 HEAD 기반 생성·연결된 Worktree 열기, Fetch 대상 Remote 선택·Fetch & Prune·자동 Fetch·fast-forward Pull·비강제 Push, upstream 없는 branch Publish와 Remote 추가·선택·조회·URL·이름 편집·제거·Fetch 연결 시험, Stash 검사·생성·적용·삭제, 일반·merge commit Revert, soft·mixed·hard Reset, Reflog 조회·복구 branch 생성, local branch fast-forward Merge·divergent Merge commit·현재 branch Rebase, 충돌 파일의 Base·Ours·Theirs 검사, 한쪽 전체 버전 적용과 현재 working tree 상태의 명시적 해결 표시, 진행 중인 Merge·Rebase 상태 검사·Continue·Abort와 Interactive Rebase 계획 미리보기·편집·검토·실행까지 이어 붙였다.
 
 ### 검토한 디자인 방향
 
@@ -478,6 +485,7 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 - 공개 canonical ID는 `com.mabyko.gallae`다. 조직 팀에서 등록하기 전에는 어떤 빌드·서명 설정에도 넣지 않는다.
 - 개인 개발 ID와 개인 서명 팀은 gitignore된 `Config/Local.xcconfig`에만 둔다.
 - 저장소에 추적되는 기본 빌드는 조직 namespace가 없는 `forked.gallae.local`을 사용한다.
+- Debug는 `Gallae for Git Dev`와 별도 아이콘으로 Release 앱과 구분하며, 개인 Debug ID는 `Config/Local.xcconfig`에서만 정한다.
 
 ## 아직 정하지 않은 것
 

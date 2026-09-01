@@ -26,7 +26,7 @@
 | UC-10 | [최근 Commit Amend](use-cases/uc-10-amend-commit.md) |
 | UC-11 | [tracked 파일의 unstaged 변경 Discard](use-cases/uc-11-discard-file.md) |
 | UC-12 | [Repository commit History 검사](use-cases/uc-12-inspect-history.md) |
-| UC-13 | [기존 local branch 전환](use-cases/uc-13-switch-local-branch.md) |
+| UC-13 | [기존 local branch 전환 또는 Worktree 열기](use-cases/uc-13-switch-local-branch.md) |
 | UC-14 | [현재 HEAD에서 local branch 생성](use-cases/uc-14-create-local-branch.md) |
 | UC-15 | [기본 remote Fetch](use-cases/uc-15-fetch-default-remote.md) |
 | UC-16 | [configured upstream fast-forward Pull](use-cases/uc-16-pull-fast-forward.md) |

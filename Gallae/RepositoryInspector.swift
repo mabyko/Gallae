@@ -564,6 +564,15 @@ struct RepositoryInspector: Sendable {
         return branches
     }
 
+    func localBranchWorktrees(in repository: RepositorySummary) async throws -> [String: URL] {
+        try Task.checkCancellation()
+        let worktrees = try await Task.detached(priority: .userInitiated) {
+            try Self.localBranchWorktreesSynchronously(in: repository)
+        }.value
+        try Task.checkCancellation()
+        return worktrees
+    }
+
     func remotes(in repository: RepositorySummary) async throws -> [RepositoryRemote] {
         try Task.checkCancellation()
         let remotes = try await Task.detached(priority: .userInitiated) {
@@ -895,9 +904,16 @@ struct RepositoryInspector: Sendable {
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
+        try await stage([change], in: repository)
+    }
+
+    func stage(
+        _ changes: [RepositorySummary.Change],
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
         try Task.checkCancellation()
         let updatedRepository = try await Task.detached(priority: .userInitiated) {
-            try Self.stageSynchronously(change, in: repository)
+            try Self.stageSynchronously(changes, in: repository)
         }.value
         try Task.checkCancellation()
         return updatedRepository
@@ -907,9 +923,16 @@ struct RepositoryInspector: Sendable {
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
+        try await unstage([change], in: repository)
+    }
+
+    func unstage(
+        _ changes: [RepositorySummary.Change],
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
         try Task.checkCancellation()
         let updatedRepository = try await Task.detached(priority: .userInitiated) {
-            try Self.unstageSynchronously(change, in: repository)
+            try Self.unstageSynchronously(changes, in: repository)
         }.value
         try Task.checkCancellation()
         return updatedRepository
@@ -1021,13 +1044,18 @@ struct RepositoryInspector: Sendable {
     }
 
     private static func stageSynchronously(
-        _ change: RepositorySummary.Change,
+        _ changes: [RepositorySummary.Change],
         in repository: RepositorySummary
     ) throws -> RepositorySummary {
-        guard !change.isConflicted, change.unstaged != nil else {
+        guard
+            !changes.isEmpty,
+            changes.allSatisfy({ !$0.isConflicted && $0.unstaged != nil })
+        else {
             throw RepositoryIndexError.unavailable
         }
-        let paths = [change.originalPath, change.path].compactMap(\.self)
+        let paths = Array(Set(changes.flatMap { change in
+            [change.originalPath, change.path].compactMap(\.self)
+        }))
         let result = try runGit([
             "-C", repository.rootURL.path,
             "add", "--all", "--"
@@ -1039,13 +1067,18 @@ struct RepositoryInspector: Sendable {
     }
 
     private static func unstageSynchronously(
-        _ change: RepositorySummary.Change,
+        _ changes: [RepositorySummary.Change],
         in repository: RepositorySummary
     ) throws -> RepositorySummary {
-        guard !change.isConflicted, change.staged != nil else {
+        guard
+            !changes.isEmpty,
+            changes.allSatisfy({ !$0.isConflicted && $0.staged != nil })
+        else {
             throw RepositoryIndexError.unavailable
         }
-        let paths = [change.originalPath, change.path].compactMap(\.self)
+        let paths = Array(Set(changes.flatMap { change in
+            [change.originalPath, change.path].compactMap(\.self)
+        }))
         let command = repository.isUnborn
             ? ["rm", "--cached", "--force", "--ignore-unmatch", "--"]
             : ["restore", "--staged", "--"]
@@ -1394,6 +1427,51 @@ struct RepositoryInspector: Sendable {
         return branches.sorted {
             $0.localizedStandardCompare($1) == .orderedAscending
         }
+    }
+
+    private static func localBranchWorktreesSynchronously(
+        in repository: RepositorySummary
+    ) throws -> [String: URL] {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "worktree", "list", "--porcelain", "-z"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.unreadable(result.standardError)
+        }
+
+        var worktrees: [String: URL] = [:]
+        var worktreeURL: URL?
+        var branch: String?
+        var isBare = false
+        var isPrunable = false
+
+        func recordWorktree() {
+            guard let worktreeURL, let branch, !isBare, !isPrunable else { return }
+            worktrees[branch] = worktreeURL
+        }
+
+        for data in result.standardOutput.split(separator: 0) {
+            let field = String(decoding: data, as: UTF8.self)
+            if field.hasPrefix("worktree ") {
+                recordWorktree()
+                worktreeURL = URL(
+                    filePath: String(field.dropFirst("worktree ".count)),
+                    directoryHint: .isDirectory
+                ).standardizedFileURL
+                branch = nil
+                isBare = false
+                isPrunable = false
+            } else if field.hasPrefix("branch refs/heads/") {
+                branch = String(field.dropFirst("branch refs/heads/".count))
+            } else if field == "bare" {
+                isBare = true
+            } else if field.hasPrefix("prunable") {
+                isPrunable = true
+            }
+        }
+        recordWorktree()
+        return worktrees
     }
 
     private static func remotesSynchronously(

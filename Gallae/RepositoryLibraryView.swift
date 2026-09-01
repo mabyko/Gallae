@@ -1,3 +1,5 @@
+import AppKit
+import Carbon.HIToolbox
 import Observation
 import SwiftUI
 
@@ -9,6 +11,8 @@ struct RepositoryLibraryView: View {
     let reconnectRepository: (URL) -> Void
     @Binding var expandedHierarchyFolderIDs: Set<URL>
     @State private var selectedHierarchyNodeID: URL?
+    @State private var selectedRecentRepositoryIDs: Set<URL> = []
+    @State private var selectAllEventMonitor: Any?
     @FocusState private var isRepositoryListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
 
@@ -58,15 +62,31 @@ struct RepositoryLibraryView: View {
         .onChange(of: model.selectedLibraryFolderID) {
             selectedHierarchyNodeID = model.selectedLibraryRepositoryID
         }
+        .onChange(of: model.selectedLibrarySource) {
+            syncRecentSelectionFromModel()
+        }
         .onChange(of: model.selectedLibraryRepositoryID) {
             selectedHierarchyNodeID = model.selectedLibraryRepositoryID
+            syncRecentSelectionFromModel()
+        }
+        .onChange(of: selectedRecentRepositoryIDs) {
+            guard model.selectedLibrarySource == .recent else { return }
+            guard selectedRecentRepositoryIDs.count <= 1 else { return }
+            model.selectLibraryRepository(
+                selectedRecentRepositoryIDs.count == 1
+                    ? selectedRecentRepositoryIDs.first
+                    : nil
+            )
         }
         .task {
             selectedHierarchyNodeID = nil
+            syncRecentSelectionFromModel()
             await Task.yield()
             selectedHierarchyNodeID = model.selectedLibraryRepositoryID
             isRepositoryListFocused = model.selectedLibraryRepositoryID != nil
         }
+        .onAppear(perform: startSelectAllEventMonitor)
+        .onDisappear(perform: stopSelectAllEventMonitor)
     }
 
     private var libraryFolderColumn: some View {
@@ -370,10 +390,7 @@ struct RepositoryLibraryView: View {
     private func repositoryList(_ repositories: [RepositoryLocation]) -> some View {
         List(
             repositories,
-            selection: Binding(
-                get: { model.selectedLibraryRepositoryID },
-                set: { id in model.selectLibraryRepository(id) }
-            )
+            selection: $selectedRecentRepositoryIDs
         ) { repository in
             RepositoryLibraryRow(
                 repository: repository,
@@ -385,7 +402,7 @@ struct RepositoryLibraryView: View {
             .tag(repository.id)
             .contentShape(.rect)
             .accessibilityAction(named: "Remove from Recent") {
-                model.removeRecentRepository(repository.id)
+                removeRecentRepositories([repository.id])
             }
             .task(id: repository.id) {
                 guard model.selectedLibraryRepositoryID.map({
@@ -398,13 +415,19 @@ struct RepositoryLibraryView: View {
         .listStyle(.plain)
         .focused($isRepositoryListFocused)
         .contextMenu(forSelectionType: URL.self) { selection in
-            if let repositoryID = selection.first {
-                Button("Remove from Recent", systemImage: "minus.circle", role: .destructive) {
-                    model.removeRecentRepository(repositoryID)
+            if !selection.isEmpty {
+                Button(
+                    selection.count == 1
+                        ? "Remove from Recent"
+                        : "Remove \(selection.count) from Recent",
+                    systemImage: "minus.circle",
+                    role: .destructive
+                ) {
+                    removeRecentRepositories(selection)
                 }
             }
         } primaryAction: { selection in
-            guard let repositoryID = selection.first else { return }
+            guard selection.count == 1, let repositoryID = selection.first else { return }
             Task { await model.openLibraryRepository(at: repositoryID) }
         }
         .accessibilityLabel("Repositories, \(repositories.count)")
@@ -524,7 +547,11 @@ struct RepositoryLibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedHierarchyFolder == nil ? "Repository" : "Folder")
+                    Text(
+                        selectedRecentRepositoryIDs.count > 1
+                            ? "Repositories"
+                            : selectedHierarchyFolder == nil ? "Repository" : "Folder"
+                    )
                         .font(.headline)
                     Text("Selection summary")
                         .font(.caption)
@@ -537,7 +564,29 @@ struct RepositoryLibraryView: View {
 
             Divider()
 
-            if let folder = selectedHierarchyFolder {
+            if selectedRecentRepositoryIDs.count > 1 {
+                ContentUnavailableView(
+                    "\(selectedRecentRepositoryIDs.count) Repositories Selected",
+                    systemImage: "checkmark.circle",
+                    description: Text("Remove their saved Recent entries without changing files on disk.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+                Button(
+                    "Remove \(selectedRecentRepositoryIDs.count) from Recent",
+                    role: .destructive
+                ) {
+                    removeRecentRepositories(selectedRecentRepositoryIDs)
+                }
+                .frame(maxWidth: .infinity)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .accessibilityHint(
+                    "Remove \(selectedRecentRepositoryIDs.count) selected Repositories from Recent without changing files on disk"
+                )
+                .padding(12)
+            } else if let folder = selectedHierarchyFolder {
                 ScrollView {
                     selectedFolderSummary(folder)
                         .padding(16)
@@ -642,7 +691,7 @@ struct RepositoryLibraryView: View {
                             reconnectRepository(repository.id)
                         }
                         Button("Remove from Recent", role: .destructive) {
-                            model.removeRecentRepository(repository.id)
+                            removeRecentRepositories([repository.id])
                         }
                         .accessibilityHint("Forget this saved location without changing files on disk")
                     }
@@ -703,6 +752,48 @@ struct RepositoryLibraryView: View {
     private var selectedSummary: RepositorySummary? {
         guard let id = model.selectedLibraryRepositoryID else { return nil }
         return model.libraryRepositorySummaries[id]
+    }
+
+    private func syncRecentSelectionFromModel() {
+        guard model.selectedLibrarySource == .recent else {
+            selectedRecentRepositoryIDs.removeAll()
+            return
+        }
+        guard selectedRecentRepositoryIDs.count <= 1 else { return }
+        if let id = model.selectedLibraryRepositoryID {
+            if selectedRecentRepositoryIDs.count != 1 || selectedRecentRepositoryIDs.first != id {
+                selectedRecentRepositoryIDs = [id]
+            }
+        } else if selectedRecentRepositoryIDs.count <= 1 {
+            selectedRecentRepositoryIDs.removeAll()
+        }
+    }
+
+    private func removeRecentRepositories(_ ids: Set<URL>) {
+        model.removeRecentRepositories(ids)
+        selectedRecentRepositoryIDs = model.selectedLibraryRepositoryID.map { Set([$0]) } ?? []
+    }
+
+    private func startSelectAllEventMonitor() {
+        guard selectAllEventMonitor == nil else { return }
+        selectAllEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            guard
+                !(event.window is NSPanel),
+                modifiers == .command,
+                event.keyCode == UInt16(kVK_ANSI_A),
+                model.selectedLibrarySource == .recent
+            else { return event }
+
+            selectedRecentRepositoryIDs = Set(model.recentRepositories.map(\.id))
+            return nil
+        }
+    }
+
+    private func stopSelectAllEventMonitor() {
+        guard let selectAllEventMonitor else { return }
+        NSEvent.removeMonitor(selectAllEventMonitor)
+        self.selectAllEventMonitor = nil
     }
 
     private var selectedHierarchyFolder: RepositoryHierarchyNode? {

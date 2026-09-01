@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Observation
 import SwiftUI
 
@@ -17,13 +18,15 @@ private enum RepositoryWorkspaceSection: Int {
 struct RepositoryWorkspaceView: View {
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
-    @State private var selectedChangeNodeID: RepositoryChangeHierarchyNode.ID?
+    @State private var selectedChangeIDs = Set<RepositorySummary.Change.ID>()
+    @State private var selectAllEventMonitor: Any?
     @State private var expandedStatusGroups = Set(RepositoryChangeStatusGroup.ID.allCases)
     @State private var commitSubject = ""
     @State private var commitBody = ""
     @State private var isAmending = false
     @State private var isBranchPickerPresented = false
     @State private var isConfirmingOperationAbort = false
+    @FocusState private var isChangeListFocused: Bool
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
 
@@ -48,12 +51,52 @@ struct RepositoryWorkspaceView: View {
         .task(id: model.diffRequest) {
             await model.loadSelectedDiff()
         }
-        .onChange(of: model.repository?.rootURL) {
+        .onChange(of: model.repository?.rootURL, initial: true) {
             commitSubject = ""
             commitBody = ""
             isAmending = false
             isConfirmingOperationAbort = false
+            selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
         }
+        .onChange(of: model.repository?.changes) { _, changes in
+            let availableIDs = Set((changes ?? []).map(\.id))
+            selectedChangeIDs.formIntersection(availableIDs)
+            if
+                selectedChangeIDs.isEmpty,
+                let selectedChangeID = model.selectedChangeID,
+                availableIDs.contains(selectedChangeID)
+            {
+                selectedChangeIDs.insert(selectedChangeID)
+            }
+        }
+        .onChange(of: model.selectedChangeID) { _, selectedChangeID in
+            guard let selectedChangeID else {
+                selectedChangeIDs.removeAll()
+                return
+            }
+            if !selectedChangeIDs.contains(selectedChangeID) {
+                selectedChangeIDs = [selectedChangeID]
+            }
+        }
+        .onChange(of: selectedChangeIDs) { previousSelection, selection in
+            let addedIDs = selection.subtracting(previousSelection)
+            let focusedID: RepositorySummary.Change.ID?
+            if addedIDs.count == 1 {
+                focusedID = addedIDs.first
+            } else if let selectedChangeID = model.selectedChangeID,
+                      selection.contains(selectedChangeID) {
+                focusedID = selectedChangeID
+            } else {
+                focusedID = model.repository?.changes.first {
+                    selection.contains($0.id)
+                }?.id
+            }
+            if model.selectedChangeID != focusedID {
+                model.selectedChangeID = focusedID
+            }
+        }
+        .onAppear(perform: startSelectAllEventMonitor)
+        .onDisappear(perform: stopSelectAllEventMonitor)
         .confirmationDialog(
             "Abort Repository Operation?",
             isPresented: $isConfirmingOperationAbort,
@@ -119,6 +162,7 @@ struct RepositoryWorkspaceView: View {
                                     .font(.caption2.weight(.semibold))
                                     .accessibilityHidden(true)
                             }
+                            .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
                         .font(.callout.weight(.medium))
@@ -363,33 +407,27 @@ struct RepositoryWorkspaceView: View {
     }
 
     private func changeHierarchyList(_ repository: RepositorySummary) -> some View {
-        List(
-            RepositoryChangeHierarchyNode.make(repository.changes),
-            children: \.children,
-            selection: changeHierarchySelection
-        ) { node in
-            changeHierarchyRow(node)
-                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
-        }
-        .listStyle(.plain)
-        .accessibilityLabel("Changes by folder, \(repository.changes.count) files")
-        .onChange(of: model.selectedChangeID, initial: true) { _, path in
-            if let path {
-                selectedChangeNodeID = .change(path)
-            } else if case .some(.change) = selectedChangeNodeID {
-                selectedChangeNodeID = nil
+        List(selection: $selectedChangeIDs) {
+            OutlineGroup(
+                RepositoryChangeHierarchyNode.make(repository.changes),
+                children: \.children
+            ) { node in
+                changeHierarchyRow(node)
+                    .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
             }
         }
+        .listStyle(.plain)
+        .focused($isChangeListFocused)
+        .accessibilityLabel("Changes by folder, \(repository.changes.count) files")
     }
 
     private func changeStatusList(_ repository: RepositorySummary) -> some View {
-        List(selection: $model.selectedChangeID) {
+        List(selection: $selectedChangeIDs) {
             ForEach(RepositoryChangeStatusGroup.make(repository.changes)) { group in
                 Section {
                     if expandedStatusGroups.contains(group.id) {
                         ForEach(group.changes) { change in
-                            RepositoryChangeRow(change: change, showsParentPath: true)
-                                .tag(change.id)
+                            changeRow(change, showsParentPath: true)
                                 .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
                         }
                     }
@@ -425,7 +463,39 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .listStyle(.plain)
+        .focused($isChangeListFocused)
         .accessibilityLabel("Changes by status, \(repository.changes.count) files")
+    }
+
+    private func startSelectAllEventMonitor() {
+        guard selectAllEventMonitor == nil else { return }
+        selectAllEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            guard
+                !(event.window is NSPanel),
+                modifiers == .command,
+                event.keyCode == UInt16(kVK_ANSI_A),
+                workspaceSection == .changes,
+                changeViewMode == .status,
+                isChangeListFocused,
+                let repository = model.repository,
+                let selectedChangeID = model.selectedChangeID
+            else { return event }
+
+            let groupIDs = RepositoryChangeStatusGroup.selectAllIDs(
+                containing: selectedChangeID,
+                in: repository.changes
+            )
+            guard !groupIDs.isEmpty else { return event }
+            selectedChangeIDs = groupIDs
+            return nil
+        }
+    }
+
+    private func stopSelectAllEventMonitor() {
+        guard let selectAllEventMonitor else { return }
+        NSEvent.removeMonitor(selectAllEventMonitor)
+        self.selectAllEventMonitor = nil
     }
 
     private func toggleStatusGroup(_ id: RepositoryChangeStatusGroup.ID) {
@@ -436,31 +506,39 @@ struct RepositoryWorkspaceView: View {
         }
     }
 
-    private var changeHierarchySelection: Binding<RepositoryChangeHierarchyNode.ID?> {
-        Binding(
-            get: {
-                model.selectedChangeID.map {
-                    RepositoryChangeHierarchyNode.ID.change($0)
-                } ?? selectedChangeNodeID
-            },
-            set: { id in
-                selectedChangeNodeID = id
-                if case .some(.change(let path)) = id {
-                    model.selectedChangeID = path
-                } else {
-                    model.selectedChangeID = nil
-                }
-            }
-        )
-    }
-
     @ViewBuilder
     private func changeHierarchyRow(_ node: RepositoryChangeHierarchyNode) -> some View {
         if let change = node.change {
-            RepositoryChangeRow(change: change)
+            changeRow(change)
         } else {
             RepositoryChangeFolderRow(node: node)
         }
+    }
+
+    private func changeRow(
+        _ change: RepositorySummary.Change,
+        showsParentPath: Bool = false
+    ) -> some View {
+        RepositoryChangeRow(change: change, showsParentPath: showsParentPath)
+            .contextMenu {
+                let changeIDs = contextChangeIDs(for: change.id)
+                Button(changeIDs.count > 1 ? "Stage Selected" : "Stage") {
+                    Task { await model.stageChanges(ids: changeIDs) }
+                }
+                .disabled(model.isLoading || !model.canStageChanges(ids: changeIDs))
+
+                Button(changeIDs.count > 1 ? "Unstage Selected" : "Unstage") {
+                    Task { await model.unstageChanges(ids: changeIDs) }
+                }
+                .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
+            }
+            .tag(change.id)
+    }
+
+    private func contextChangeIDs(
+        for changeID: RepositorySummary.Change.ID
+    ) -> Set<RepositorySummary.Change.ID> {
+        selectedChangeIDs.contains(changeID) ? selectedChangeIDs : [changeID]
     }
 
     private func selectedFileURL(in repository: RepositorySummary) -> URL? {
@@ -560,13 +638,13 @@ private struct RepositoryBranchPicker: View {
                         .monospacedDigit()
                 }
 
-                Button("Switch") {
-                    switchBranch()
+                Button(primaryActionTitle) {
+                    performPrimaryAction()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(!canSwitch)
-                .accessibilityHint("Switches to the selected local branch")
+                .disabled(!canPerformPrimaryAction)
+                .accessibilityHint(primaryActionHint)
             }
             .padding(12)
         }
@@ -609,17 +687,36 @@ private struct RepositoryBranchPicker: View {
                         Label(branch, systemImage: "arrow.triangle.branch")
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .layoutPriority(1)
                         Spacer()
                         if branch == currentBranch {
                             Label("Current", systemImage: "checkmark")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                        } else if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                            Label(
+                                worktreeURL.lastPathComponent == branch
+                                    ? "Worktree"
+                                    : worktreeURL.lastPathComponent,
+                                systemImage: "folder"
+                            )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(worktreeURL.path)
                         }
                     }
                     .tag(branch)
                     .contentShape(.rect)
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            selectedBranch = branch
+                            performPrimaryAction(for: branch)
+                        }
+                    )
                     .accessibilityElement(children: .combine)
-                    .accessibilityValue(branch == currentBranch ? "Current branch" : "")
+                    .accessibilityValue(accessibilityValue(for: branch))
                 }
                 .listStyle(.plain)
                 .accessibilityLabel("Local Branches")
@@ -644,7 +741,22 @@ private struct RepositoryBranchPicker: View {
         return branch
     }
 
-    private var canSwitch: Bool {
+    private var selectedWorktreeURL: URL? {
+        guard let selectedBranch, selectedBranch != currentBranch else { return nil }
+        return model.localBranchWorktreeURLs[selectedBranch]
+    }
+
+    private var primaryActionTitle: String {
+        selectedWorktreeURL == nil ? "Switch" : "Open Worktree"
+    }
+
+    private var primaryActionHint: String {
+        selectedWorktreeURL == nil
+            ? "Switches to the selected local branch"
+            : "Opens the selected branch’s existing Worktree folder"
+    }
+
+    private var canPerformPrimaryAction: Bool {
         guard let selectedBranch else { return false }
         return selectedBranch != currentBranch && !model.isLoading
     }
@@ -663,13 +775,29 @@ private struct RepositoryBranchPicker: View {
         } ?? filteredBranches.first
     }
 
-    private func switchBranch() {
-        guard let selectedBranch, canSwitch else { return }
+    private func performPrimaryAction() {
+        guard let selectedBranch else { return }
+        performPrimaryAction(for: selectedBranch)
+    }
+
+    private func performPrimaryAction(for branch: String) {
+        guard branch != currentBranch, !model.isLoading else { return }
         Task {
-            if await model.switchBranch(to: selectedBranch) {
+            let succeeded = if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                await model.openRepository(at: worktreeURL)
+            } else {
+                await model.switchBranch(to: branch)
+            }
+            if succeeded {
                 isPresented = false
             }
         }
+    }
+
+    private func accessibilityValue(for branch: String) -> String {
+        if branch == currentBranch { return "Current branch" }
+        guard let worktreeURL = model.localBranchWorktreeURLs[branch] else { return "" }
+        return "Existing Worktree at \(worktreeURL.path)"
     }
 
     private func createBranch() {
@@ -812,6 +940,16 @@ struct RepositoryChangeStatusGroup: Equatable, Identifiable, Sendable {
         ]
         .filter { !$0.changes.isEmpty }
     }
+
+    static func selectAllIDs(
+        containing selectedChangeID: RepositorySummary.Change.ID,
+        in changes: [RepositorySummary.Change]
+    ) -> Set<RepositorySummary.Change.ID> {
+        guard let group = make(changes).first(where: {
+            $0.changes.contains { $0.id == selectedChangeID }
+        }) else { return [] }
+        return Set(group.changes.map(\.id))
+    }
 }
 
 struct RepositoryChangeHierarchyNode: Equatable, Identifiable, Sendable {
@@ -923,6 +1061,7 @@ private struct RepositoryHistoryView: View {
                 Divider()
 
                 historyList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(
                 minWidth: theme.metrics.changeListMinimumWidth,
@@ -1050,6 +1189,7 @@ private struct RepositoryStashesView: View {
                 Divider()
 
                 stashList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(
                 minWidth: theme.metrics.changeListMinimumWidth,
@@ -1139,6 +1279,7 @@ private struct RepositoryReflogView: View {
                 Divider()
 
                 reflogList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(
                 minWidth: theme.metrics.changeListMinimumWidth,
