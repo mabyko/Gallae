@@ -4325,6 +4325,37 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(branches.contains("main"))
     }
 
+    func testAuthorAvatarSourceParsesOnlyGitHubNoreplyEmails() {
+        XCTAssertEqual(
+            AuthorAvatarSource.url(for: "12345+octocat@users.noreply.github.com")?.absoluteString,
+            "https://avatars.githubusercontent.com/u/12345?s=64&v=4"
+        )
+        XCTAssertEqual(
+            AuthorAvatarSource.url(for: "Octo-Cat@users.noreply.GitHub.com")?.absoluteString,
+            "https://github.com/octo-cat.png?size=64"
+        )
+        XCTAssertNil(AuthorAvatarSource.url(for: "someone@example.com"))
+        XCTAssertNil(AuthorAvatarSource.url(for: "abc+octocat@users.noreply.github.com"))
+        XCTAssertNil(AuthorAvatarSource.url(for: "bad/../name@users.noreply.github.com"))
+        XCTAssertNil(AuthorAvatarSource.url(for: "@users.noreply.github.com"))
+    }
+
+    @MainActor
+    func testGitHubAvatarLookupParsesSearchResponse() {
+        let found = Data("""
+        {"total_count":1,"items":[{"login":"octocat","avatar_url":"https://avatars.githubusercontent.com/u/583231?v=4"}]}
+        """.utf8)
+        XCTAssertEqual(
+            GitHubAvatarLookup.avatarURL(fromSearchResponse: found)?.absoluteString,
+            "https://avatars.githubusercontent.com/u/583231?v=4&s=64"
+        )
+
+        let empty = Data("{\"total_count\":0,\"items\":[]}".utf8)
+        XCTAssertNil(GitHubAvatarLookup.avatarURL(fromSearchResponse: empty))
+
+        XCTAssertNil(GitHubAvatarLookup.avatarURL(fromSearchResponse: Data("not json".utf8)))
+    }
+
     func testAuthorIdentityInitialsAndStableColorIndex() {
         XCTAssertEqual(AuthorIdentity.initials(for: "Eugene Epilo9er"), "EE")
         XCTAssertEqual(AuthorIdentity.initials(for: "홍길동"), "홍")

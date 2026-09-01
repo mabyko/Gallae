@@ -1804,6 +1804,109 @@ enum RelativeTimeLabel {
     }
 }
 
+enum AuthorAvatarSource {
+    // GitHub noreply 이메일에 든 공개 ID·사용자명만 사용한다.
+    // 이메일 자체는 어떤 네트워크 요청에도 실리지 않는다.
+    static func url(for email: String) -> URL? {
+        let email = email.lowercased()
+        let suffix = "@users.noreply.github.com"
+        guard email.hasSuffix(suffix) else { return nil }
+        let local = email.dropLast(suffix.count)
+
+        if let plusIndex = local.firstIndex(of: "+") {
+            let id = local[..<plusIndex]
+            guard !id.isEmpty, id.allSatisfy(\.isNumber) else { return nil }
+            return URL(string: "https://avatars.githubusercontent.com/u/\(id)?s=64&v=4")
+        }
+
+        guard
+            !local.isEmpty,
+            local.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" })
+        else {
+            return nil
+        }
+        return URL(string: "https://github.com/\(local).png?size=64")
+    }
+}
+
+// commit 이메일로 GitHub 공개 계정을 조회한다. 이메일은 GitHub API에만 전송되고,
+// 성공 결과는 이메일별로 저장해 반복 조회하지 않는다. 실패는 세션 안에서만 기억한다.
+@MainActor
+final class GitHubAvatarLookup {
+    static let shared = GitHubAvatarLookup()
+    private static let cacheKey = "gitHubAvatarURLsByEmail"
+
+    private var cache: [String: URL]
+    private var unresolvedEmails: Set<String> = []
+
+    init() {
+        let stored = UserDefaults.standard.dictionary(forKey: Self.cacheKey) as? [String: String]
+        cache = stored?.compactMapValues(URL.init(string:)) ?? [:]
+    }
+
+    func avatarURL(for email: String) async -> URL? {
+        let key = email.lowercased()
+        guard !key.isEmpty else { return nil }
+        if let cached = cache[key] { return cached }
+        guard !unresolvedEmails.contains(key) else { return nil }
+
+        guard var components = URLComponents(string: "https://api.github.com/search/users") else {
+            return nil
+        }
+        components.queryItems = [
+            URLQueryItem(name: "q", value: "\(key) in:email"),
+            URLQueryItem(name: "per_page", value: "1")
+        ]
+        guard let url = components.url else { return nil }
+        var request = URLRequest(url: url)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                unresolvedEmails.insert(key)
+                return nil
+            }
+            guard let avatarURL = Self.avatarURL(fromSearchResponse: data) else {
+                unresolvedEmails.insert(key)
+                return nil
+            }
+            cache[key] = avatarURL
+            UserDefaults.standard.set(
+                cache.mapValues(\.absoluteString),
+                forKey: Self.cacheKey
+            )
+            return avatarURL
+        } catch {
+            unresolvedEmails.insert(key)
+            return nil
+        }
+    }
+
+    static func avatarURL(fromSearchResponse data: Data) -> URL? {
+        struct SearchResponse: Decodable {
+            struct Item: Decodable {
+                let avatarURL: String
+
+                enum CodingKeys: String, CodingKey {
+                    case avatarURL = "avatar_url"
+                }
+            }
+
+            let items: [Item]
+        }
+
+        guard
+            let response = try? JSONDecoder().decode(SearchResponse.self, from: data),
+            let item = response.items.first,
+            let url = URL(string: item.avatarURL + "&s=64")
+        else {
+            return nil
+        }
+        return url
+    }
+}
+
 enum AuthorIdentity {
     static func initials(for name: String) -> String {
         let letters = name
@@ -1828,15 +1931,53 @@ enum AuthorIdentity {
 private struct RepositoryAuthorBadge: View {
     let name: String
     let email: String
+    @AppStorage("loadsGitHubAvatars") private var loadsGitHubAvatars = true
+    @State private var resolvedAvatarURL: URL?
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
+        Group {
+            if let resolvedAvatarURL {
+                AsyncImage(url: resolvedAvatarURL) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .frame(width: 28, height: 28)
+                            .clipShape(.circle)
+                    } else {
+                        initialsBadge
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .accessibilityHidden(true)
+            } else {
+                initialsBadge
+            }
+        }
+        .task(id: "\(loadsGitHubAvatars)|\(email)") {
+            guard loadsGitHubAvatars else {
+                resolvedAvatarURL = nil
+                return
+            }
+            if let directURL = AuthorAvatarSource.url(for: email) {
+                resolvedAvatarURL = directURL
+                return
+            }
+            resolvedAvatarURL = nil
+            let lookedUp = await GitHubAvatarLookup.shared.avatarURL(for: email)
+            guard !Task.isCancelled else { return }
+            resolvedAvatarURL = lookedUp
+        }
+    }
+
+    private var initialsBadge: some View {
         let palette = theme.colors.authorBadgeColors
         let color = palette[AuthorIdentity.colorIndex(
             for: email.isEmpty ? name : email,
             paletteCount: palette.count
         )]
-        Text(AuthorIdentity.initials(for: name))
+        return Text(AuthorIdentity.initials(for: name))
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 28, height: 28)

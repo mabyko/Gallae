@@ -160,7 +160,7 @@ Commit 제목은 계속 필수이며, 사용자는 필요할 때 여러 줄 본�
 
 ## History 첫 수직 슬라이스
 
-사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다. commit 상세는 작성자 이름·이메일·시각과 함께 이름 이니셜·이메일 기반 고정 색 배지로 작성자를 구분하고, 네트워크 아바타는 사용하지 않는다. 표시 한도에 도달하면 목록 끝에 더 오래된 commit이 표시되지 않음을 알린다.
+사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다. commit 상세는 작성자 이름·이메일·시각과 함께 이름 이니셜·이메일 기반 고정 색 배지로 작성자를 구분한다. 설정의 `Load GitHub Avatars`(기본 켬)가 켜져 있으면 GitHub noreply 이메일은 조회 없이 공개 avatar를 직접 불러오고, 그 외 이메일은 GitHub 공개 사용자 검색으로만 해석해 결과를 이메일별로 저장한다. 이메일은 GitHub 외 어디에도 보내지 않으며, 끄거나 실패하거나 공개 계정이 없으면 이니셜 배지를 유지한다. 표시 한도에 도달하면 목록 끝에 더 오래된 commit이 표시되지 않음을 알린다.
 
 commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent와 first-parent 기준 전체 patch를 같은 Workspace에서 읽는다. root commit도 표시하며 목록과 patch의 로딩·빈 상태·오류·재시도를 구분한다. 이 단계는 조회 전용이고, commit 그래프, 모든 branch/ref, 검색·필터, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
 

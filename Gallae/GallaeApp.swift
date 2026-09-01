@@ -180,11 +180,23 @@ enum CommandLineToolInstaller {
 
 private struct GallaeSettingsView: View {
     @Environment(\.gallaeTheme) private var theme
+    @AppStorage("loadsGitHubAvatars") private var loadsGitHubAvatars = true
     @State private var installedURL: URL?
     @State private var errorMessage: String?
 
     var body: some View {
         Form {
+            Section("Author Avatars") {
+                Toggle("Load GitHub Avatars", isOn: $loadsGitHubAvatars)
+                    .accessibilityHint(
+                        "Look up commit authors on GitHub and show their public profile pictures"
+                    )
+
+                Text("Looks up commit authors on GitHub and shows their public avatar. Author email addresses are sent only to GitHub, results are cached per email, and authors without a public GitHub match keep the initials badge.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Command Line Tool") {
                 LabeledContent("gallae command") {
                     Text(installedURL?.path ?? "Not installed")
