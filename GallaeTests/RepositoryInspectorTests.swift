@@ -3825,6 +3825,33 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(identical, .init(uniqueToCurrent: 0, uniqueToOther: 0))
     }
 
+    func testInstallsCommandLineToolIntoWritableDirectory() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let installed = try CommandLineToolInstaller.install(into: [directory])
+
+        XCTAssertEqual(installed.lastPathComponent, "gallae")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: installed.path))
+        let content = try String(contentsOf: installed, encoding: .utf8)
+        XCTAssertTrue(content.hasPrefix("#!/bin/sh"))
+        XCTAssertTrue(content.contains("usage: gallae [path]"))
+        XCTAssertEqual(CommandLineToolInstaller.installedLocation(in: [directory]), installed)
+    }
+
+    func testCommandLineToolInstallFailsWithoutWritableDirectory() throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appending(path: "GallaeTests-missing-\(UUID().uuidString)", directoryHint: .isDirectory)
+
+        XCTAssertThrowsError(try CommandLineToolInstaller.install(into: [missing])) { error in
+            XCTAssertEqual(
+                error as? CommandLineToolError,
+                .noWritableLocation([missing])
+            )
+        }
+        XCTAssertNil(CommandLineToolInstaller.installedLocation(in: [missing]))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GallaeTests-\(UUID().uuidString)", directoryHint: .isDirectory)

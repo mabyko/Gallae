@@ -53,6 +53,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 - Recent에서는 ⌘A·⌘클릭·Shift 클릭으로 여러 항목을 선택해 디스크의 Repository를 바꾸지 않고 목록에서 함께 제거할 수 있다.
 - Repository를 선택하면 요약을 확인할 수 있고, 열면 같은 메인 윈도우가 그 저장소의 **Repository Workspace**로 전환된다.
 - 경로를 전달받아 실행된 경우에는 해당 Repository를 바로 열고, 복원할 작업공간이 없으면 Repository Library를 보여 준다.
+- 설정(⌘,)의 Command Line Tool에서 `gallae` 명령을 설치하고, Help 메뉴의 `Install Command Line Tool…`은 이 설정을 연다. `gallae [path]`는 같은 경로 전달을 터미널에서 실행하고 경로 기본값은 현재 디렉터리이며, Release 앱이 없으면 Dev 빌드를 연다. 설치는 PATH의 쓰기 가능한 표준 bin 디렉터리에 스크립트를 복사하며 관리자 권한을 요구하지 않는다.
 
 ## UX 원칙
 
