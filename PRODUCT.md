@@ -174,7 +174,7 @@ ref 이름도 기존 History 검색 대상에 포함한다. 이 단계는 조회
 
 ## History 네 번째 수직 슬라이스
 
-History 목록 왼쪽에 현재 HEAD에서 도달 가능한 commit의 부모 관계를 graph로 표시한다. 일반 commit은 같은 lane을 이어 가고 merge commit은 여러 부모로 갈라졌다가 공통 조상에서 다시 합쳐진다.
+History 목록 왼쪽에 현재 HEAD에서 도달 가능한 commit의 부모 관계를 graph로 표시한다. 일반 commit은 같은 lane을 이어 가고 merge commit은 여러 부모로 갈라졌다가 공통 조상에서 다시 합쳐진다. lane마다 테마의 graph 색상을 순환해 갈라진 줄기를 색으로도 구분한다.
 
 검색으로 중간 commit이 숨겨지면 잘못된 연결선을 만들지 않고 각 검색 결과의 commit 점만 표시한다. VoiceOver 이름은 root와 merge commit을 색이나 선 없이도 구분하며, 모든 ref를 함께 걷는 graph와 branch 이동·생성은 이후 범위로 남긴다.
 

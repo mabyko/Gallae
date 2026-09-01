@@ -9,6 +9,7 @@ struct GallaeTheme: Sendable {
         let statusRenamed: Color
         let statusUntracked: Color
         let badgeBackground: Color
+        let historyGraphLanes: [Color]
         let diffText: Color
         let diffMetadataText: Color
         let diffHunkText: Color
@@ -44,6 +45,7 @@ struct GallaeTheme: Sendable {
             statusRenamed: .purple,
             statusUntracked: .teal,
             badgeBackground: .secondary.opacity(0.12),
+            historyGraphLanes: [.blue, .purple, .teal, .orange, .pink, .green, .indigo, .brown],
             diffText: .primary,
             diffMetadataText: .secondary,
             diffHunkText: .accentColor,

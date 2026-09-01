@@ -1692,8 +1692,10 @@ private struct RepositoryHistoryRow: View {
 private struct RepositoryHistoryGraphView: View {
     let row: RepositoryHistory.GraphRow?
     let laneCount: Int
+    @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
+        let laneColors = theme.colors.historyGraphLanes
         Canvas { context, size in
             let middleY = size.height / 2
             let laneInset: CGFloat = 4
@@ -1703,6 +1705,10 @@ private struct RepositoryHistoryGraphView: View {
             func xPosition(for lane: Int) -> CGFloat {
                 guard laneCount > 1 else { return size.width / 2 }
                 return laneInset + CGFloat(lane) * usableWidth / CGFloat(laneCount - 1)
+            }
+
+            func laneColor(_ lane: Int) -> Color {
+                laneColors[lane % laneColors.count]
             }
 
             guard let row else {
@@ -1715,26 +1721,31 @@ private struct RepositoryHistoryGraphView: View {
                 var path = Path()
                 path.move(to: .init(x: xPosition(for: edge.fromLane), y: 0))
                 path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
-                context.stroke(path, with: .color(.secondary.opacity(0.45)), style: lineStyle)
+                context.stroke(
+                    path,
+                    with: .color(laneColor(edge.toLane).opacity(0.7)),
+                    style: lineStyle
+                )
             }
 
             let commitX = xPosition(for: row.commitLane)
+            let commitColor = laneColor(row.commitLane)
             if row.hasIncomingEdge {
                 var path = Path()
                 path.move(to: .init(x: commitX, y: 0))
                 path.addLine(to: .init(x: commitX, y: middleY))
-                context.stroke(path, with: .color(.primary.opacity(0.75)), style: lineStyle)
+                context.stroke(path, with: .color(commitColor), style: lineStyle)
             }
 
             for edge in row.parentEdges {
                 var path = Path()
                 path.move(to: .init(x: commitX, y: middleY))
                 path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
-                context.stroke(path, with: .color(.primary.opacity(0.75)), style: lineStyle)
+                context.stroke(path, with: .color(laneColor(edge.toLane)), style: lineStyle)
             }
 
             let dot = CGRect(x: commitX - 3, y: middleY - 3, width: 6, height: 6)
-            context.fill(Path(ellipseIn: dot), with: .color(.primary))
+            context.fill(Path(ellipseIn: dot), with: .color(commitColor))
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
