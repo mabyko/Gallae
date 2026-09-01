@@ -11,7 +11,7 @@
 
 ## 정상 흐름
 
-1. 사용자가 상단에서 Active Repository, HEAD와 upstream 대비 상태를 확인한다.
+1. 사용자가 상단에서 Active Repository, HEAD, upstream 대비 상태와 진행 중인 Merge·Rebase를 확인한다.
 2. staged, unstaged, untracked, conflicted 파일을 상태별로 살핀다.
 3. 파일을 선택하고 경로, 상태, 추가·삭제 수와 diff를 읽는다.
 4. 방향키로 다음 파일을 선택해 같은 화면에서 검토를 이어 간다.
@@ -23,7 +23,8 @@
 - 아직 커밋이 없는 브랜치와 upstream이 없는 브랜치를 오류로 다루지 않는다.
 - 바이너리 또는 지원하지 않는 형식이라면 메타데이터와 외부에서 여는 방법을 안내한다.
 - diff가 너무 크다면 전체 창을 막지 않고 요약과 명시적인 추가 로드 경로를 표시한다.
-- 충돌 파일은 읽을 수 있게 표시하되 첫 슬라이스에서 해결 기능을 약속하지 않는다.
+- 충돌 파일은 [Base·Ours·Theirs를 나란히 검사](uc-41-inspect-conflict-versions.md)할 수 있지만, 이 흐름에서 해결 기능은 제공하지 않는다.
+- 진행 중인 Merge·Rebase가 있으면 [작업 종류와 남은 충돌 수](uc-44-inspect-in-progress-operation.md)를 표시한다.
 
 ## 완료 확인
 

@@ -59,7 +59,8 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 - 화면마다 필요한 역할만 둔다. Repository Library는 **Library Folder 탐색 · Repository 목록 · 선택 요약**의 세 역할로 나눈다.
 - 첫 Changes는 상단 Repository 문맥 아래에 **변경 목록 · diff**의 2열만 둔다. 역할이 없는 빈 탐색 패널은 만들지 않는다.
-- 현재 브랜치와 upstream 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
+- 현재 브랜치와 추적 대상 remote branch 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
+- Git의 branch upstream 관계는 사용자 화면에서 `Tracking`으로 표시한다. `upstream`은 내부 Git 용어 또는 실제 remote 이름일 때만 그대로 쓴다.
 - 선택은 곧 문맥이다. 선택한 저장소, 파일, 커밋이 바뀌면 나머지 영역이 예측 가능하게 갱신되어야 한다.
 - 위험한 동작은 일반 탐색과 시각적으로 구분하고, 되돌릴 수 없는 경우에만 확인을 요구한다.
 
@@ -159,9 +160,269 @@ commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent
 
 결과가 없으면 검색 실패와 History 읽기 실패를 구분하고 바로 검색을 지울 수 있다. commit 그래프, 모든 branch/ref, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
 
+## History 세 번째 수직 슬라이스
+
+History가 읽은 최근 commit에 local branch, remote-tracking branch와 tag가 닿아 있으면 해당 행에서 이름과 종류를 함께 표시한다. annotated tag는 tag object가 아니라 실제 commit 위치에 표시하고, remote의 symbolic HEAD는 중복 정보로 노출하지 않는다.
+
+ref 이름도 기존 History 검색 대상에 포함한다. 이 단계는 조회 전용이며 commit graph와 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
+
+## History 네 번째 수직 슬라이스
+
+History 목록 왼쪽에 현재 HEAD에서 도달 가능한 commit의 부모 관계를 graph로 표시한다. 일반 commit은 같은 lane을 이어 가고 merge commit은 여러 부모로 갈라졌다가 공통 조상에서 다시 합쳐진다.
+
+검색으로 중간 commit이 숨겨지면 잘못된 연결선을 만들지 않고 각 검색 결과의 commit 점만 표시한다. VoiceOver 이름은 root와 merge commit을 색이나 선 없이도 구분하며, 모든 ref를 함께 걷는 graph와 branch 이동·생성은 이후 범위로 남긴다.
+
+## History 다섯 번째 수직 슬라이스
+
+History는 현재 HEAD뿐 아니라 local branch, remote-tracking branch와 tag에서 도달 가능한 최신 commit을 합쳐 최대 100개까지 topology 순서로 보여 준다. stash와 notes처럼 이 화면에서 다루지 않는 ref는 포함하지 않는다.
+
+다른 branch의 commit이 더 최신이어도 현재 HEAD를 정확히 표시하고 처음 선택한다. 이 단계는 조회 전용이며 파일별 drill-down과 branch 이동·생성은 이후 범위로 남긴다.
+
+## History 여섯 번째 수직 슬라이스
+
+commit을 선택하면 first-parent 기준 변경 파일을 상태와 함께 보여 주고 첫 파일을 선택한다. rename은 원래 경로도 표시하며, root commit은 빈 tree와 비교한다.
+
+파일을 선택하면 해당 파일의 patch만 읽는다. patch는 기본 2MB, 사용자 요청 시 16MB까지 확장하고 binary·UTF-8 아님·과대한 내용을 구분한다. 이 단계도 조회 전용이며 branch 이동·생성은 이후 범위로 남긴다.
+
+## History 일곱 번째 수직 슬라이스
+
+사용자는 Repository 헤더의 현재 branch를 눌러 기존 local branch를 검색하고 선택한다. 현재 branch는 목록에서 따로 표시하며 detached HEAD에서도 local branch를 선택할 수 있다.
+
+전환은 일반적인 안전한 Git switch로 실행한다. local 변경과 충돌하면 강제로 덮어쓰지 않고 기존 branch·index·working tree를 유지한 채 오류를 표시한다. 성공하면 Repository, Changes와 History를 다시 읽어 새 HEAD를 선택한다. branch 생성, remote-tracking branch 전환과 force·merge·stash 보조 동작은 이후 범위로 남긴다.
+
+## History 여덟 번째 수직 슬라이스
+
+사용자는 같은 branch 선택기에서 현재 HEAD를 시작점으로 새 local branch를 만들고 바로 전환한다. 이름 입력은 인라인으로 열리며 Create 또는 Return으로 실행한다. detached HEAD와 아직 commit이 없는 branch에서도 같은 흐름을 사용한다.
+
+빈 이름, 유효하지 않은 이름이나 이미 존재하는 branch는 만들지 않고 현재 branch·index·working tree와 입력값을 유지한 채 오류를 표시한다. 임의의 시작점 선택과 기존 branch 강제 재생성은 포함하지 않으며, remote 게시와 upstream 설정은 branch 생성 뒤 Publish에서 별도로 수행한다.
+
+## Sync 첫 수직 슬라이스
+
+사용자는 Repository Workspace 상단의 Fetch로 현재 Git 설정이 고르는 기본 remote의 변경을 가져온다. 기존 credential helper와 SSH 환경을 사용하되 표시할 수 없는 터미널 입력을 기다리지 않는다.
+
+Fetch는 remote-tracking ref만 갱신하고 현재 HEAD·index·working tree를 바꾸거나 remote 변경을 local branch에 합치지 않는다. 진행 중에는 상태와 Cancel을 표시하며 Escape로도 취소할 수 있다. 성공하면 upstream ahead/behind, Changes와 History를 다시 읽는다. remote가 없거나 Fetch가 실패하면 기존 Workspace를 유지하고 원인을 표시한다.
+
+Fetch 대상 선택은 Sync 열두 번째 수직 슬라이스, 명시적인 prune은 열세 번째 수직 슬라이스, 사용자가 켜는 자동 Fetch는 열네 번째 수직 슬라이스에서 잇는다.
+
+## Sync 두 번째 수직 슬라이스
+
+사용자는 Repository Workspace 상단의 Pull로 현재 branch의 configured upstream을 가져와 fast-forward한다. Pull은 `--ff-only`로 실행해 merge commit을 만들거나 local commit을 rebase하지 않는다.
+
+remote 변경과 겹치지 않는 local working tree 수정은 보존한다. upstream이 없거나 branch가 갈라졌거나 local 수정 때문에 갱신할 수 없으면 현재 HEAD·index·working tree를 유지하고 원인을 표시한다. Fetch 단계에서 remote-tracking ref가 갱신된 경우에는 최신 ahead/behind를 다시 읽어 보여 준다.
+
+진행 상태와 Cancel을 표시하고 Escape로도 취소할 수 있다. 성공하면 Repository, Changes와 History를 다시 읽는다. merge/rebase 방식 선택, remote 선택, 강제 갱신과 자동 Pull은 이후 수직 슬라이스로 남긴다.
+
+## Sync 세 번째 수직 슬라이스
+
+사용자는 Repository Workspace 상단의 Push로 upstream이 설정된 현재 branch를 Git 설정이 고르는 기본 push 목적지에 보낸다. 인자 없는 Push로 기존 `push.default`와 remote 설정을 존중하며 force, upstream 생성과 refspec 지정은 사용하지 않는다.
+
+Push는 commit만 전송하고 현재 HEAD·index·working tree와 local 수정을 바꾸지 않는다. non-fast-forward, upstream 없음, remote 거부와 인증·네트워크 실패는 기존 Workspace를 유지한 채 원인을 표시한다.
+
+진행 상태와 Cancel을 표시하고 Escape로도 취소할 수 있다. 성공하면 Repository, Changes와 History를 다시 읽는다. Push 자체에는 `--set-upstream`을 사용하지 않으며, force·force-with-lease, tag·여러 ref 게시와 remote branch 삭제도 포함하지 않는다.
+
+## Sync 네 번째 수직 슬라이스
+
+upstream 없는 local branch에서는 같은 상단 동작을 Publish로 표시한다. remote가 정확히 하나일 때 현재 branch와 같은 이름의 remote branch 하나만 게시하고 upstream을 설정한다.
+
+Publish는 force하지 않고 현재 HEAD·index·working tree와 local 수정을 바꾸지 않는다. detached HEAD, 아직 commit이 없는 branch, remote가 없거나 여러 개인 경우에는 실행하지 않거나 원인을 표시한다.
+
+진행 상태와 Cancel을 표시하고 Escape로도 취소할 수 있다. 성공하면 Repository, Changes와 History를 다시 읽는다. tag·여러 ref 게시와 remote branch 삭제는 이후 범위로 남긴다.
+
+## Sync 다섯 번째 수직 슬라이스
+
+Publish할 branch에 remote가 하나도 없으면 Gallae가 Add Remote sheet를 연다. 사용자는 기본 이름 `origin`을 그대로 쓰거나 바꾸고 HTTPS·SSH URL 또는 local Repository 경로를 입력한 뒤, remote 등록과 현재 branch 게시를 한 동작으로 실행한다.
+
+입력 단계의 Cancel은 Repository를 바꾸지 않는다. remote 등록 뒤 Publish가 실패하거나 취소되면 추가한 remote는 유지해 다시 Publish할 수 있게 하며, HEAD·index·working tree와 local 수정은 바꾸지 않는다.
+
+## Sync 여섯 번째 수직 슬라이스
+
+upstream 없는 branch에 remote가 둘 이상 설정되어 있으면 Gallae가 Publish 목적지 선택 sheet를 연다. 사용자는 remote 이름을 고른 뒤 현재 branch와 같은 이름의 remote branch 하나만 게시하고 그 branch를 Tracking 대상으로 설정한다.
+
+선택 전 Cancel 또는 Escape는 Repository를 바꾸지 않는다. Publish는 force하지 않고 선택하지 않은 remote와 현재 HEAD·index·working tree·local 수정을 그대로 둔다.
+
+## Sync 일곱 번째 수직 슬라이스
+
+사용자는 Repository Workspace 상단의 Remotes에서 configured remote 이름과 Git이 해석한 Fetch·Push URL을 조회하고 선택해 복사할 수 있다.
+
+Remote 조회는 로딩, 없음과 실패·재시도를 구분하며 Repository의 HEAD·index·working tree와 ref를 바꾸지 않는다.
+
+## Sync 여덟 번째 수직 슬라이스
+
+사용자는 Remotes 목록에서 기존 remote를 선택해 Fetch·Push URL을 따로 편집한다. remote 이름은 유지하며 빈 URL은 저장하지 않는다.
+
+Save는 Git 설정의 첫 Fetch URL과 첫 Push URL만 바꾸고 remote에 연결하지 않는다. 실패하면 입력을 유지하며 Repository의 HEAD·index·working tree와 ref는 바꾸지 않는다.
+
+## Sync 아홉 번째 수직 슬라이스
+
+사용자는 Remotes 목록에서 기존 remote를 제거한다. 제거 전 확인에서 해당 Git 설정과 local remote-tracking branch가 사라진다는 점, remote Repository와 local branch·commit·작업 파일은 삭제되지 않는다는 점을 분명히 보여 준다.
+
+확인하면 선택한 remote 설정과 연결된 local remote-tracking ref를 제거하고 Repository, Remotes와 History를 다시 읽는다. 현재 branch가 그 remote를 Tracking 중이었다면 Tracking 표시는 사라지고 다음 전송 동작은 Publish가 된다. 다른 remote와 HEAD·index·working tree·local branch·commit은 유지한다.
+
+## Sync 열 번째 수직 슬라이스
+
+사용자는 Remotes 목록에서 configured Remote의 Fetch 연결을 시험한다. Gallae는 기존 credential helper와 SSH 환경으로 해당 Remote의 Fetch URL에서 `HEAD`를 읽되, 표시할 수 없는 터미널 인증 입력은 기다리지 않는다.
+
+진행 중에는 상태와 Cancel을 표시하고 Escape로도 취소할 수 있다. 성공하면 `Reachable`을 표시하며, 실패하면 Git 오류를 보여 주고 다시 시도할 수 있다. 시험은 Remote 설정·local ref와 object·HEAD·index·working tree를 바꾸지 않으며 비어 있는 Remote도 연결 가능한 대상으로 인정한다. Push URL과 쓰기 권한은 시험하지 않는다.
+
+## Sync 열한 번째 수직 슬라이스
+
+사용자는 Edit Remote에서 configured Remote의 이름과 Fetch·Push URL을 함께 바꿀 수 있다. 이름을 바꾸면 Git의 remote rename 동작으로 관련 설정과 local remote-tracking branch를 새 이름 아래로 옮기고, 현재 branch의 Tracking 관계도 새 Remote 이름을 가리킨다.
+
+빈 이름, Git이 허용하지 않는 이름이나 이미 존재하는 Remote 이름은 저장하지 않고 입력과 기존 Repository 상태를 유지한다. 성공하면 Repository snapshot과 Remotes를 갱신하며 HEAD·index·working tree·local branch·commit과 remote Repository는 바꾸지 않는다. Save는 Remote에 연결하지 않는다.
+
+## Sync 열두 번째 수직 슬라이스
+
+사용자가 Fetch를 눌렀을 때 configured Remote가 하나면 바로 가져오고, 둘 이상이면 대상 선택 sheet를 연다. 선택한 Remote 이름을 명시한 Fetch로 그 Remote의 configured refspec과 remote-tracking ref만 갱신한다.
+
+Cancel 또는 Escape는 Repository를 바꾸지 않는다. 성공하면 Repository, Changes와 History를 다시 읽으며 선택하지 않은 Remote의 tracking ref와 현재 HEAD·index·working tree·local 수정은 그대로 둔다. 명시적인 prune은 다음 수직 슬라이스, 자동 Fetch는 열네 번째 수직 슬라이스에서 잇는다.
+
+## Sync 열세 번째 수직 슬라이스
+
+사용자는 Fetch의 기본 동작을 그대로 실행하거나 메뉴에서 `Fetch & Prune`을 명시적으로 고른다. Remote가 하나면 바로 실행하고 둘 이상이면 기존 Remote 선택 sheet에서 하나를 고른다.
+
+`Fetch & Prune`은 선택한 Remote의 configured refspec을 기준으로 변경을 가져오고 Remote에서 사라진 local tracking ref를 정리한다. 선택하지 않은 Remote와 local branch·HEAD·index·working tree는 바꾸지 않으며 성공하면 Repository, Changes와 History를 다시 읽는다. 기본 Fetch는 `--prune`을 강제하지 않고 기존 Git 설정을 따른다.
+
+## Sync 열네 번째 수직 슬라이스
+
+사용자는 Fetch 메뉴에서 `Fetch Automatically`를 켜거나 끈다. 기본값은 꺼짐이며 선택은 앱 재실행 뒤에도 유지된다. 켜져 있으면 Gallae와 Repository Workspace가 활성인 동안 5분마다 인자 없는 Fetch를 실행해 현재 branch와 Git 설정이 고르는 기본 Remote만 갱신한다.
+
+다른 Repository 작업이 진행 중인 시점은 건너뛰고 다음 주기를 기다린다. 자동 Fetch는 `--prune`을 강제하지 않으며 성공하면 Repository, Changes와 History를 다시 읽는다. 실행 중 Cancel은 그 Fetch만 중단한다. Remote 없음이나 인증·네트워크 실패가 발생하면 자동 Fetch를 끄고 원인을 한 번 표시하며, local branch·HEAD·index·working tree와 local 수정은 바꾸지 않는다.
+
+## Recovery 첫 수직 슬라이스
+
+사용자는 Repository 헤더에서 `Stashes`를 선택해 최신 Stash 최대 100개를 최신순으로 읽는다. Stash를 선택하면 함께 저장된 tracked·untracked 파일 목록과 선택 파일 patch를 같은 Workspace에서 확인한다.
+
+목록·파일·patch는 조회 전용이며 Stash 생성·적용·삭제와 working tree 변경은 포함하지 않는다. 읽기 실패는 해당 영역에서 다시 시도할 수 있고, patch는 History와 같은 2MB 기본·16MB 확장 미리보기와 binary·UTF-8 아님 상태를 사용한다.
+
+## Recovery 두 번째 수직 슬라이스
+
+사용자는 Stashes에서 선택적인 메시지와 함께 현재 staged·unstaged tracked 변경을 새 Stash로 저장한다. `Include Untracked Files`를 직접 켠 경우에만 untracked 파일도 함께 저장하며 ignored 파일은 포함하지 않는다.
+
+생성 전 Cancel 또는 Escape는 Repository를 바꾸지 않는다. 아직 첫 commit이 없거나 충돌이 있거나 선택한 옵션으로 저장할 변경이 없으면 이유를 보여 주고 실행하지 않는다. 성공하면 HEAD와 commit은 유지한 채 index와 tracked working tree를 HEAD 상태로 되돌리고, 새 Stash와 Repository 상태를 다시 읽는다. Stash 삭제는 네 번째 수직 슬라이스에서 다룬다.
+
+## Recovery 세 번째 수직 슬라이스
+
+사용자는 Stashes에서 선택한 Stash를 적용해 저장된 staged·unstaged tracked 변경과 함께 저장된 untracked 파일을 현재 index와 working tree에 복원한다. 적용에는 안정적인 Stash 식별자를 사용하며, 성공해도 Stash 항목은 삭제하지 않는다.
+
+현재 변경과 겹치거나 새 HEAD와 충돌해 Git이 적용을 거부하면 강제로 덮어쓰지 않는다. HEAD와 Stash를 유지하고 Repository를 다시 읽어 기존 변경이나 충돌 상태를 즉시 보여 준다.
+
+## Recovery 네 번째 수직 슬라이스
+
+사용자는 Stashes에서 선택한 Stash를 명시적인 확인 뒤 영구 삭제한다. 확인은 저장된 변경을 적용하지 않고 Gallae에서 실행 취소할 수 없다는 점과 HEAD·index·working tree는 바뀌지 않는다는 점을 설명한다.
+
+삭제 직전에 선택한 Stash의 commit ID를 현재 목록에서 다시 찾아 번호가 바뀌어도 다른 항목을 삭제하지 않는다. 항목이 이미 사라졌거나 Git이 삭제를 거부하면 목록과 Repository를 다시 읽고 오류를 표시한다.
+
+## Recovery 다섯 번째 수직 슬라이스
+
+사용자는 History에서 현재 branch에 포함된 일반 commit 하나를 Revert해 현재 HEAD 위에 그 변경을 반대로 적용한 새 commit을 만든다. 기존 commit과 이후 History는 그대로 유지하고 Git의 기본 Revert 메시지를 사용한다.
+
+Revert는 변경이 없는 attached local branch에서만 실행한다. merge commit은 mainline 선택이 필요하므로 다섯 번째 슬라이스에서 제외하고 다음으로 분리한다. 적용이 충돌하거나 실패하면 자동으로 abort하고 기존 HEAD와 깨끗한 index·working tree가 복원됐는지 확인한다. 자동 복원이 완전하지 않으면 실제 Repository 상태를 다시 읽어 보여 주고 명확히 경고한다.
+
+## Recovery 여섯 번째 수직 슬라이스
+
+사용자는 merge commit을 Revert할 때 parent 번호와 각 parent의 commit 제목·SHA를 보고 mainline 하나를 직접 고른다. 선택 전에는 실행할 수 없으며 Cancel 또는 Escape는 Repository를 바꾸지 않는다.
+
+Gallae는 선택한 parent 번호를 Git의 mainline으로 명시해 merge가 그 parent에 가져온 tree 변경을 반대로 적용한 새 commit을 만든다. 기존 merge commit과 History는 유지한다. 일반 commit Revert와 같은 clean branch·ancestor 검사, 실패 시 자동 abort와 복원 확인을 적용한다.
+
+## Recovery 일곱 번째 수직 슬라이스
+
+사용자는 변경이 없는 attached local branch의 History에서 현재 HEAD보다 앞선 과거 commit을 골라 `Reset…`할 수 있다. Reset sheet는 현재 branch와 대상 commit, 이후 commit이 이 local branch에서 빠진다는 점을 보여 주고 mixed mode를 기본으로 제시한다. Cancel 또는 Escape는 Repository를 바꾸지 않는다.
+
+Gallae는 선택한 commit이 현재 HEAD의 ancestor인지 다시 확인한 뒤 mixed Reset으로 branch와 index를 대상에 맞추고 working tree 파일은 그대로 둔다. 되돌린 commit의 파일 내용은 unstaged 또는 untracked 변경으로 즉시 나타나며 Remote branch는 바꾸지 않는다. Reflog 지점은 현재 branch를 옮기는 대신 별도의 복구 branch로 보존한다.
+
+## Recovery 여덟 번째 수직 슬라이스
+
+사용자는 같은 Reset sheet에서 soft mode를 골라 현재 local branch만 과거 commit으로 옮기고, 실행 전 index와 working tree를 그대로 유지할 수 있다. 되돌린 commit의 변경은 staged 상태로 남아 바로 다시 commit할 수 있다.
+
+soft Reset도 변경이 없는 attached local branch와 현재 HEAD의 과거 ancestor commit에만 제공한다. 성공하면 Repository와 History를 다시 읽고, 실패하면 실행 전 HEAD와 깨끗한 상태로 복원을 확인한다. Remote branch는 바꾸지 않으며 Reflog 지점은 별도의 복구 branch 생성 흐름에서 다룬다.
+
+## Recovery 아홉 번째 수직 슬라이스
+
+사용자는 같은 Reset sheet에서 hard mode를 골라 현재 local branch, index와 working tree를 선택한 과거 commit에 맞출 수 있다. Hard는 이후 commit의 파일과 변경을 폐기하므로 별도의 파괴적 확인을 한 번 더 거치며, Gallae에서 실행 취소할 수 없음을 명시한다.
+
+hard Reset도 변경이 없는 attached local branch와 현재 HEAD의 과거 ancestor commit에만 제공한다. 이후 추가된 tracked 파일은 제거되고 대상 commit의 파일 내용으로 교체되며, 대상 파일을 막는 untracked 파일이나 폴더도 Git에 의해 삭제될 수 있다. Remote branch는 바꾸지 않고 성공 후 Repository와 History를 다시 읽는다.
+
+## Recovery 열 번째 수직 슬라이스
+
+사용자는 Repository 헤더의 `Reflog`에서 현재 Repository의 HEAD 이동 기록을 최대 100개까지 최신순으로 읽는다. 각 항목은 순서 기반 selector, action, 기록자, 시각과 commit SHA를 보여 주므로 branch 전환이나 Reset 전 HEAD도 찾을 수 있다.
+
+목록 선택과 상세 검사는 조회 전용이며 Repository·HEAD·index·working tree를 바꾸지 않는다. 비어 있음과 읽기 실패를 구분하고 같은 화면에서 재시도할 수 있으며, Git 유지 관리에 따라 오래된 기록이 만료될 수 있음을 알린다. 선택한 지점의 복구는 Recovery 열한 번째 수직 슬라이스에서 제공한다.
+
+## Recovery 열한 번째 수직 슬라이스
+
+사용자는 선택한 Reflog 상세에서 `Create Recovery Branch…`를 눌러 이름을 입력하고, 해당 전체 commit SHA에서 새 local branch를 만든 뒤 바로 전환한다. 기존 local branch ref는 옮기거나 강제로 다시 만들지 않는다.
+
+빈 이름은 실행하지 않는다. 유효하지 않거나 이미 존재하는 이름, local 변경과의 checkout 충돌처럼 Git이 전환을 거부하면 새 branch를 남기지 않고 기존 branch·index·working tree와 입력을 유지한다. Cancel 또는 Escape도 Repository를 바꾸지 않으며, 성공하면 Repository·Changes·History와 Reflog를 새 HEAD 기준으로 다시 읽는다.
+
+## Recovery 열두 번째 수직 슬라이스
+
+사용자는 Repository 상단의 `Integrate`에서 현재 branch를 제외한 local branch 하나를 골라 현재 branch를 fast-forward한다. 선택 화면은 현재 branch와 merge commit을 만들지 않는다는 점을 먼저 보여 주며, Fast-Forward 또는 Return으로 실행하고 Cancel 또는 Escape로 닫을 수 있다.
+
+Gallae는 `--ff-only`만 사용한다. 두 branch가 갈라졌거나 local 변경과 대상 파일이 겹치면 merge commit, rebase나 강제 덮어쓰기를 하지 않고 기존 HEAD·index·working tree를 유지한다. 겹치지 않는 local 변경과 선택한 source branch는 보존하며, 성공하면 Repository·Changes·History와 Reflog를 다시 읽는다. detached HEAD, unborn branch와 선택할 다른 local branch가 없는 상태는 실행하지 않는다.
+
+## Recovery 열세 번째 수직 슬라이스
+
+사용자는 같은 Integrate 화면에서 서로 갈라진 local branch를 골라 `Create Merge Commit`으로 합칠 수 있다. `Fast-Forward`가 기본 동작이며 Return도 이를 실행한다. Merge commit 생성은 변경이 없는 attached local branch에서만 활성화되고, 두 branch가 실제로 갈라졌는지 실행 직전에 다시 확인한다.
+
+Gallae는 `--no-ff --no-edit`로 Git의 기본 merge message와 사용자의 identity·hook·서명 설정을 따른다. source branch와 Remote branch는 바꾸지 않는다. 충돌이나 실패가 나면 merge를 자동으로 중단하고 실행 전 HEAD와 깨끗한 상태가 복원됐는지 확인한다. 복원이 끝나지 않으면 실제 Repository 상태와 경고를 보여 준다. 충돌 편집기는 이 수직 슬라이스에 포함하지 않는다.
+
+## Recovery 열네 번째 수직 슬라이스
+
+사용자는 같은 Integrate 화면에서 다른 local branch를 고르고 `Rebase Current Branch`로 현재 branch의 고유 commit을 선택한 branch 위에 다시 적용할 수 있다. Rebase가 현재 branch의 commit ID를 바꾸며 Gallae는 이를 force-push하지 않는다는 점을 실행 전에 보여 준다. 변경이 없는 attached local branch에서만 실행하고 선택한 branch와 Remote branch는 바꾸지 않는다.
+
+Gallae는 다른 local branch까지 함께 이동시키는 사용자 설정을 막기 위해 `--no-update-refs`를 명시한다. 충돌이나 실패가 나면 rebase를 자동으로 중단하고 실행 전 branch·HEAD와 깨끗한 상태가 복원됐는지 확인한다. 복원이 끝나지 않으면 실제 Repository 상태와 경고를 보여 준다. 충돌 해결, continue·skip과 interactive rebase는 포함하지 않는다.
+
+## Advanced 첫 수직 슬라이스
+
+사용자는 Changes에서 충돌 파일을 선택해 Git index의 Base·Ours·Theirs 버전을 세 열로 비교할 수 있다. 각 열은 stage 1·2·3의 역할을 함께 표시하며, 해당 stage가 없는 충돌과 빈 파일, binary, 지원하지 않는 인코딩, 큰 파일을 서로 다른 상태로 설명한다.
+
+이 검사는 Repository의 HEAD·index·working tree를 바꾸지 않는다. Ours 또는 Theirs를 선택해 충돌을 해결하는 동작은 다음 수직 슬라이스에서 추가한다.
+
+## Advanced 두 번째 수직 슬라이스
+
+사용자는 충돌 파일의 비교 화면에서 `Use Ours…` 또는 `Use Theirs…`를 골라 해당 전체 버전으로 파일을 해결할 수 있다. Gallae는 파일 교체와 stage 결과를 먼저 확인하며, 선택한 쪽에 파일이 없으면 삭제를 해결 결과로 명확히 알린다.
+
+실행 직전에 해당 경로가 여전히 충돌 중인지 다시 확인한다. 성공하면 선택한 내용을 working tree와 index에 기록하고 Repository를 다시 읽으며 HEAD는 바꾸지 않는다. 직접 편집한 내용을 해결 결과로 표시하는 흐름은 세 번째 수직 슬라이스에서 별도로 제공한다.
+
+## Advanced 세 번째 수직 슬라이스
+
+사용자는 외부 편집기에서 합친 충돌 파일의 현재 working tree 상태를 `Mark Resolved…`로 명시적으로 stage할 수 있다. 파일을 삭제한 상태도 같은 동작으로 staged 삭제가 되며, 실행 전에 현재 디스크 상태와 삭제 가능성, Gallae가 충돌 marker를 검사하지 않는다는 점을 확인한다.
+
+Gallae는 실행 직전에 해당 경로가 여전히 unmerged인지 다시 확인하고 선택한 경로 하나만 index에 기록한다. 성공하면 Repository를 다시 읽으며 HEAD와 다른 충돌 파일은 바꾸지 않는다. 진행 중인 Merge·Rebase 상태 검사는 다음 수직 슬라이스로 남긴다.
+
+## Advanced 네 번째 수직 슬라이스
+
+Repository에서 Merge 또는 Rebase가 진행 중이면 Workspace 상단에 작업 종류와 남은 충돌 수를 표시한다. 충돌이 모두 해결되면 Continue할 준비가 됐음을 보여 주고, 해결 전에는 Continue가 아직 불가능하다는 점과 Abort 경로가 있음을 함께 알린다.
+
+이 검사는 Git이 계산한 worktree별 내부 경로를 사용해 linked worktree에서도 현재 작업을 찾으며 HEAD·index·working tree를 바꾸지 않는다. 실제 Continue·Abort 실행은 다음 수직 슬라이스로 남긴다.
+
+## Advanced 다섯 번째 수직 슬라이스
+
+사용자는 충돌을 모두 해결한 Merge 또는 Rebase를 Workspace 상단에서 Continue하거나, 확인 뒤 Abort할 수 있다. Continue는 unresolved entry가 없을 때만 활성화하며 실행 직전에 실제 작업 상태를 다시 확인한다. Abort는 충돌 해결 중 만든 변경이 사라질 수 있음을 먼저 알린다.
+
+Gallae는 별도 편집기를 열지 않고 Git의 기본 메시지로 작업을 계속한다. 성공·실패 뒤에는 Repository를 다시 읽어 다음 충돌이나 부분적으로 바뀐 상태도 숨기지 않는다. Rebase Skip과 interactive rebase는 이 슬라이스에 포함하지 않는다.
+
+## Advanced 여섯 번째 수직 슬라이스
+
+사용자는 History에서 현재 branch에 포함된 commit을 골라 그 commit부터 현재 HEAD까지의 기본 Interactive Rebase 계획을 실행 전에 읽을 수 있다. 계획은 오래된 commit부터 `pick`, 제목과 축약 SHA를 한 행에 보여 주며, Git의 기본 선형 rebase와 같이 merge commit은 제외한다.
+
+이 미리보기는 attached local branch에 진행 중인 Git 작업이 없을 때만 제공한다. 선택한 commit이 현재 branch의 ancestor인지 실행 직전에 확인하며 HEAD·index·working tree를 바꾸지 않는다. 순서와 동작 편집은 다음 수직 슬라이스, Interactive Rebase 실행은 그다음 수직 슬라이스로 남긴다.
+
+## Advanced 일곱 번째 수직 슬라이스
+
+사용자는 기본 계획의 각 commit을 `pick`, `reword`, `squash`, `fixup`, `drop`으로 바꾸고 drag 또는 위·아래 동작으로 실행 순서를 편집한다. `squash`와 `fixup` 앞에는 유지되는 commit이 있어야 하며 모든 commit을 `drop`한 계획은 검토 단계로 넘기지 않는다.
+
+유효한 계획은 별도의 읽기 전용 검토 단계에서 최종 순서·동작·제목·SHA를 확인할 수 있다. Back은 편집 상태를 그대로 유지하며 Close 또는 Escape는 계획을 버리고 Repository를 바꾸지 않는다. 실제 Interactive Rebase 실행과 `reword` 메시지 입력은 다음 수직 슬라이스로 남긴다.
+
+## Advanced 여덟 번째 수직 슬라이스
+
+사용자는 검토 단계에서 `reword`로 지정한 commit의 새 메시지를 입력하고, 현재 local branch의 commit ID가 바뀐다는 위험을 확인한 뒤 편집한 계획을 실행한다. 실행 직전에 Repository가 깨끗한 attached branch인지, 대상 범위와 계획이 여전히 유효한지 다시 확인한다.
+
+Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실행하지 않는다. 성공하면 새 History를 다시 읽고, 충돌하면 진행 중인 Rebase와 충돌 파일을 기존 Workspace에 보여 준다. 실패 뒤에는 실제 상태를 다시 읽으며, 사용자가 실행 중 취소하면 Rebase를 Abort하고 원래 branch·HEAD와 깨끗한 상태가 복원됐는지 확인한다.
+
 ## 디자인 시안 2
 
-`Repository Library`, `Changes`, `History`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 세 상태를 모두 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.
+`Repository Library`, `Changes`, `History`, `Stashes`, `Reflog`는 서로 경쟁하는 시안이 아니라 사용자가 이동하는 제품 상태다. 각 디자인 안은 이 상태를 같은 시각 언어와 탐색 규칙으로 표현한다. 시안은 제품 코드가 아니라 정보 구조를 선택하기 위한 일회용 HTML이다.
 
 ### 제품 상태
 
@@ -169,9 +430,11 @@ commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent
 | --- | --- | --- | --- |
 | Repository Library | 복원할 저장소가 없거나 사용자가 Library로 이동했을 때 | 등록한 범위에서 저장소를 찾고 연다 | Library Folder 탐색, 저장소 목록, 선택 항목 요약 |
 | Changes | Repository를 열었을 때의 기본 상태 | 현재 브랜치와 작업 트리를 파악하고 diff를 읽는다 | 저장소 문맥, 상태별 파일 목록, 선택 파일 diff |
-| History | 사용자가 히스토리로 이동했을 때 | 커밋 관계와 선택한 변경의 맥락을 읽는다 | 참조 탐색, 커밋 그래프/목록, 커밋 상세와 변경 파일 |
+| History | 사용자가 히스토리로 이동했을 때 | 커밋 관계와 선택한 변경의 맥락을 읽고 안전하게 되돌린다 | 참조 탐색, 커밋 그래프/목록, 커밋 상세와 변경 파일, Revert, soft·mixed·hard Reset |
+| Stashes | 사용자가 보관된 작업으로 이동했을 때 | 저장된 변경을 읽고 안전하게 복원·정리한다 | Stash 목록, 변경 파일, 선택 파일 patch, Apply, Delete |
+| Reflog | 사용자가 이전 HEAD를 찾을 때 | branch 전환·Reset 전 복구 지점을 확인하고 보존한다 | HEAD 이동 목록, action, 기록자·시각, 전체 commit SHA, 복구 branch 생성 |
 
-초기 수직 슬라이스는 Repository Library와 조회 전용 Changes를 먼저 구현했다. 현재는 같은 작업공간 안에 현재 HEAD 기준 History 첫 수직 슬라이스도 이어 붙였다.
+초기 수직 슬라이스는 Repository Library와 조회 전용 Changes를 먼저 구현했다. 현재는 같은 작업공간 안에 local·remote-tracking branch와 tag를 함께 읽는 History 검색·ref·commit graph, commit별 변경 파일 검사와 기존 local branch 전환·현재 HEAD 기반 생성, Fetch 대상 Remote 선택·Fetch & Prune·자동 Fetch·fast-forward Pull·비강제 Push, upstream 없는 branch Publish와 Remote 추가·선택·조회·URL·이름 편집·제거·Fetch 연결 시험, Stash 검사·생성·적용·삭제, 일반·merge commit Revert, soft·mixed·hard Reset, Reflog 조회·복구 branch 생성, local branch fast-forward Merge·divergent Merge commit·현재 branch Rebase, 충돌 파일의 Base·Ours·Theirs 검사, 한쪽 전체 버전 적용과 현재 working tree 상태의 명시적 해결 표시, 진행 중인 Merge·Rebase 상태 검사·Continue·Abort와 Interactive Rebase 계획 미리보기·편집·검토·실행까지 이어 붙였다.
 
 ### 검토한 디자인 방향
 

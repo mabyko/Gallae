@@ -184,6 +184,386 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(commit.isEmpty)
     }
 
+    func testListsCreatesAndSafelySwitchesLocalBranches() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("main\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature/topic"])
+        try write("feature\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+
+        let inspector = RepositoryInspector()
+        let mainRepository = try await inspector.inspect(at: repositoryURL)
+        let branches = try await inspector.localBranches(in: mainRepository)
+        XCTAssertEqual(branches, ["feature/topic", "main"])
+
+        let createdRepository = try await inspector.createBranch(
+            named: "new/local",
+            in: mainRepository
+        )
+        XCTAssertEqual(createdRepository.head, .branch("new/local"))
+        let updatedBranches = try await inspector.localBranches(in: createdRepository)
+        XCTAssertEqual(updatedBranches, ["feature/topic", "main", "new/local"])
+
+        do {
+            _ = try await inspector.createBranch(named: "new/local", in: createdRepository)
+            XCTFail("Creating an existing branch should fail")
+        } catch let error as RepositoryBranchError {
+            guard case .creationFailed = error else {
+                return XCTFail("Expected a branch-creation failure, got \(error)")
+            }
+        }
+
+        let featureRepository = try await inspector.switchBranch(
+            to: "feature/topic",
+            in: createdRepository
+        )
+        XCTAssertEqual(featureRepository.head, .branch("feature/topic"))
+
+        let restoredMain = try await inspector.switchBranch(to: "main", in: featureRepository)
+        try write("local\n", to: "file.txt", in: repositoryURL)
+
+        do {
+            _ = try await inspector.switchBranch(to: "feature/topic", in: restoredMain)
+            XCTFail("A conflicting local change should prevent the branch switch")
+        } catch let error as RepositoryBranchError {
+            guard case .switchFailed = error else {
+                return XCTFail("Expected a safe branch-switch failure, got \(error)")
+            }
+        }
+
+        let unchangedRepository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(unchangedRepository.head, .branch("main"))
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            "local\n"
+        )
+    }
+
+    func testCreatesAndSafelySwitchesToRecoveryBranchAtReflogCommit() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let initialID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("recover me\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Recovery target")
+        let targetID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "reset", "--hard", "--quiet", initialID])
+
+        let inspector = RepositoryInspector()
+        let mainRepository = try await inspector.inspect(at: repositoryURL)
+        let reflog = try await inspector.reflog(in: mainRepository)
+        let target = try XCTUnwrap(reflog.first { $0.commitID == targetID })
+        let recoveredRepository = try await inspector.createBranch(
+            named: "recovery/latest",
+            at: target.commitID,
+            in: mainRepository
+        )
+
+        let recoveredHistory = try await inspector.history(in: recoveredRepository)
+        let recoveredBranches = try await inspector.localBranches(in: recoveredRepository)
+        XCTAssertEqual(recoveredRepository.head, .branch("recovery/latest"))
+        XCTAssertEqual(recoveredHistory.headCommitID, targetID)
+        XCTAssertTrue(recoveredBranches.contains("main"))
+
+        let restoredMain = try await inspector.switchBranch(to: "main", in: recoveredRepository)
+        let restoredHistory = try await inspector.history(in: restoredMain)
+        XCTAssertEqual(restoredHistory.headCommitID, initialID)
+        try write("local\n", to: "file.txt", in: repositoryURL)
+
+        do {
+            _ = try await inspector.createBranch(
+                named: "recovery/conflict",
+                at: target.commitID,
+                in: restoredMain
+            )
+            XCTFail("A conflicting local change should prevent recovery branch creation")
+        } catch let error as RepositoryBranchError {
+            guard case .creationFailed = error else {
+                return XCTFail("Expected a branch-creation failure, got \(error)")
+            }
+        }
+
+        let unchangedRepository = try await inspector.inspect(at: repositoryURL)
+        let unchangedBranches = try await inspector.localBranches(in: unchangedRepository)
+        XCTAssertEqual(unchangedRepository.head, .branch("main"))
+        XCTAssertFalse(unchangedBranches.contains("recovery/conflict"))
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            "local\n"
+        )
+    }
+
+    func testFastForwardsCurrentBranchAndRefusesDivergentMerge() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "local.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        let baseID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "side", baseID])
+        try write("side\n", to: "side.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("local edit\n", to: "local.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let mainRepository = try await inspector.inspect(at: repositoryURL)
+        let mergedRepository = try await inspector.mergeBranch("feature", in: mainRepository)
+        let mergedHistory = try await inspector.history(in: mergedRepository)
+
+        XCTAssertEqual(mergedRepository.head, .branch("main"))
+        XCTAssertEqual(mergedHistory.headCommitID, featureID)
+        XCTAssertEqual(mergedRepository.changes.map(\.path), ["local.txt"])
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "local edit\n"
+        )
+
+        do {
+            _ = try await inspector.mergeBranch("side", in: mergedRepository)
+            XCTFail("A divergent branch should not be merged")
+        } catch let error as RepositoryBranchError {
+            guard case .mergeFailed = error else {
+                return XCTFail("Expected a fast-forward merge failure, got \(error)")
+            }
+        }
+
+        let unchangedRepository = try await inspector.inspect(at: repositoryURL)
+        let unchangedHistory = try await inspector.history(in: unchangedRepository)
+        XCTAssertEqual(unchangedRepository.head, .branch("main"))
+        XCTAssertEqual(unchangedHistory.headCommitID, featureID)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "local edit\n"
+        )
+    }
+
+    func testCreatesMergeCommitForDivergentLocalBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let mainID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let mergedRepository = try await inspector.mergeBranchCreatingCommit(
+            "feature",
+            in: repository
+        )
+
+        let parents = try gitOutput([
+            "-C", repositoryURL.path, "rev-list", "--parents", "-n", "1", "HEAD",
+        ]).split(whereSeparator: \.isWhitespace).map(String.init)
+        XCTAssertEqual(mergedRepository.head, .branch("main"))
+        XCTAssertTrue(mergedRepository.changes.isEmpty)
+        XCTAssertEqual(parents.count, 3)
+        XCTAssertEqual(Array(parents.dropFirst()), [mainID, featureID])
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "feature"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            featureID
+        )
+    }
+
+    func testAbortsConflictingMergeCommitAndRestoresCurrentBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let mainID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        do {
+            _ = try await inspector.mergeBranchCreatingCommit("feature", in: repository)
+            XCTFail("A conflicting merge should be aborted")
+        } catch let error as RepositoryBranchError {
+            guard case .mergeCommitFailed = error else {
+                return XCTFail("Expected an aborted merge failure, got \(error)")
+            }
+        }
+
+        let restoredRepository = try await inspector.inspect(at: repositoryURL)
+        let restoredHistory = try await inspector.history(in: restoredRepository)
+        XCTAssertEqual(restoredRepository.head, .branch("main"))
+        XCTAssertEqual(restoredHistory.headCommitID, mainID)
+        XCTAssertTrue(restoredRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "shared.txt"), encoding: .utf8),
+            "main\n"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repositoryURL.appending(path: ".git/MERGE_HEAD").path
+            )
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "feature"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            featureID
+        )
+    }
+
+    func testRebasesCurrentBranchOntoAnotherLocalBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let originalFeatureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let mainID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let rebasedRepository = try await inspector.rebaseCurrentBranch(
+            onto: "main",
+            in: repository
+        )
+        let history = try await inspector.history(in: rebasedRepository)
+        let parents = try gitOutput([
+            "-C", repositoryURL.path, "rev-list", "--parents", "-n", "1", "HEAD",
+        ]).split(whereSeparator: \.isWhitespace).map(String.init)
+
+        XCTAssertEqual(rebasedRepository.head, .branch("feature"))
+        XCTAssertTrue(rebasedRepository.changes.isEmpty)
+        XCTAssertNotEqual(history.headCommitID, originalFeatureID)
+        XCTAssertEqual(parents.count, 2)
+        XCTAssertEqual(parents.last, mainID)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            mainID
+        )
+    }
+
+    func testAbortsConflictingRebaseAndRestoresCurrentBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature"])
+        try write("feature\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let mainID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        do {
+            _ = try await inspector.rebaseCurrentBranch(onto: "main", in: repository)
+            XCTFail("A conflicting rebase should be aborted")
+        } catch let error as RepositoryBranchError {
+            guard case .rebaseFailed = error else {
+                return XCTFail("Expected an aborted rebase failure, got \(error)")
+            }
+        }
+
+        let restoredRepository = try await inspector.inspect(at: repositoryURL)
+        let restoredHistory = try await inspector.history(in: restoredRepository)
+        XCTAssertEqual(restoredRepository.head, .branch("feature"))
+        XCTAssertEqual(restoredHistory.headCommitID, featureID)
+        XCTAssertTrue(restoredRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "shared.txt"), encoding: .utf8),
+            "feature\n"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repositoryURL.appending(path: ".git/rebase-merge").path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repositoryURL.appending(path: ".git/rebase-apply").path
+            )
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            mainID
+        )
+    }
+
     func testReportsLocallyKnownUpstreamDivergence() async throws {
         let fixtureURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixtureURL) }
@@ -202,6 +582,838 @@ final class RepositoryInspectorTests: XCTestCase {
         let repository = try await RepositoryInspector().inspect(at: repositoryURL)
 
         XCTAssertEqual(repository.upstream, .init(name: "origin/main", ahead: 1, behind: 0))
+    }
+
+    func testFetchesRemoteChangesWithoutChangingHeadOrWorkingTree() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let sourceURL = fixtureURL.appending(path: "source", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: sourceURL)
+        try write("initial\n", to: "file.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Initial")
+        try runGit(["-C", sourceURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "--set-upstream", "origin", "main"])
+        try runGit(["clone", "--quiet", remoteURL.path, repositoryURL.path])
+
+        try write("remote\n", to: "file.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Remote")
+        try runGit(["-C", sourceURL.path, "push", "--quiet"])
+        let remoteHead = try gitOutput([
+            "-C", sourceURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let localHead = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("local change\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let fetchedRepository = try await inspector.fetch(in: repository)
+
+        XCTAssertEqual(fetchedRepository.head, .branch("main"))
+        XCTAssertEqual(fetchedRepository.upstream, .init(name: "origin/main", ahead: 0, behind: 1))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/remotes/origin/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            remoteHead
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8),
+            "local change\n"
+        )
+
+        let delayedUploadPackURL = fixtureURL.appending(path: "delayed-upload-pack")
+        try Data("#!/bin/sh\nsleep 30\nexec /usr/bin/git upload-pack \"$@\"\n".utf8)
+            .write(to: delayedUploadPackURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: delayedUploadPackURL.path
+        )
+        try runGit([
+            "-C", repositoryURL.path,
+            "config", "remote.origin.uploadpack", delayedUploadPackURL.path
+        ])
+        let fetchTask = Task {
+            try await inspector.fetch(in: fetchedRepository)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        let cancellationStartedAt = Date()
+        fetchTask.cancel()
+        do {
+            _ = try await fetchTask.value
+            XCTFail("A cancelled Fetch should not return a Repository")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date().timeIntervalSince(cancellationStartedAt), 2)
+        }
+
+        let noRemoteURL = fixtureURL.appending(path: "no-remote", directoryHint: .isDirectory)
+        try initializeRepository(at: noRemoteURL)
+        let noRemoteRepository = try await inspector.inspect(at: noRemoteURL)
+        do {
+            _ = try await inspector.fetch(in: noRemoteRepository)
+            XCTFail("Fetching without a remote should fail")
+        } catch let error as RepositoryFetchError {
+            XCTAssertEqual(error, .noRemote)
+        }
+    }
+
+    func testFetchesOnlySelectedRemoteWithoutChangingLocalWork() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let originURL = fixtureURL.appending(path: "origin.git", directoryHint: .isDirectory)
+        let backupURL = fixtureURL.appending(path: "backup.git", directoryHint: .isDirectory)
+        let sourceURL = fixtureURL.appending(path: "source", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        for remoteURL in [originURL, backupURL] {
+            try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        }
+        try initializeRepository(at: sourceURL)
+        try write("initial\n", to: "remote.txt", in: sourceURL)
+        try write("initial\n", to: "local.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Initial")
+        try runGit(["-C", sourceURL.path, "remote", "add", "origin", originURL.path])
+        try runGit(["-C", sourceURL.path, "remote", "add", "backup", backupURL.path])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "origin", "main"])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "backup", "main"])
+        try runGit(["clone", "--quiet", originURL.path, repositoryURL.path])
+        try runGit(["-C", repositoryURL.path, "remote", "add", "backup", backupURL.path])
+
+        let originHead = try gitOutput([
+            "--git-dir", originURL.path, "rev-parse", "refs/heads/main"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("backup\n", to: "remote.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Backup only")
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "backup", "main"])
+        let backupHead = try gitOutput([
+            "--git-dir", backupURL.path, "rev-parse", "refs/heads/main"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("staged\n", to: "local.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "local.txt"])
+        try write("working\n", to: "local.txt", in: repositoryURL)
+        let localHead = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--short"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        do {
+            _ = try await inspector.fetch(in: repository)
+            XCTFail("Fetching with multiple Remotes should require a selection")
+        } catch let error as RepositoryFetchError {
+            XCTAssertEqual(error, .remoteSelectionRequired(["backup", "origin"]))
+        }
+        _ = try await inspector.fetch(from: "backup", in: repository)
+
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/remotes/backup/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            backupHead
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/remotes/origin/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            originHead
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "status", "--short"]),
+            localStatus
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "working\n"
+        )
+    }
+
+    @MainActor
+    func testAutomaticallyFetchesConfiguredDefaultWithoutChangingLocalWork() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let sourceURL = fixtureURL.appending(path: "source", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: sourceURL)
+        try write("initial\n", to: "remote.txt", in: sourceURL)
+        try write("initial\n", to: "local.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Initial")
+        try runGit(["-C", sourceURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "--set-upstream", "origin", "main"])
+        try runGit(["clone", "--quiet", remoteURL.path, repositoryURL.path])
+
+        try write("remote\n", to: "remote.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Remote")
+        try runGit(["-C", sourceURL.path, "push", "--quiet"])
+        let remoteHead = try gitOutput(["-C", sourceURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("staged\n", to: "local.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "local.txt"])
+        try write("working\n", to: "local.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localStatus = try gitOutput(["-C", repositoryURL.path, "status", "--short"])
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryStore(defaults: defaults)
+        let model = AppModel(store: store)
+        XCTAssertFalse(model.automaticFetchEnabled)
+        await model.openRepository(at: repositoryURL)
+
+        model.setAutomaticFetchEnabled(true)
+        XCTAssertTrue(AppModel(store: store).automaticFetchEnabled)
+        let loop = Task {
+            await model.runAutomaticFetchLoop(interval: .milliseconds(10))
+        }
+        for _ in 0..<500 where model.repository?.upstream?.behind != 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        model.setAutomaticFetchEnabled(false)
+        loop.cancel()
+        await loop.value
+
+        XCTAssertEqual(model.repository?.upstream?.behind, 1)
+        XCTAssertFalse(AppModel(store: store).automaticFetchEnabled)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/remotes/origin/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            remoteHead
+        )
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "status", "--short"]), localStatus)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "working\n"
+        )
+    }
+
+    func testPruningFetchRemovesStaleTrackingRefsWithoutChangingLocalWork() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let sourceURL = fixtureURL.appending(path: "source", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: sourceURL)
+        try write("initial\n", to: "local.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Initial")
+        try runGit(["-C", sourceURL.path, "branch", "obsolete"])
+        try runGit(["-C", sourceURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "origin", "main", "obsolete"])
+        try runGit(["clone", "--quiet", remoteURL.path, repositoryURL.path])
+        try runGit(["-C", repositoryURL.path, "config", "fetch.prune", "false"])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "origin", "--delete", "obsolete"])
+
+        try write("staged\n", to: "local.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "local.txt"])
+        try write("working\n", to: "local.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localStatus = try gitOutput(["-C", repositoryURL.path, "status", "--short"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        _ = try await inspector.fetch(from: "origin", in: repository)
+        try runGit([
+            "-C", repositoryURL.path,
+            "show-ref", "--verify", "--quiet", "refs/remotes/origin/obsolete"
+        ])
+
+        _ = try await inspector.fetch(from: "origin", pruning: true, in: repository)
+
+        try runGit([
+            "-C", repositoryURL.path,
+            "show-ref", "--verify", "--quiet", "refs/remotes/origin/obsolete"
+        ], expectedStatus: 1)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "status", "--short"]), localStatus)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "working\n"
+        )
+    }
+
+    func testPullsFastForwardFromUpstreamWithoutReplacingLocalChanges() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let sourceURL = fixtureURL.appending(path: "source", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: sourceURL)
+        try write("initial\n", to: "remote.txt", in: sourceURL)
+        try write("initial\n", to: "local.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Initial")
+        try runGit(["-C", sourceURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", sourceURL.path, "push", "--quiet", "--set-upstream", "origin", "main"])
+        try runGit(["clone", "--quiet", remoteURL.path, repositoryURL.path])
+
+        try write("remote\n", to: "remote.txt", in: sourceURL)
+        try commitAll(in: sourceURL, message: "Remote")
+        try runGit(["-C", sourceURL.path, "push", "--quiet"])
+        let remoteHead = try gitOutput(["-C", sourceURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("local change\n", to: "local.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let pulledRepository = try await inspector.pull(in: repository)
+
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            remoteHead
+        )
+        XCTAssertEqual(pulledRepository.upstream, .init(name: "origin/main", ahead: 0, behind: 0))
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "remote.txt"), encoding: .utf8),
+            "remote\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "local change\n"
+        )
+        XCTAssertEqual(pulledRepository.changes.first?.unstaged, .modified)
+    }
+
+    func testPushesCurrentBranchWithoutChangingLocalState() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "published.txt", in: repositoryURL)
+        try write("initial\n", to: "local.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit([
+            "-C", repositoryURL.path,
+            "push", "--quiet", "--set-upstream", "origin", "main"
+        ])
+
+        try write("published\n", to: "published.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Publish")
+        try write("local change\n", to: "local.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(repository.upstream, .init(name: "origin/main", ahead: 1, behind: 0))
+
+        let pushedRepository = try await inspector.push(in: repository)
+
+        XCTAssertEqual(
+            try gitOutput(["--git-dir", remoteURL.path, "rev-parse", "refs/heads/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(pushedRepository.upstream, .init(name: "origin/main", ahead: 0, behind: 0))
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "local.txt"), encoding: .utf8),
+            "local change\n"
+        )
+        XCTAssertEqual(
+            pushedRepository.changes.first { $0.path == "local.txt" }?.unstaged,
+            .modified
+        )
+    }
+
+    func testPublishesCurrentBranchAndSetsUpstream() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("published\n", to: "published.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "feature/publish"])
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(repository.head, .branch("feature/publish"))
+        XCTAssertNil(repository.upstream)
+
+        let publishedRepository = try await inspector.push(in: repository)
+
+        XCTAssertEqual(
+            try gitOutput([
+                "--git-dir", remoteURL.path,
+                "rev-parse", "refs/heads/feature/publish"
+            ]).trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            publishedRepository.upstream,
+            .init(name: "origin/feature/publish", ahead: 0, behind: 0)
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testAddsRemoteAndPublishesCurrentBranch() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "remote.git", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("published\n", to: "published.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertNil(repository.upstream)
+        do {
+            _ = try await inspector.push(in: repository)
+            XCTFail("Expected Publish to request a remote")
+        } catch let error as RepositoryPushError {
+            XCTAssertEqual(error, .noRemote)
+        }
+
+        let publishedRepository = try await inspector.addRemoteAndPublish(
+            named: "origin",
+            url: remoteURL.path,
+            in: repository
+        )
+
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "remote", "get-url", "origin"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            remoteURL.path
+        )
+        XCTAssertEqual(
+            try gitOutput(["--git-dir", remoteURL.path, "rev-parse", "refs/heads/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(publishedRepository.upstream, .init(name: "origin/main", ahead: 0, behind: 0))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testPublishesCurrentBranchToSelectedRemote() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let originURL = fixtureURL.appending(path: "origin.git", directoryHint: .isDirectory)
+        let backupURL = fixtureURL.appending(path: "backup.git", directoryHint: .isDirectory)
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", originURL.path])
+        try runGit(["init", "--bare", "--quiet", "--initial-branch=main", backupURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("published\n", to: "published.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", originURL.path])
+        try runGit(["-C", repositoryURL.path, "remote", "add", "backup", backupURL.path])
+
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        do {
+            _ = try await inspector.push(in: repository)
+            XCTFail("Expected Publish to request a remote selection")
+        } catch let error as RepositoryPushError {
+            XCTAssertEqual(error, .remoteSelectionRequired(["backup", "origin"]))
+        }
+
+        let publishedRepository = try await inspector.publish(to: "backup", in: repository)
+
+        XCTAssertEqual(
+            try gitOutput(["--git-dir", backupURL.path, "rev-parse", "refs/heads/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        try runGit([
+            "--git-dir", originURL.path,
+            "show-ref", "--verify", "--quiet", "refs/heads/main"
+        ], expectedStatus: 1)
+        XCTAssertEqual(publishedRepository.upstream, .init(name: "backup/main", ahead: 0, behind: 0))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            localHead
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testReadsConfiguredRemotesWithoutChangingLocalState() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let originFetchURL = fixtureURL.appending(path: "origin-fetch.git")
+        let originPushURL = fixtureURL.appending(path: "origin-push.git")
+        let backupURL = fixtureURL.appending(path: "backup.git")
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        for remoteURL in [originFetchURL, originPushURL, backupURL] {
+            try runGit(["init", "--bare", "--quiet", remoteURL.path])
+        }
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", originFetchURL.path])
+        try runGit([
+            "-C", repositoryURL.path,
+            "remote", "set-url", "--push", "origin", originPushURL.path
+        ])
+        try runGit(["-C", repositoryURL.path, "remote", "add", "backup", backupURL.path])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let remotes = try await inspector.remotes(in: repository)
+
+        XCTAssertEqual(remotes, [
+            .init(name: "backup", fetchURL: backupURL.path, pushURL: backupURL.path),
+            .init(name: "origin", fetchURL: originFetchURL.path, pushURL: originPushURL.path)
+        ])
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testUpdatesConfiguredRemoteURLsWithoutChangingLocalState() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let oldFetchURL = fixtureURL.appending(path: "old-fetch.git")
+        let oldPushURL = fixtureURL.appending(path: "old-push.git")
+        let newFetchURL = fixtureURL.appending(path: "new-fetch.git")
+        let newPushURL = fixtureURL.appending(path: "new-push.git")
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        for remoteURL in [oldFetchURL, oldPushURL, newFetchURL, newPushURL] {
+            try runGit(["init", "--bare", "--quiet", remoteURL.path])
+        }
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", oldFetchURL.path])
+        try runGit([
+            "-C", repositoryURL.path,
+            "remote", "set-url", "--push", "origin", oldPushURL.path
+        ])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localRefs = try gitOutput(["-C", repositoryURL.path, "show-ref"])
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let remotes = try await inspector.updateRemote(
+            named: "origin",
+            renamingTo: "origin",
+            fetchURL: newFetchURL.path,
+            pushURL: newPushURL.path,
+            in: repository
+        )
+
+        XCTAssertEqual(remotes, [
+            .init(name: "origin", fetchURL: newFetchURL.path, pushURL: newPushURL.path)
+        ])
+        let reloadedRemotes = try await inspector.remotes(in: repository)
+        XCTAssertEqual(reloadedRemotes, remotes)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "show-ref"]), localRefs)
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testRenamesConfiguredRemoteAndTrackingWithoutChangingLocalWork() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let remoteURL = fixtureURL.appending(path: "origin.git")
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit([
+            "-C", repositoryURL.path,
+            "push", "--quiet", "--set-upstream", "origin", "main"
+        ])
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let remoteHead = try gitOutput(["-C", remoteURL.path, "rev-parse", "refs/heads/main"])
+        let trackingHead = try gitOutput([
+            "-C", repositoryURL.path,
+            "rev-parse", "refs/remotes/origin/main"
+        ])
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(repository.upstream?.name, "origin/main")
+
+        let remotes = try await inspector.updateRemote(
+            named: "origin",
+            renamingTo: "primary",
+            fetchURL: remoteURL.path,
+            pushURL: remoteURL.path,
+            in: repository
+        )
+
+        XCTAssertEqual(remotes, [
+            .init(name: "primary", fetchURL: remoteURL.path, pushURL: remoteURL.path)
+        ])
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "remote"]), "primary\n")
+        try runGit([
+            "-C", repositoryURL.path,
+            "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"
+        ], expectedStatus: 1)
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path,
+                "rev-parse", "refs/remotes/primary/main"
+            ]),
+            trackingHead
+        )
+        let updatedRepository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(updatedRepository.upstream?.name, "primary/main")
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(
+            try gitOutput(["-C", remoteURL.path, "rev-parse", "refs/heads/main"]),
+            remoteHead
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testRemovesConfiguredRemoteWithoutChangingLocalWorkOrRemoteRepository() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let originURL = fixtureURL.appending(path: "origin.git")
+        let backupURL = fixtureURL.appending(path: "backup.git")
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        for remoteURL in [originURL, backupURL] {
+            try runGit(["init", "--bare", "--quiet", remoteURL.path])
+        }
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", originURL.path])
+        try runGit(["-C", repositoryURL.path, "remote", "add", "backup", backupURL.path])
+        try runGit(["-C", repositoryURL.path, "push", "--quiet", "--set-upstream", "origin", "main"])
+        try runGit(["-C", repositoryURL.path, "push", "--quiet", "backup", "main"])
+        try runGit(["-C", repositoryURL.path, "fetch", "--quiet", "backup"])
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localBranch = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "refs/heads/main"
+        ])
+        let backupTrackingBranch = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "refs/remotes/backup/main"
+        ])
+        let remoteBranch = try gitOutput([
+            "--git-dir", originURL.path, "rev-parse", "refs/heads/main"
+        ])
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(repository.upstream?.name, "origin/main")
+
+        let updatedRepository = try await inspector.removeRemote(
+            named: "origin",
+            in: repository
+        )
+
+        XCTAssertNil(updatedRepository.upstream)
+        let remainingRemotes = try await inspector.remotes(in: updatedRepository)
+        XCTAssertEqual(
+            remainingRemotes,
+            [.init(name: "backup", fetchURL: backupURL.path, pushURL: backupURL.path)]
+        )
+        try runGit([
+            "-C", repositoryURL.path,
+            "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"
+        ], expectedStatus: 1)
+        try runGit([
+            "-C", repositoryURL.path,
+            "config", "--get", "branch.main.remote"
+        ], expectedStatus: 1)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/remotes/backup/main"]),
+            backupTrackingBranch
+        )
+        XCTAssertEqual(
+            try gitOutput(["--git-dir", originURL.path, "rev-parse", "refs/heads/main"]),
+            remoteBranch
+        )
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
+            localBranch
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
+    }
+
+    func testTestsConfiguredRemoteFetchConnectionWithoutChangingLocalState() async throws {
+        let fixtureURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixtureURL) }
+
+        let originURL = fixtureURL.appending(path: "origin.git")
+        let missingURL = fixtureURL.appending(path: "missing.git")
+        let repositoryURL = fixtureURL.appending(path: "repository", directoryHint: .isDirectory)
+        try runGit(["init", "--bare", "--quiet", originURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", originURL.path])
+        try runGit([
+            "-C", repositoryURL.path,
+            "remote", "set-url", "--push", "origin", missingURL.path
+        ])
+        try write("staged\n", to: "staged.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "staged.txt"])
+        try write("working\n", to: "working.txt", in: repositoryURL)
+
+        let localHead = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let localRefs = try gitOutput(["-C", repositoryURL.path, "show-ref"])
+        let localStatus = try gitOutput([
+            "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+        ])
+        let configuredURLs = try gitOutput(["-C", repositoryURL.path, "remote", "-v"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        try await inspector.testRemoteConnection(named: "origin", in: repository)
+
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "remote", "-v"]), configuredURLs)
+        try runGit(["-C", repositoryURL.path, "remote", "set-url", "origin", missingURL.path])
+        let unreachableURLs = try gitOutput(["-C", repositoryURL.path, "remote", "-v"])
+        do {
+            try await inspector.testRemoteConnection(named: "origin", in: repository)
+            XCTFail("Expected an unreachable Remote error")
+        } catch let error as RepositoryRemoteError {
+            guard case .connectionFailed = error else {
+                return XCTFail("Expected connectionFailed, got \(error)")
+            }
+        }
+
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "remote", "-v"]), unreachableURLs)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), localHead)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "show-ref"]), localRefs)
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "status", "--porcelain=v1", "--untracked-files=all"
+            ]),
+            localStatus
+        )
     }
 
     func testReadsRepositoryActivity() async throws {
@@ -248,6 +1460,19 @@ final class RepositoryInspectorTests: XCTestCase {
         let secondID = try gitOutput([
             "-C", repositoryURL.path, "rev-parse", "HEAD"
         ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "branch", "feature/reference", initialID])
+        try runGit(["-C", repositoryURL.path, "tag", "v-light", secondID])
+        try runGit([
+            "-C", repositoryURL.path, "tag", "-a", "v-annotated",
+            "-m", "Annotated fixture", initialID
+        ])
+        try runGit([
+            "-C", repositoryURL.path, "update-ref", "refs/remotes/origin/main", secondID
+        ])
+        try runGit([
+            "-C", repositoryURL.path, "symbolic-ref",
+            "refs/remotes/origin/HEAD", "refs/remotes/origin/main"
+        ])
 
         let inspector = RepositoryInspector()
         let repository = try await inspector.inspect(at: repositoryURL)
@@ -261,9 +1486,23 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(latest.subject, "Second subject")
         XCTAssertEqual(latest.body, "Second body\n\nMore details.")
         XCTAssertGreaterThan(latest.committedAt, Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(latest.references, [
+            .init(name: "main", kind: .branch),
+            .init(name: "origin/main", kind: .remoteBranch),
+            .init(name: "v-light", kind: .tag),
+        ])
 
-        let patch = try await inspector.patch(for: latest, in: repository)
+        let latestFiles = try await inspector.files(for: latest, in: repository)
+        let latestFile = try XCTUnwrap(latestFiles.first)
+        XCTAssertEqual(latestFile.path, "notes [한글].txt")
+        XCTAssertEqual(latestFile.state, .modified)
+        let patch = try await inspector.patch(
+            for: latestFile,
+            in: latest,
+            repository: repository
+        )
         XCTAssertEqual(patch.commitID, secondID)
+        XCTAssertEqual(patch.fileID, latestFile.id)
         guard case .text(let lines) = patch.content else {
             return XCTFail("Expected text commit patch")
         }
@@ -271,11 +1510,899 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(lines.contains { $0.kind == .addition && $0.text == "+second" })
 
         let initial = try XCTUnwrap(history.commits.last)
-        let initialPatch = try await inspector.patch(for: initial, in: repository)
+        XCTAssertEqual(initial.references, [
+            .init(name: "feature/reference", kind: .branch),
+            .init(name: "v-annotated", kind: .tag),
+        ])
+        let initialFiles = try await inspector.files(for: initial, in: repository)
+        let initialFile = try XCTUnwrap(initialFiles.first)
+        XCTAssertEqual(initialFile.state, .added)
+        let initialPatch = try await inspector.patch(
+            for: initialFile,
+            in: initial,
+            repository: repository
+        )
         guard case .text(let initialLines) = initialPatch.content else {
             return XCTFail("Expected text root commit patch")
         }
         XCTAssertTrue(initialLines.contains { $0.kind == .addition && $0.text == "+first" })
+    }
+
+    func testBuildsAndValidatesEditedInteractiveRebasePlanWithoutChangingRepository() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("first\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "First change")
+        let firstID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("second\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Second change")
+        let secondID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("third\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Third change")
+        let thirdID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repositoryBefore = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repositoryBefore)
+        let firstCommit = try XCTUnwrap(history.commits.first { $0.id == firstID })
+        let plan = try await inspector.interactiveRebasePlan(
+            startingAt: firstCommit,
+            in: repositoryBefore
+        )
+        var editedPlan = plan
+        editedPlan.steps.swapAt(0, 2)
+        editedPlan.steps[0].action = .pick
+        editedPlan.steps[1].action = .reword
+        editedPlan.steps[2].action = .squash
+
+        var invalidPlan = plan
+        invalidPlan.steps[0].action = .drop
+        invalidPlan.steps[1].action = .fixup
+
+        var emptyPlan = plan
+        for index in emptyPlan.steps.indices {
+            emptyPlan.steps[index].action = .drop
+        }
+        let repositoryAfter = try await inspector.inspect(at: repositoryURL)
+
+        XCTAssertEqual(plan.steps.map(\.id), [firstID, secondID, thirdID])
+        XCTAssertEqual(
+            plan.steps.map(\.subject),
+            ["First change", "Second change", "Third change"]
+        )
+        XCTAssertEqual(editedPlan.steps.map(\.id), [thirdID, secondID, firstID])
+        XCTAssertEqual(editedPlan.steps.map(\.action), [.pick, .reword, .squash])
+        XCTAssertNil(editedPlan.validationError)
+        XCTAssertEqual(
+            invalidPlan.validationError,
+            .actionNeedsPreviousCommit(stepID: secondID)
+        )
+        XCTAssertEqual(emptyPlan.validationError, .noCommits)
+        XCTAssertEqual(repositoryAfter, repositoryBefore)
+    }
+
+    func testExecutesEditedInteractiveRebasePlanWithoutMovingOtherBranches() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        try write("a\n", to: "a.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "A")
+        let aID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("b\n", to: "b.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "B")
+        let bID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("c\n", to: "c.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "C")
+        let cID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("d\n", to: "d.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "D")
+        let originalHead = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "branch", "archive", originalHead])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let startCommit = try XCTUnwrap(history.commits.first { $0.id == aID })
+        var plan = try await inspector.interactiveRebasePlan(
+            startingAt: startCommit,
+            in: repository
+        )
+        let stepsByID = Dictionary(uniqueKeysWithValues: plan.steps.map { ($0.id, $0) })
+        plan.steps = try [cID, bID, originalHead, aID].map { try XCTUnwrap(stepsByID[$0]) }
+        plan.steps[0].action = .pick
+        plan.steps[1].action = .reword
+        plan.steps[2].action = .squash
+        plan.steps[3].action = .drop
+
+        let updatedRepository: RepositorySummary
+        do {
+            updatedRepository = try await inspector.executeInteractiveRebase(
+                plan,
+                rewordMessages: [bID: "Renamed B's change\n\n한글 body"],
+                startingAt: startCommit,
+                in: repository
+            )
+        } catch {
+            XCTFail(String(reflecting: error))
+            return
+        }
+
+        XCTAssertEqual(updatedRepository.head, .branch("main"))
+        XCTAssertNil(updatedRepository.operation)
+        XCTAssertTrue(updatedRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path,
+                "log", "--reverse", "--format=%s", "HEAD~2..HEAD",
+            ]).split(whereSeparator: \.isNewline).map(String.init),
+            ["C", "Renamed B's change"]
+        )
+        let message = try gitOutput([
+            "-C", repositoryURL.path, "log", "-1", "--format=%B",
+        ])
+        XCTAssertTrue(message.contains("한글 body"))
+        XCTAssertTrue(message.contains("D"))
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path, "ls-tree", "-r", "--name-only", "HEAD",
+            ]).split(whereSeparator: \.isNewline).map(String.init),
+            ["b.txt", "base.txt", "c.txt", "d.txt"]
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "archive"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            originalHead
+        )
+    }
+
+    func testLeavesConflictingInteractiveRebaseReadyToAbort() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "value.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        try write("one\n", to: "value.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "One")
+        let oneID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("two\n", to: "value.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Two")
+        let originalHead = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let startCommit = try XCTUnwrap(history.commits.first { $0.id == oneID })
+        var plan = try await inspector.interactiveRebasePlan(
+            startingAt: startCommit,
+            in: repository
+        )
+        plan.steps.swapAt(0, 1)
+
+        let stopped = try await inspector.executeInteractiveRebase(
+            plan,
+            rewordMessages: [:],
+            startingAt: startCommit,
+            in: repository
+        )
+
+        XCTAssertEqual(stopped.operation?.kind, .rebase)
+        XCTAssertGreaterThan(stopped.operation?.unresolvedConflictCount ?? 0, 0)
+        XCTAssertTrue(stopped.changes.contains { $0.isConflicted })
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            originalHead
+        )
+
+        let restored = try await inspector.abortOperation(in: stopped)
+        XCTAssertEqual(restored.head, .branch("main"))
+        XCTAssertNil(restored.operation)
+        XCTAssertTrue(restored.changes.isEmpty)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "value.txt"), encoding: .utf8),
+            "two\n"
+        )
+    }
+
+    func testReadsHeadReflogRecoveryPointsWithoutChangingRepository() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let initialID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try write("latest\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Latest")
+        let latestID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD",
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "topic"])
+        try runGit(["-C", repositoryURL.path, "reset", "--hard", "--quiet", initialID])
+
+        let inspector = RepositoryInspector()
+        let repositoryBefore = try await inspector.inspect(at: repositoryURL)
+        let entries = try await inspector.reflog(in: repositoryBefore)
+        let repositoryAfter = try await inspector.inspect(at: repositoryURL)
+
+        XCTAssertEqual(repositoryAfter, repositoryBefore)
+        XCTAssertEqual(entries.map(\.selector), [
+            "HEAD@{0}", "HEAD@{1}", "HEAD@{2}", "HEAD@{3}",
+        ])
+        XCTAssertEqual(entries.map(\.commitID), [initialID, latestID, latestID, initialID])
+        XCTAssertTrue(entries[0].action.contains("reset: moving to"))
+        XCTAssertTrue(entries[1].action.contains("moving from main to topic"))
+        XCTAssertEqual(entries[0].actorName, "Gallae Tests")
+        XCTAssertEqual(entries[0].actorEmail, "tests@gallae.local")
+        XCTAssertGreaterThan(entries[0].occurredAt, Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
+    }
+
+    func testRevertsSelectedCommitAsNewCommit() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("enabled\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Enable feature")
+        let selectedCommitID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("keep\n", to: "later.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Later work")
+        let previousHeadID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let selectedCommit = try XCTUnwrap(
+            history.commits.first { $0.id == selectedCommitID }
+        )
+
+        let updatedRepository = try await inspector.revertCommit(
+            selectedCommit,
+            in: repository
+        )
+
+        let newHeadID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertNotEqual(newHeadID, previousHeadID)
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD^"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            previousHeadID
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "log", "-1", "--format=%s"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            "Revert \"Enable feature\""
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "feature.txt"),
+                encoding: .utf8
+            ),
+            "base\n"
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "later.txt"),
+                encoding: .utf8
+            ),
+            "keep\n"
+        )
+        XCTAssertTrue(updatedRepository.changes.isEmpty)
+        let updatedHistory = try await inspector.history(in: updatedRepository)
+        XCTAssertEqual(updatedHistory.headCommitID, newHeadID)
+        XCTAssertTrue(updatedHistory.commits.contains { $0.id == selectedCommitID })
+    }
+
+    func testRevertsMergeCommitAgainstSelectedMainline() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "branch", "feature"])
+
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main work")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try runGit([
+            "-C", repositoryURL.path,
+            "merge", "--quiet", "--no-ff", "-m", "Merge feature", "feature"
+        ])
+        let mergeCommitID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let mergeCommit = try XCTUnwrap(
+            history.commits.first { $0.id == mergeCommitID }
+        )
+
+        let updatedRepository = try await inspector.revertCommit(
+            mergeCommit,
+            mainlineParent: 1,
+            in: repository
+        )
+
+        XCTAssertTrue(updatedRepository.changes.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: repositoryURL.appending(path: "main.txt").path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: repositoryURL.appending(path: "feature.txt").path
+        ))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD^"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            mergeCommitID
+        )
+        let updatedHistory = try await inspector.history(in: updatedRepository)
+        XCTAssertTrue(updatedHistory.commits.contains { $0.id == mergeCommitID })
+    }
+
+    func testMixedResetMovesCurrentBranchAndKeepsWorkingTreeFiles() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("middle\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Middle")
+        let targetID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("latest\n", to: "notes.txt", in: repositoryURL)
+        try write("keep\n", to: "later.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Latest")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let target = try XCTUnwrap(history.commits.first { $0.id == targetID })
+
+        let updatedRepository = try await inspector.resetCurrentBranch(
+            to: target,
+            mode: .mixed,
+            in: repository
+        )
+
+        XCTAssertEqual(updatedRepository.head, .branch("main"))
+        XCTAssertTrue(updatedRepository.changes.allSatisfy { $0.staged == nil })
+        let notesChange = try XCTUnwrap(
+            updatedRepository.changes.first { $0.path == "notes.txt" }
+        )
+        XCTAssertEqual(notesChange.unstaged, .modified)
+        let laterChange = try XCTUnwrap(
+            updatedRepository.changes.first { $0.path == "later.txt" }
+        )
+        XCTAssertEqual(laterChange.unstaged, .untracked)
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "notes.txt"),
+                encoding: .utf8
+            ),
+            "latest\n"
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "later.txt"),
+                encoding: .utf8
+            ),
+            "keep\n"
+        )
+        let updatedHistory = try await inspector.history(in: updatedRepository)
+        XCTAssertEqual(updatedHistory.headCommitID, targetID)
+    }
+
+    func testSoftResetMovesCurrentBranchAndKeepsChangesStaged() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("middle\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Middle")
+        let targetID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("latest\n", to: "notes.txt", in: repositoryURL)
+        try write("keep\n", to: "later.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Latest")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let target = try XCTUnwrap(history.commits.first { $0.id == targetID })
+
+        let updatedRepository = try await inspector.resetCurrentBranch(
+            to: target,
+            mode: .soft,
+            in: repository
+        )
+
+        XCTAssertEqual(updatedRepository.head, .branch("main"))
+        XCTAssertTrue(updatedRepository.changes.allSatisfy { $0.unstaged == nil })
+        let notesChange = try XCTUnwrap(
+            updatedRepository.changes.first { $0.path == "notes.txt" }
+        )
+        XCTAssertEqual(notesChange.staged, .modified)
+        let laterChange = try XCTUnwrap(
+            updatedRepository.changes.first { $0.path == "later.txt" }
+        )
+        XCTAssertEqual(laterChange.staged, .added)
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "notes.txt"),
+                encoding: .utf8
+            ),
+            "latest\n"
+        )
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "later.txt"),
+                encoding: .utf8
+            ),
+            "keep\n"
+        )
+        let updatedHistory = try await inspector.history(in: updatedRepository)
+        XCTAssertEqual(updatedHistory.headCommitID, targetID)
+    }
+
+    func testHardResetMovesCurrentBranchAndMatchesTargetFiles() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("middle\n", to: "notes.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Middle")
+        let targetID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("latest\n", to: "notes.txt", in: repositoryURL)
+        try write("remove\n", to: "later.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Latest")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let target = try XCTUnwrap(history.commits.first { $0.id == targetID })
+
+        let updatedRepository = try await inspector.resetCurrentBranch(
+            to: target,
+            mode: .hard,
+            in: repository
+        )
+
+        XCTAssertEqual(updatedRepository.head, .branch("main"))
+        XCTAssertTrue(updatedRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "notes.txt"),
+                encoding: .utf8
+            ),
+            "middle\n"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repositoryURL.appending(path: "later.txt").path
+            )
+        )
+        let updatedHistory = try await inspector.history(in: updatedRepository)
+        XCTAssertEqual(updatedHistory.headCommitID, targetID)
+    }
+
+    func testReadsStashesAndSelectedFilePatch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "notes [한글].txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        try write("stashed\n", to: "notes [한글].txt", in: repositoryURL)
+        try write("draft\n", to: "new [한글].txt", in: repositoryURL)
+        try runGit([
+            "-C", repositoryURL.path, "stash", "push", "--include-untracked",
+            "--message", "First recovery point"
+        ])
+        try write("newest\n", to: "notes [한글].txt", in: repositoryURL)
+        try runGit([
+            "-C", repositoryURL.path, "stash", "push",
+            "--message", "Newest recovery point"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let stashes = try await inspector.stashes(in: repository)
+
+        XCTAssertEqual(stashes.map(\.reference), ["stash@{0}", "stash@{1}"])
+        XCTAssertTrue(stashes[0].subject.contains("Newest recovery point"))
+        XCTAssertTrue(stashes[1].subject.contains("First recovery point"))
+        XCTAssertTrue(stashes.allSatisfy { !$0.id.isEmpty })
+        XCTAssertTrue(stashes.allSatisfy { $0.createdAt > Date(timeIntervalSince1970: 0) })
+
+        let files = try await inspector.files(for: stashes[1], in: repository)
+        XCTAssertEqual(Set(files.map(\.path)), Set(["new [한글].txt", "notes [한글].txt"]))
+
+        let trackedFile = try XCTUnwrap(files.first { $0.path == "notes [한글].txt" })
+        let trackedPatch = try await inspector.patch(
+            for: trackedFile,
+            in: stashes[1],
+            repository: repository
+        )
+        guard case .text(let trackedLines) = trackedPatch.content else {
+            return XCTFail("Expected text Stash patch")
+        }
+        XCTAssertTrue(trackedLines.contains { $0.kind == .deletion && $0.text == "-base" })
+        XCTAssertTrue(trackedLines.contains { $0.kind == .addition && $0.text == "+stashed" })
+
+        let untrackedFile = try XCTUnwrap(files.first { $0.path == "new [한글].txt" })
+        let untrackedPatch = try await inspector.patch(
+            for: untrackedFile,
+            in: stashes[1],
+            repository: repository
+        )
+        guard case .text(let untrackedLines) = untrackedPatch.content else {
+            return XCTFail("Expected captured untracked file patch")
+        }
+        XCTAssertTrue(untrackedLines.contains { $0.kind == .addition && $0.text == "+draft" })
+    }
+
+    func testCreatesStashWithMessageAndOptionalUntrackedFiles() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("ignored.txt\n", to: ".gitignore", in: repositoryURL)
+        try write("base\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("tracked change\n", to: "tracked.txt", in: repositoryURL)
+        try write("draft\n", to: "draft [한글].txt", in: repositoryURL)
+        try write("ignored\n", to: "ignored.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "tracked.txt"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let trackedOnly = try await inspector.createStash(
+            message: "Tracked checkpoint",
+            includeUntracked: false,
+            in: repository
+        )
+
+        XCTAssertEqual(trackedOnly.changes.map(\.path), ["draft [한글].txt"])
+        XCTAssertEqual(trackedOnly.changes.first?.unstaged, .untracked)
+        var stashes = try await inspector.stashes(in: trackedOnly)
+        XCTAssertTrue(stashes[0].subject.contains("Tracked checkpoint"))
+        let trackedFiles = try await inspector.files(for: stashes[0], in: trackedOnly)
+        XCTAssertEqual(trackedFiles.map(\.path), ["tracked.txt"])
+
+        try write("second change\n", to: "tracked.txt", in: repositoryURL)
+        let everything = try await inspector.createStash(
+            message: "Everything [한글]",
+            includeUntracked: true,
+            in: trackedOnly
+        )
+
+        XCTAssertTrue(everything.changes.isEmpty)
+        stashes = try await inspector.stashes(in: everything)
+        XCTAssertTrue(stashes[0].subject.contains("Everything [한글]"))
+        let allFiles = try await inspector.files(for: stashes[0], in: everything)
+        XCTAssertEqual(
+            Set(allFiles.map(\.path)),
+            Set(["draft [한글].txt", "tracked.txt"])
+        )
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: repositoryURL.appending(path: "ignored.txt").path
+        ))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            headID
+        )
+    }
+
+    func testAppliesStashWithIndexAndKeepsEntry() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("staged\n", to: "tracked.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "tracked.txt"])
+        try write("working\n", to: "tracked.txt", in: repositoryURL)
+        try write("draft\n", to: "draft [한글].txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let stashedRepository = try await inspector.createStash(
+            message: "Apply checkpoint",
+            includeUntracked: true,
+            in: repository
+        )
+        let stashes = try await inspector.stashes(in: stashedRepository)
+        let stash = try XCTUnwrap(stashes.first)
+
+        let appliedRepository = try await inspector.applyStash(stash, in: stashedRepository)
+
+        let remainingStashes = try await inspector.stashes(in: appliedRepository)
+        XCTAssertEqual(remainingStashes.map(\.id), [stash.id])
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            headID
+        )
+        let tracked = try XCTUnwrap(
+            appliedRepository.changes.first { $0.path == "tracked.txt" }
+        )
+        XCTAssertEqual(tracked.staged, .modified)
+        XCTAssertEqual(tracked.unstaged, .modified)
+        let untracked = try XCTUnwrap(
+            appliedRepository.changes.first { $0.path == "draft [한글].txt" }
+        )
+        XCTAssertEqual(untracked.unstaged, .untracked)
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "tracked.txt"),
+                encoding: .utf8
+            ),
+            "working\n"
+        )
+    }
+
+    func testApplyStashFailureKeepsDirtyWorkingTreeAndStash() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("stashed\n", to: "tracked.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let stashedRepository = try await inspector.createStash(
+            message: "Dirty failure",
+            includeUntracked: false,
+            in: repository
+        )
+        let stashes = try await inspector.stashes(in: stashedRepository)
+        let stash = try XCTUnwrap(stashes.first)
+        try write("local\n", to: "tracked.txt", in: repositoryURL)
+        let dirtyRepository = try await inspector.inspect(at: repositoryURL)
+
+        do {
+            _ = try await inspector.applyStash(stash, in: dirtyRepository)
+            XCTFail("Expected the overlapping local change to reject Stash Apply")
+        } catch let error as RepositoryStashError {
+            guard case .applyFailed = error else {
+                return XCTFail("Expected an Apply failure, got \(error)")
+            }
+        }
+
+        let refreshedRepository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(
+            try String(
+                contentsOf: repositoryURL.appending(path: "tracked.txt"),
+                encoding: .utf8
+            ),
+            "local\n"
+        )
+        XCTAssertEqual(refreshedRepository.changes.first?.unstaged, .modified)
+        let remainingStashes = try await inspector.stashes(in: refreshedRepository)
+        XCTAssertEqual(remainingStashes.map(\.id), [stash.id])
+    }
+
+    func testApplyStashConflictKeepsStashAndReportsConflictState() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("stashed\n", to: "tracked.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let stashedRepository = try await inspector.createStash(
+            message: "Conflict checkpoint",
+            includeUntracked: false,
+            in: repository
+        )
+        let stashes = try await inspector.stashes(in: stashedRepository)
+        let stash = try XCTUnwrap(stashes.first)
+        try write("new head\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Move HEAD")
+        let headID = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let movedRepository = try await inspector.inspect(at: repositoryURL)
+
+        do {
+            _ = try await inspector.applyStash(stash, in: movedRepository)
+            XCTFail("Expected Stash Apply to report a conflict")
+        } catch let error as RepositoryStashError {
+            guard case .applyFailed = error else {
+                return XCTFail("Expected an Apply failure, got \(error)")
+            }
+        }
+
+        let conflictedRepository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertTrue(conflictedRepository.changes.contains(where: \.isConflicted))
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            headID
+        )
+        let remainingStashes = try await inspector.stashes(in: conflictedRepository)
+        XCTAssertEqual(remainingStashes.map(\.id), [stash.id])
+    }
+
+    func testDropsSelectedStashWithoutChangingRepositoryState() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "tracked.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        let inspector = RepositoryInspector()
+        var repository = try await inspector.inspect(at: repositoryURL)
+        try write("first\n", to: "tracked.txt", in: repositoryURL)
+        repository = try await inspector.createStash(
+            message: "First checkpoint",
+            includeUntracked: false,
+            in: repository
+        )
+        try write("second\n", to: "tracked.txt", in: repositoryURL)
+        repository = try await inspector.createStash(
+            message: "Second checkpoint",
+            includeUntracked: false,
+            in: repository
+        )
+        let stashesAfterSecond = try await inspector.stashes(in: repository)
+        let selectedStash = try XCTUnwrap(
+            stashesAfterSecond.first { $0.subject.contains("First checkpoint") }
+        )
+
+        try write("third\n", to: "tracked.txt", in: repositoryURL)
+        repository = try await inspector.createStash(
+            message: "Third checkpoint",
+            includeUntracked: false,
+            in: repository
+        )
+        let stashesBeforeDrop = try await inspector.stashes(in: repository)
+        try write("staged\n", to: "tracked.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--", "tracked.txt"])
+        try write("working\n", to: "tracked.txt", in: repositoryURL)
+        try write("draft\n", to: "draft.txt", in: repositoryURL)
+        let dirtyRepository = try await inspector.inspect(at: repositoryURL)
+        let headBeforeDrop = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        let statusBeforeDrop = try gitOutput([
+            "-C", repositoryURL.path,
+            "status", "--porcelain=v2", "--untracked-files=all"
+        ])
+
+        let updatedRepository = try await inspector.dropStash(
+            selectedStash,
+            in: dirtyRepository
+        )
+
+        let remainingStashes = try await inspector.stashes(in: updatedRepository)
+        XCTAssertEqual(
+            remainingStashes.map(\.id),
+            stashesBeforeDrop.filter { $0.id != selectedStash.id }.map(\.id)
+        )
+        XCTAssertEqual(
+            try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]),
+            headBeforeDrop
+        )
+        XCTAssertEqual(
+            try gitOutput([
+                "-C", repositoryURL.path,
+                "status", "--porcelain=v2", "--untracked-files=all"
+            ]),
+            statusBeforeDrop
+        )
+    }
+
+    func testReadsRenamedCommitFileAndOnlyItsPatch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write(
+            "shared one\nshared two\nbefore\n",
+            to: "old [한글].txt",
+            in: repositoryURL
+        )
+        try write("other before\n", to: "other.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        try runGit([
+            "-C", repositoryURL.path,
+            "mv", "--", "old [한글].txt", "new [한글].txt"
+        ])
+        try write(
+            "shared one\nshared two\nafter\n",
+            to: "new [한글].txt",
+            in: repositoryURL
+        )
+        try write("other after\n", to: "other.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Rename")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let commit = try XCTUnwrap(history.commits.first)
+        let files = try await inspector.files(for: commit, in: repository)
+        let renamed = try XCTUnwrap(files.first { $0.state == .renamed })
+
+        XCTAssertEqual(renamed.path, "new [한글].txt")
+        XCTAssertEqual(renamed.originalPath, "old [한글].txt")
+        XCTAssertEqual(files.first { $0.path == "other.txt" }?.state, .modified)
+
+        let patch = try await inspector.patch(
+            for: renamed,
+            in: commit,
+            repository: repository
+        )
+        guard case .text(let lines) = patch.content else {
+            return XCTFail("Expected text commit file patch")
+        }
+        XCTAssertEqual(lines.filter { $0.text.hasPrefix("diff --git ") }.count, 1)
+        XCTAssertTrue(lines.contains { $0.kind == .addition && $0.text == "+after" })
+        XCTAssertFalse(lines.contains { $0.text.contains("other after") })
     }
 
     func testFiltersHistoryByMessageAuthorAndSHA() {
@@ -287,12 +2414,133 @@ final class RepositoryInspectorTests: XCTestCase {
             committedAt: Date(timeIntervalSince1970: 0),
             subject: "Fix Library selection",
             body: "Keep the selected Repository visible.",
+            references: [.init(name: "release-candidate", kind: .tag)],
         )
 
         XCTAssertTrue(commit.matches(search: ""))
         XCTAssertTrue(commit.matches(search: "library tester"))
         XCTAssertTrue(commit.matches(search: "VISIBLE abc123"))
+        XCTAssertTrue(commit.matches(search: "release-candidate"))
         XCTAssertFalse(commit.matches(search: "remote branch"))
+    }
+
+    func testReadsHistoryAcrossBranchesRemoteBranchesAndTags() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        let baseID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let headID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "feature", baseID])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let branchID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "remote-only", baseID])
+        try write("remote\n", to: "remote.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Remote")
+        let remoteID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "update-ref", "refs/remotes/origin/archive", remoteID])
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "tag-only", baseID])
+        try write("tag\n", to: "tag.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Tag")
+        let tagID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "tag", "v-archive", tagID])
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try runGit(["-C", repositoryURL.path, "branch", "-D", "remote-only", "tag-only"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+
+        XCTAssertEqual(history.headCommitID, headID)
+        XCTAssertEqual(
+            Set(history.commits.map(\.id)),
+            Set([baseID, headID, branchID, remoteID, tagID])
+        )
+        XCTAssertEqual(
+            history.commits.first(where: { $0.id == branchID })?.references,
+            [.init(name: "feature", kind: .branch)]
+        )
+        XCTAssertEqual(
+            history.commits.first(where: { $0.id == remoteID })?.references,
+            [.init(name: "origin/archive", kind: .remoteBranch)]
+        )
+        XCTAssertEqual(
+            history.commits.first(where: { $0.id == tagID })?.references,
+            [.init(name: "v-archive", kind: .tag)]
+        )
+    }
+
+    func testBuildsHistoryGraphForMergeCommit() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        let baseID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "branch", "feature"])
+
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main work")
+        let mainID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "feature"])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature work")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try runGit([
+            "-C", repositoryURL.path, "merge", "--quiet", "--no-ff",
+            "-m", "Merge feature", "feature"
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let merge = try XCTUnwrap(history.commits.first)
+        let mergeRow = try XCTUnwrap(history.graphRows[merge.id])
+        let baseRow = try XCTUnwrap(history.graphRows[baseID])
+        let mergeFiles = try await inspector.files(for: merge, in: repository)
+
+        XCTAssertEqual(Set(merge.parentIDs), Set([mainID, featureID]))
+        XCTAssertEqual(history.commits.last?.id, baseID)
+        XCTAssertEqual(history.graphLaneCount, 2)
+        XCTAssertEqual(mergeRow.commitLane, 0)
+        XCTAssertEqual(mergeRow.topLaneCount, 1)
+        XCTAssertEqual(mergeRow.bottomLaneCount, 2)
+        XCTAssertFalse(mergeRow.hasIncomingEdge)
+        XCTAssertEqual(Set(mergeRow.parentEdges.map(\.toLane)), Set([0, 1]))
+        XCTAssertEqual(baseRow.topLaneCount, 1)
+        XCTAssertEqual(baseRow.bottomLaneCount, 0)
+        XCTAssertTrue(baseRow.hasIncomingEdge)
+        XCTAssertEqual(mergeFiles.map(\.path), ["feature.txt"])
     }
 
     func testScannerStaysInsideAllowedFolderAndSkipsRepositoryDescendants() async throws {
@@ -449,7 +2697,7 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(lines.filter { $0.kind == .addition }.count, largeLineCount)
     }
 
-    func testReportsConflict() async throws {
+    func testReportsMergeInProgressBeforeAndAfterResolvingConflict() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
 
@@ -464,14 +2712,400 @@ final class RepositoryInspectorTests: XCTestCase {
         try commitAll(in: repositoryURL, message: "Main")
         try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
 
-        let repository = try await RepositoryInspector().inspect(at: repositoryURL)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(
+            repository.operation,
+            .init(kind: .merge, unresolvedConflictCount: 1)
+        )
+        XCTAssertFalse(try XCTUnwrap(repository.operation).canContinue)
+
+        try write("combined\n", to: "conflict.txt", in: repositoryURL)
+        let resolvedRepository = try await inspector.markConflictResolved(
+            try XCTUnwrap(repository.changes.first),
+            in: repository
+        )
+
+        XCTAssertEqual(
+            resolvedRepository.operation,
+            .init(kind: .merge, unresolvedConflictCount: 0)
+        )
+        XCTAssertTrue(try XCTUnwrap(resolvedRepository.operation).canContinue)
+    }
+
+    func testAbortsAndContinuesMergeOperation() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let conflictedRepository = try await inspector.inspect(at: repositoryURL)
+        let abortedRepository = try await inspector.abortOperation(in: conflictedRepository)
+
+        XCTAssertNil(abortedRepository.operation)
+        XCTAssertEqual(abortedRepository.head, .branch("main"))
+        XCTAssertTrue(abortedRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "main\n"
+        )
+
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+        let restartedRepository = try await inspector.inspect(at: repositoryURL)
+        do {
+            _ = try await inspector.continueOperation(in: restartedRepository)
+            XCTFail("An unresolved merge should not continue")
+        } catch let error as RepositoryOperationError {
+            XCTAssertEqual(error, .unresolvedConflicts)
+        }
+
+        try write("combined\n", to: "conflict.txt", in: repositoryURL)
+        let resolvedRepository = try await inspector.markConflictResolved(
+            try XCTUnwrap(restartedRepository.changes.first),
+            in: restartedRepository
+        )
+        let continuedRepository = try await inspector.continueOperation(in: resolvedRepository)
+
+        XCTAssertNil(continuedRepository.operation)
+        XCTAssertEqual(continuedRepository.head, .branch("main"))
+        XCTAssertTrue(continuedRepository.changes.isEmpty)
+        let history = try await inspector.history(in: continuedRepository)
+        let headCommit = try XCTUnwrap(
+            history.commits.first { $0.id == history.headCommitID }
+        )
+        XCTAssertEqual(headCommit.parentIDs.count, 2)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "combined\n"
+        )
+    }
+
+    func testReportsRebaseInProgressBeforeAndAfterResolvingConflict() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "feature"])
+        try write("feature\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "feature"])
+        try runGit(
+            ["-C", repositoryURL.path, "rebase", "--no-update-refs", "main"],
+            expectedStatus: 1
+        )
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(
+            repository.operation,
+            .init(kind: .rebase, unresolvedConflictCount: 1)
+        )
+        XCTAssertFalse(try XCTUnwrap(repository.operation).canContinue)
+
+        try write("combined\n", to: "conflict.txt", in: repositoryURL)
+        let resolvedRepository = try await inspector.markConflictResolved(
+            try XCTUnwrap(repository.changes.first),
+            in: repository
+        )
+
+        XCTAssertEqual(
+            resolvedRepository.operation,
+            .init(kind: .rebase, unresolvedConflictCount: 0)
+        )
+        XCTAssertTrue(try XCTUnwrap(resolvedRepository.operation).canContinue)
+    }
+
+    func testAbortsAndContinuesRebaseOperation() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "feature"])
+        try write("feature\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "feature"])
+        try runGit(
+            ["-C", repositoryURL.path, "rebase", "--no-update-refs", "main"],
+            expectedStatus: 1
+        )
+
+        let inspector = RepositoryInspector()
+        let conflictedRepository = try await inspector.inspect(at: repositoryURL)
+        let abortedRepository = try await inspector.abortOperation(in: conflictedRepository)
+
+        XCTAssertNil(abortedRepository.operation)
+        XCTAssertEqual(abortedRepository.head, .branch("feature"))
+        XCTAssertTrue(abortedRepository.changes.isEmpty)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "feature\n"
+        )
+
+        try runGit(
+            ["-C", repositoryURL.path, "rebase", "--no-update-refs", "main"],
+            expectedStatus: 1
+        )
+        let restartedRepository = try await inspector.inspect(at: repositoryURL)
+        try write("combined\n", to: "conflict.txt", in: repositoryURL)
+        let resolvedRepository = try await inspector.markConflictResolved(
+            try XCTUnwrap(restartedRepository.changes.first),
+            in: restartedRepository
+        )
+        let continuedRepository = try await inspector.continueOperation(in: resolvedRepository)
+
+        XCTAssertNil(continuedRepository.operation)
+        XCTAssertEqual(continuedRepository.head, .branch("feature"))
+        XCTAssertTrue(continuedRepository.changes.isEmpty)
+        let history = try await inspector.history(in: continuedRepository)
+        let headCommit = try XCTUnwrap(
+            history.commits.first { $0.id == history.headCommitID }
+        )
+        XCTAssertEqual(headCommit.subject, "Feature")
+        XCTAssertEqual(
+            history.commits.first { $0.id == headCommit.parentIDs.first }?.subject,
+            "Main"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "combined\n"
+        )
+    }
+
+    func testReadsConflictBaseOursAndTheirsWithoutChangingRepository() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
 
         let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
         XCTAssertTrue(change.isConflicted)
         XCTAssertEqual(RepositoryChangeStatusGroup.make(repository.changes).map(\.id), [.conflicts])
 
-        let diff = try await RepositoryInspector().diff(for: change, in: repository)
-        XCTAssertFalse(try textLines(in: diff, scope: .conflict).isEmpty)
+        let conflictedFile = repositoryURL.appending(path: "conflict.txt")
+        let workingTreeBeforeInspection = try Data(contentsOf: conflictedFile)
+        let diff = try await inspector.diff(for: change, in: repository)
+
+        XCTAssertEqual(try textLines(in: diff, scope: .base).map(\.text), ["base"])
+        XCTAssertEqual(try textLines(in: diff, scope: .ours).map(\.text), ["main"])
+        XCTAssertEqual(try textLines(in: diff, scope: .theirs).map(\.text), ["side"])
+        let repositoryAfterInspection = try await inspector.inspect(at: repositoryURL)
+        XCTAssertEqual(repositoryAfterInspection, repository)
+        XCTAssertEqual(try Data(contentsOf: conflictedFile), workingTreeBeforeInspection)
+    }
+
+    func testResolvesConflictUsingOursWithoutChangingHead() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let headBeforeResolution = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
+        let resolvedRepository = try await inspector.resolveConflict(
+            change,
+            using: .ours,
+            in: repository
+        )
+
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "main\n"
+        )
+        XCTAssertFalse(resolvedRepository.changes.contains { $0.path == "conflict.txt" })
+        XCTAssertTrue(
+            try gitOutput(["-C", repositoryURL.path, "ls-files", "--unmerged", "--", "conflict.txt"])
+                .isEmpty
+        )
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), headBeforeResolution)
+    }
+
+    func testResolvesConflictUsingTheirsAndStagesChosenVersion() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
+        let resolvedRepository = try await inspector.resolveConflict(
+            change,
+            using: .theirs,
+            in: repository
+        )
+
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "side\n"
+        )
+        let resolvedChange = try XCTUnwrap(
+            resolvedRepository.changes.first { $0.path == "conflict.txt" }
+        )
+        XCTAssertFalse(resolvedChange.isConflicted)
+        XCTAssertEqual(resolvedChange.staged, .modified)
+        XCTAssertNil(resolvedChange.unstaged)
+        XCTAssertTrue(
+            try gitOutput(["-C", repositoryURL.path, "ls-files", "--unmerged", "--", "conflict.txt"])
+                .isEmpty
+        )
+    }
+
+    func testMarksConflictResolvedUsingCurrentWorkingTreeContentWithoutChangingHead() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let headBeforeResolution = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+        try write("combined\n", to: "conflict.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
+        let resolvedRepository = try await inspector.markConflictResolved(
+            change,
+            in: repository
+        )
+
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "combined\n"
+        )
+        let resolvedChange = try XCTUnwrap(
+            resolvedRepository.changes.first { $0.path == "conflict.txt" }
+        )
+        XCTAssertFalse(resolvedChange.isConflicted)
+        XCTAssertEqual(resolvedChange.staged, .modified)
+        XCTAssertNil(resolvedChange.unstaged)
+        XCTAssertTrue(
+            try gitOutput(["-C", repositoryURL.path, "ls-files", "--unmerged", "--", "conflict.txt"])
+                .isEmpty
+        )
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), headBeforeResolution)
+    }
+
+    func testResolvesConflictAsDeletionWhenChosenSideHasNoFile() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try runGit(["-C", repositoryURL.path, "rm", "--quiet", "conflict.txt"])
+        try commitAll(in: repositoryURL, message: "Side deletes")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main modifies")
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "conflict.txt" })
+        let resolvedRepository = try await inspector.resolveConflict(
+            change,
+            using: .theirs,
+            in: repository
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: repositoryURL.appending(path: "conflict.txt").path)
+        )
+        let resolvedChange = try XCTUnwrap(
+            resolvedRepository.changes.first { $0.path == "conflict.txt" }
+        )
+        XCTAssertFalse(resolvedChange.isConflicted)
+        XCTAssertEqual(resolvedChange.staged, .deleted)
+        XCTAssertNil(resolvedChange.unstaged)
+        XCTAssertTrue(
+            try gitOutput(["-C", repositoryURL.path, "ls-files", "--unmerged", "--", "conflict.txt"])
+                .isEmpty
+        )
+    }
+
+    func testReportsMissingBaseForAddAddConflict() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("initial\n", to: "README.md", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "side"])
+        try write("side\n", to: "added.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+        try write("main\n", to: "added.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "merge", "--no-edit", "side"], expectedStatus: 1)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "added.txt" })
+        let diff = try await inspector.diff(for: change, in: repository)
+
+        XCTAssertEqual(diff.sections.first { $0.scope == .base }?.content, .missing)
+        XCTAssertEqual(try textLines(in: diff, scope: .ours).map(\.text), ["main"])
+        XCTAssertEqual(try textLines(in: diff, scope: .theirs).map(\.text), ["side"])
     }
 
     func testRejectsRegularDirectory() async throws {
@@ -1039,6 +3673,10 @@ final class RepositoryInspectorTests: XCTestCase {
         try runGit(["init", "--quiet", "--initial-branch=main", url.path])
         try runGit(["-C", url.path, "config", "user.name", "Gallae Tests"])
         try runGit(["-C", url.path, "config", "user.email", "tests@gallae.local"])
+        try runGit(["-C", url.path, "config", "commit.gpgSign", "false"])
+        try runGit(["-C", url.path, "config", "commit.signOff", "false"])
+        try runGit(["-C", url.path, "config", "tag.gpgSign", "false"])
+        try runGit(["-C", url.path, "config", "tag.signOff", "false"])
     }
 
     private func commitAll(in repositoryURL: URL, message: String) throws {

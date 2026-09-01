@@ -19,6 +19,7 @@ struct LibraryStore {
         static let libraryFolders = "libraryFolderBookmarks.v1"
         static let recentRepositories = "recentRepositoryBookmarks.v1"
         static let lastWorkspace = "lastWorkspaceBookmark.v1"
+        static let automaticFetchEnabled = "automaticFetchEnabled.v1"
     }
 
     private let defaults: UserDefaults
@@ -37,6 +38,14 @@ struct LibraryStore {
 
     func restoreLastWorkspace() -> RestoredLocation? {
         restoreLocations(forKey: Key.lastWorkspace).first
+    }
+
+    func restoreAutomaticFetchEnabled() -> Bool {
+        defaults.bool(forKey: Key.automaticFetchEnabled)
+    }
+
+    func setAutomaticFetchEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Key.automaticFetchEnabled)
     }
 
     func addLibraryFolder(_ url: URL) throws {

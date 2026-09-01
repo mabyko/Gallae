@@ -622,7 +622,7 @@ struct RepositoryLibraryView: View {
                     if summary.isUnborn {
                         LabeledContent("History", value: "No commits yet")
                     } else if let upstream = summary.upstream {
-                        LabeledContent("Upstream", value: upstream.label)
+                        LabeledContent("Tracking", value: upstream.label)
                     }
                 }
 

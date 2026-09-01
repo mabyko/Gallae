@@ -10,6 +10,8 @@ private enum RepositoryChangeViewMode: Int {
 private enum RepositoryWorkspaceSection: Int {
     case changes
     case history
+    case stashes
+    case reflog
 }
 
 struct RepositoryWorkspaceView: View {
@@ -20,6 +22,8 @@ struct RepositoryWorkspaceView: View {
     @State private var commitSubject = ""
     @State private var commitBody = ""
     @State private var isAmending = false
+    @State private var isBranchPickerPresented = false
+    @State private var isConfirmingOperationAbort = false
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
 
@@ -34,6 +38,10 @@ struct RepositoryWorkspaceView: View {
                     changesContent(repository)
                 case .history:
                     RepositoryHistoryView(model: model)
+                case .stashes:
+                    RepositoryStashesView(model: model)
+                case .reflog:
+                    RepositoryReflogView(model: model)
                 }
             }
         }
@@ -44,72 +52,154 @@ struct RepositoryWorkspaceView: View {
             commitSubject = ""
             commitBody = ""
             isAmending = false
+            isConfirmingOperationAbort = false
+        }
+        .confirmationDialog(
+            "Abort Repository Operation?",
+            isPresented: $isConfirmingOperationAbort,
+            titleVisibility: .visible,
+            presenting: model.repository?.operation
+        ) { operation in
+            Button("Abort \(operation.kind.name)", role: .destructive) {
+                Task { await model.abortRepositoryOperation() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { operation in
+            Text(
+                "Git will stop the \(operation.kind.name.lowercased()) and try to restore its earlier state. "
+                    + "Changes made while resolving conflicts may be discarded."
+            )
         }
     }
 
     private var repositoryHeader: some View {
-        HStack(alignment: .center, spacing: 16) {
-            if let repository = model.repository {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(repository.name)
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(repository.name)
-                        .accessibilityLabel("Repository, \(repository.name)")
-                    Text(repository.rootURL.path)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                        .help(repository.rootURL.path)
-                        .accessibilityLabel("Repository path, \(repository.rootURL.path)")
-                }
-
-                Spacer()
-
-                Picker("Workspace", selection: $workspaceSection) {
-                    Text("Changes").tag(RepositoryWorkspaceSection.changes)
-                    Text("History").tag(RepositoryWorkspaceSection.history)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Switch between working tree changes and commit history")
-                .accessibilityLabel("Repository View")
-
-                VStack(alignment: .trailing, spacing: 5) {
-                    Label(repository.head.label, systemImage: repository.head.systemImage)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(repository.head.label)
-                        .accessibilityLabel("HEAD, \(repository.head.label)")
-                    if let upstream = repository.upstream {
-                        Label(upstream.label, systemImage: "arrow.up.arrow.down")
-                            .font(.caption)
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 16) {
+                if let repository = model.repository {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(repository.name)
+                            .font(.title2.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(repository.name)
+                            .accessibilityLabel("Repository, \(repository.name)")
+                        Text(repository.rootURL.path)
+                            .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .help(upstream.label)
-                            .accessibilityLabel("Upstream, \(upstream.label)")
+                            .textSelection(.enabled)
+                            .help(repository.rootURL.path)
+                            .accessibilityLabel("Repository path, \(repository.rootURL.path)")
                     }
-                    if repository.isUnborn {
-                        Label("No commits yet", systemImage: "circle.dashed")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Picker("Workspace", selection: $workspaceSection) {
+                        Text("Changes").tag(RepositoryWorkspaceSection.changes)
+                        Text("History").tag(RepositoryWorkspaceSection.history)
+                        Text("Stashes").tag(RepositoryWorkspaceSection.stashes)
+                        Text("Reflog").tag(RepositoryWorkspaceSection.reflog)
                     }
-                    if model.isRepositoryStale {
-                        Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                            .font(.caption)
-                            .foregroundStyle(theme.colors.statusConflict)
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Switch between working tree changes, commit history, Stashes, and Reflog")
+                    .accessibilityLabel("Repository View")
+
+                    VStack(alignment: .trailing, spacing: 5) {
+                        Button {
+                            isBranchPickerPresented = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Label(repository.head.label, systemImage: repository.head.systemImage)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.callout.weight(.medium))
+                        .help("Choose a local branch")
+                        .accessibilityLabel("HEAD, \(repository.head.label). Choose Local Branch")
+                        .disabled(model.isLoading)
+                        .popover(isPresented: $isBranchPickerPresented) {
+                            RepositoryBranchPicker(
+                                model: model,
+                                isPresented: $isBranchPickerPresented
+                            )
+                        }
+                        if let upstream = repository.upstream {
+                            Label(upstream.label, systemImage: "arrow.up.arrow.down")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help("Tracks \(upstream.label)")
+                                .accessibilityLabel("Tracking branch, \(upstream.label)")
+                        }
+                        if repository.isUnborn {
+                            Label("No commits yet", systemImage: "circle.dashed")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if model.isRepositoryStale {
+                            Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                                .font(.caption)
+                                .foregroundStyle(theme.colors.statusConflict)
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            if let operation = model.repository?.operation {
+                Divider()
+                HStack(spacing: 12) {
+                    HStack(spacing: 12) {
+                        Label(operation.kind.label, systemImage: "arrow.triangle.merge")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(
+                                operation.canContinue
+                                    ? theme.colors.statusAdded
+                                    : theme.colors.statusConflict
+                            )
+                        Text(operation.conflictLabel)
+                        Text(operation.actionLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        "\(operation.kind.label). \(operation.conflictLabel). \(operation.actionLabel)"
+                    )
+                    Spacer()
+                    Button("Continue") {
+                        Task { await model.continueRepositoryOperation() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(!operation.canContinue || model.isLoading)
+                    .help("Continue the \(operation.kind.name) after resolving all conflicts")
+                    .accessibilityHint("Finish the \(operation.kind.name) using Git")
+
+                    Button("Abort…", role: .destructive) {
+                        isConfirmingOperationAbort = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.isLoading)
+                    .help("Stop the \(operation.kind.name) and try to restore its earlier state")
+                    .accessibilityHint("Opens a confirmation before stopping the \(operation.kind.name)")
+                }
+                .font(.callout)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(theme.colors.badgeBackground)
+            }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     @ViewBuilder
@@ -140,12 +230,19 @@ struct RepositoryWorkspaceView: View {
                     canStage: model.canStageSelectedChange,
                     canUnstage: model.canUnstageSelectedChange,
                     canDiscard: model.canDiscardSelectedChange,
+                    canResolveConflict: model.canResolveSelectedConflict,
                     canStageHunks: model.canStageSelectedHunks,
                     canUnstageHunks: model.canUnstageSelectedHunks,
                     isBusy: model.isLoading,
                     stage: { Task { await model.stageSelectedChange() } },
                     unstage: { Task { await model.unstageSelectedChange() } },
                     discard: { id in Task { await model.discardChange(id: id) } },
+                    resolveConflict: { side in
+                        Task { await model.resolveSelectedConflict(using: side) }
+                    },
+                    markConflictResolved: {
+                        Task { await model.markSelectedConflictResolved() }
+                    },
                     updateHunk: { hunk in
                         Task { await model.updateSelectedHunk(hunk) }
                     },
@@ -372,6 +469,219 @@ struct RepositoryWorkspaceView: View {
     }
 }
 
+private struct RepositoryBranchPicker: View {
+    @Bindable var model: AppModel
+    @Binding var isPresented: Bool
+    @State private var searchText = ""
+    @State private var selectedBranch: String?
+    @State private var newBranchName = ""
+    @State private var isCreatingBranch = false
+    @FocusState private var isSearchFocused: Bool
+    @FocusState private var isNewBranchFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TextField("Search Local Branches", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .focused($isSearchFocused)
+                .accessibilityLabel("Search Local Branches")
+                .padding(12)
+
+            Divider()
+
+            branchContent
+
+            Divider()
+
+            branchActions
+        }
+        .frame(width: 340, height: 360)
+        .task {
+            await model.loadLocalBranches()
+            isSearchFocused = true
+        }
+        .onChange(of: model.localBranchesState, initial: true) { _, _ in
+            reconcileSelection()
+        }
+        .onChange(of: searchText) {
+            reconcileSelection()
+        }
+    }
+
+    @ViewBuilder
+    private var branchActions: some View {
+        if isCreatingBranch {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Create from \(model.repository?.head.label ?? "current HEAD")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    TextField("New Branch Name", text: $newBranchName)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isNewBranchFocused)
+                        .accessibilityLabel("New Branch Name")
+
+                    Button("Cancel") {
+                        newBranchName = ""
+                        isCreatingBranch = false
+                        isSearchFocused = true
+                    }
+
+                    Button("Create") {
+                        createBranch()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canCreate)
+                    .accessibilityHint("Creates and switches to the new local branch")
+                }
+            }
+            .padding(12)
+        } else {
+            HStack {
+                Button("New Branch…", systemImage: "plus") {
+                    isCreatingBranch = true
+                    Task {
+                        await Task.yield()
+                        isNewBranchFocused = true
+                    }
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isLoading)
+                .accessibilityHint("Creates a local branch from the current HEAD")
+
+                Spacer()
+
+                if case .loaded(let branches) = model.localBranchesState {
+                    Text("\(branches.count) Local Branches")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Button("Switch") {
+                    switchBranch()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canSwitch)
+                .accessibilityHint("Switches to the selected local branch")
+            }
+            .padding(12)
+        }
+    }
+
+    @ViewBuilder
+    private var branchContent: some View {
+        switch model.localBranchesState {
+        case .notLoaded, .loading:
+            ProgressView("Loading Branches…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Branches", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.loadLocalBranches() }
+                }
+            }
+        case .loaded(let branches) where branches.isEmpty:
+            ContentUnavailableView(
+                "No Local Branches",
+                systemImage: "arrow.triangle.branch",
+                description: Text("This Repository has no local branches to switch to.")
+            )
+        case .loaded:
+            if filteredBranches.isEmpty {
+                ContentUnavailableView {
+                    Label("No Matching Branches", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Try a different branch name.")
+                } actions: {
+                    Button("Clear Search") { searchText = "" }
+                }
+            } else {
+                List(filteredBranches, id: \.self, selection: $selectedBranch) { branch in
+                    HStack(spacing: 8) {
+                        Label(branch, systemImage: "arrow.triangle.branch")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        if branch == currentBranch {
+                            Label("Current", systemImage: "checkmark")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .tag(branch)
+                    .contentShape(.rect)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityValue(branch == currentBranch ? "Current branch" : "")
+                }
+                .listStyle(.plain)
+                .accessibilityLabel("Local Branches")
+            }
+        }
+    }
+
+    private var filteredBranches: [String] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return loadedBranches }
+        return loadedBranches.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
+    private var loadedBranches: [String] {
+        guard case .loaded(let branches) = model.localBranchesState else { return [] }
+        return branches
+    }
+
+    private var currentBranch: String? {
+        guard let repository = model.repository else { return nil }
+        guard case .branch(let branch) = repository.head else { return nil }
+        return branch
+    }
+
+    private var canSwitch: Bool {
+        guard let selectedBranch else { return false }
+        return selectedBranch != currentBranch && !model.isLoading
+    }
+
+    private var canCreate: Bool {
+        !newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.isLoading
+    }
+
+    private func reconcileSelection() {
+        if let selectedBranch, filteredBranches.contains(selectedBranch) {
+            return
+        }
+        selectedBranch = currentBranch.flatMap { branch in
+            filteredBranches.contains(branch) ? branch : nil
+        } ?? filteredBranches.first
+    }
+
+    private func switchBranch() {
+        guard let selectedBranch, canSwitch else { return }
+        Task {
+            if await model.switchBranch(to: selectedBranch) {
+                isPresented = false
+            }
+        }
+    }
+
+    private func createBranch() {
+        guard canCreate else { return }
+        Task {
+            if await model.createBranch(named: newBranchName) {
+                isPresented = false
+            }
+        }
+    }
+}
+
 private struct RepositoryChangeRow: View {
     let change: RepositorySummary.Change
     var showsParentPath = false
@@ -585,7 +895,7 @@ private struct RepositoryHistoryView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("History")
                                 .font(.headline)
-                            Text("Current HEAD · latest 100")
+                            Text("Branches & Tags · latest 100")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -601,7 +911,7 @@ private struct RepositoryHistoryView: View {
                     }
 
                     if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
-                        TextField("Search message, author, or SHA", text: $searchText)
+                        TextField("Search message, author, SHA, or ref", text: $searchText)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Search Commit History")
                             .onExitCommand { searchText = "" }
@@ -616,7 +926,8 @@ private struct RepositoryHistoryView: View {
             }
             .frame(
                 minWidth: theme.metrics.changeListMinimumWidth,
-                idealWidth: theme.metrics.changeListIdealWidth
+                idealWidth: theme.metrics.changeListIdealWidth,
+                maxHeight: .infinity
             )
 
             RepositoryCommitDetailView(model: model)
@@ -625,6 +936,9 @@ private struct RepositoryHistoryView: View {
         }
         .task(id: model.historyRequest) {
             await model.loadHistory()
+        }
+        .task(id: model.commitFilesRequest) {
+            await model.loadSelectedCommitFiles()
         }
         .task(id: model.commitPatchRequest) {
             await model.loadSelectedCommitPatch()
@@ -674,7 +988,7 @@ private struct RepositoryHistoryView: View {
                 ContentUnavailableView {
                     Label("No Matching Commits", systemImage: "magnifyingglass")
                 } description: {
-                    Text("Try a different message, author, or SHA.")
+                    Text("Try a different message, author, SHA, or ref.")
                 } actions: {
                     Button("Clear Search") { searchText = "" }
                 }
@@ -682,28 +996,425 @@ private struct RepositoryHistoryView: View {
                 List(commits, selection: $model.selectedHistoryCommitID) { commit in
                     RepositoryHistoryRow(
                         commit: commit,
-                        isHEAD: commit.id == history.commits.first?.id
+                        isHEAD: commit.id == history.headCommitID,
+                        graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
+                        graphLaneCount: history.graphLaneCount
                     )
                     .tag(commit.id)
-                    .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+                    .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
                 }
                 .listStyle(.plain)
                 .accessibilityLabel("Commit History, \(commits.count) commits")
             }
         }
     }
+
+    private var showsCommitGraph: Bool {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
-private struct RepositoryHistoryRow: View {
-    let commit: RepositoryHistory.Commit
-    let isHEAD: Bool
+private struct RepositoryStashesView: View {
+    @Bindable var model: AppModel
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stashes")
+                            .font(.headline)
+                        Text("Newest first · latest 100")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if case .loaded(let stashes) = model.stashesState {
+                        Text(stashes.count, format: .number)
+                            .font(.caption.weight(.medium))
+                            .monospacedDigit()
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(theme.colors.badgeBackground, in: .capsule)
+                    }
+                    Button("New Stash", systemImage: "plus") {
+                        model.showCreateStash()
+                    }
+                    .disabled(model.repository?.changes.isEmpty != false || model.isLoading)
+                    .accessibilityHint("Save the current Repository changes as a new Stash")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                stashList
+            }
+            .frame(
+                minWidth: theme.metrics.changeListMinimumWidth,
+                idealWidth: theme.metrics.changeListIdealWidth,
+                maxHeight: .infinity
+            )
+
+            RepositoryStashDetailView(model: model)
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+        }
+        .task(id: model.stashesRequest) {
+            await model.loadStashes()
+        }
+        .task(id: model.stashFilesRequest) {
+            await model.loadSelectedStashFiles()
+        }
+        .task(id: model.stashPatchRequest) {
+            await model.loadSelectedStashPatch()
+        }
+    }
+
+    @ViewBuilder
+    private var stashList: some View {
+        switch model.stashesState {
+        case .notLoaded, .loading:
+            ProgressView("Loading Stashes…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Stashes", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.loadStashes() }
+                }
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let stashes) where stashes.isEmpty:
+            ContentUnavailableView(
+                "No Stashes",
+                systemImage: "archivebox",
+                description: Text("This Repository has no saved Stashes.")
+            )
+        case .loaded(let stashes):
+            List(stashes, selection: $model.selectedStashID) { stash in
+                RepositoryStashRow(stash: stash)
+                    .tag(stash.id)
+                    .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+            }
+            .listStyle(.plain)
+            .accessibilityLabel("Stashes, \(stashes.count) items")
+        }
+    }
+}
+
+private struct RepositoryReflogView: View {
+    @Bindable var model: AppModel
+    @Environment(\.gallaeTheme) private var theme
+    @State private var recoveryEntry: RepositoryReflogEntry?
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Reflog")
+                            .font(.headline)
+                        Text("HEAD movements · latest 100")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if case .loaded(let entries) = model.reflogState {
+                        Text(entries.count, format: .number)
+                            .font(.caption.weight(.medium))
+                            .monospacedDigit()
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(theme.colors.badgeBackground, in: .capsule)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                reflogList
+            }
+            .frame(
+                minWidth: theme.metrics.changeListMinimumWidth,
+                idealWidth: theme.metrics.changeListIdealWidth,
+                maxHeight: .infinity
+            )
+
+            RepositoryReflogDetailView(
+                entry: model.selectedReflogEntry,
+                onRecover: { recoveryEntry = $0 }
+            )
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+        }
+        .task(id: model.reflogRequest) {
+            await model.loadReflog()
+        }
+        .sheet(item: $recoveryEntry) { entry in
+            RepositoryRecoveryBranchSheet(model: model, entry: entry)
+        }
+    }
+
+    @ViewBuilder
+    private var reflogList: some View {
+        switch model.reflogState {
+        case .notLoaded, .loading:
+            ProgressView("Loading Reflog…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Reflog", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again") {
+                    Task { await model.loadReflog() }
+                }
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let entries) where entries.isEmpty:
+            ContentUnavailableView(
+                "No Recovery Points",
+                systemImage: "clock.arrow.circlepath",
+                description: Text("This Repository has no HEAD Reflog entries.")
+            )
+        case .loaded(let entries):
+            List(entries, selection: $model.selectedReflogEntryID) { entry in
+                RepositoryReflogRow(entry: entry)
+                    .tag(entry.id)
+                    .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+            }
+            .listStyle(.plain)
+            .accessibilityLabel("Reflog, \(entries.count) recovery points")
+        }
+    }
+}
+
+private struct RepositoryReflogRow: View {
+    let entry: RepositoryReflogEntry
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 6))
-                .foregroundStyle(Color.accentColor)
-                .opacity(isHEAD ? 1 : 0.45)
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.action)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                HStack(spacing: 4) {
+                    Text(entry.selector)
+                        .font(.caption.monospaced())
+                    Text("·")
+                    Text(entry.occurredAt, style: .relative)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            .padding(.vertical, 7)
+
+            Spacer(minLength: 8)
+
+            Text(entry.commitID.prefix(8))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(entry.selector), \(entry.action), \(entry.occurredAt.formatted(date: .abbreviated, time: .shortened)), revision \(entry.commitID.prefix(8))"
+        )
+    }
+}
+
+private struct RepositoryReflogDetailView: View {
+    let entry: RepositoryReflogEntry?
+    let onRecover: (RepositoryReflogEntry) -> Void
+
+    var body: some View {
+        if let entry {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Label(entry.selector, systemImage: "clock.arrow.circlepath")
+                        .font(.title2.weight(.semibold))
+
+                    Text(entry.action)
+                        .font(.title3)
+                        .textSelection(.enabled)
+
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                        GridRow {
+                            Text("Commit")
+                                .foregroundStyle(.secondary)
+                            Text(entry.commitID)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                        }
+                        GridRow {
+                            Text("Recorded")
+                                .foregroundStyle(.secondary)
+                            Text(entry.occurredAt.formatted(date: .abbreviated, time: .standard))
+                        }
+                        GridRow {
+                            Text("By")
+                                .foregroundStyle(.secondary)
+                            Text("\(entry.actorName) <\(entry.actorEmail)>")
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    Text("This records where HEAD pointed after the action. Git may expire older Reflog entries during maintenance.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    Button("Create Recovery Branch…", systemImage: "arrow.triangle.branch") {
+                        onRecover(entry)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityHint("Creates and switches to a new local branch at this recovery point")
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        } else {
+            ContentUnavailableView(
+                "Select a Recovery Point",
+                systemImage: "clock.arrow.circlepath",
+                description: Text("Choose a Reflog entry to inspect its action and commit.")
+            )
+        }
+    }
+}
+
+private struct RepositoryRecoveryBranchSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var model: AppModel
+    let entry: RepositoryReflogEntry
+    @State private var branchName = ""
+    @FocusState private var isBranchNameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Create Recovery Branch", systemImage: "arrow.triangle.branch")
+                    .font(.title2.bold())
+                Text("Create and switch to a new local branch at (entry.selector).")
+                    .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("Commit") {
+                Text(entry.commitID)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+
+            TextField("Branch Name", text: $branchName)
+                .textFieldStyle(.roundedBorder)
+                .focused($isBranchNameFocused)
+                .onSubmit(createBranch)
+                .accessibilityLabel("Recovery Branch Name")
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Create & Switch") {
+                    createBranch()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canCreate)
+                .accessibilityHint("Creates the recovery branch without changing existing branch references")
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .onAppear { isBranchNameFocused = true }
+        .interactiveDismissDisabled(model.isLoading)
+    }
+
+    private var canCreate: Bool {
+        !branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !model.isLoading
+    }
+
+    private func createBranch() {
+        guard canCreate else { return }
+        Task {
+            if await model.createBranch(named: branchName, at: entry.commitID) {
+                dismiss()
+            }
+        }
+    }
+}
+
+private struct RepositoryStashRow: View {
+    let stash: RepositoryStash
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "archivebox")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(stash.subject)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                HStack(spacing: 4) {
+                    Text(stash.reference)
+                        .font(.caption.monospaced())
+                    Text("·")
+                    Text(stash.createdAt, style: .relative)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            .padding(.vertical, 7)
+
+            Spacer(minLength: 8)
+
+            Text(stash.id.prefix(8))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+        }
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(stash.reference), \(stash.subject), \(stash.createdAt.formatted(date: .abbreviated, time: .shortened)), revision \(stash.id.prefix(8))"
+        )
+    }
+}
+
+private struct RepositoryHistoryRow: View {
+    @Environment(\.gallaeTheme) private var theme
+    let commit: RepositoryHistory.Commit
+    let isHEAD: Bool
+    let graphRow: RepositoryHistory.GraphRow?
+    let graphLaneCount: Int
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Color.clear
+                .frame(width: theme.metrics.historyGraphWidth)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -728,7 +1439,26 @@ private struct RepositoryHistoryRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+
+                if !commit.references.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(commit.references.prefix(2)) { reference in
+                            Label(reference.name, systemImage: reference.kind.systemImage)
+                                .font(.caption2)
+                                .lineLimit(1)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: .capsule)
+                        }
+                        if commit.references.count > 2 {
+                            Text("+\(commit.references.count - 2)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
+            .padding(.vertical, 7)
 
             Spacer(minLength: 8)
 
@@ -736,64 +1466,241 @@ private struct RepositoryHistoryRow: View {
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
         }
+        .overlay(alignment: .leading) {
+            RepositoryHistoryGraphView(
+                row: graphRow,
+                laneCount: max(graphLaneCount, 1)
+            )
+            .frame(width: theme.metrics.historyGraphWidth)
+        }
+        .contentShape(.rect)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))"
+            "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))\(topologyAccessibilityLabel)\(referenceAccessibilityLabel)"
         )
+    }
+
+    private var topologyAccessibilityLabel: String {
+        switch commit.parentIDs.count {
+        case 0: ", root commit"
+        case 1: ""
+        default: ", merge commit, \(commit.parentIDs.count) parents"
+        }
+    }
+
+    private var referenceAccessibilityLabel: String {
+        guard !commit.references.isEmpty else { return "" }
+        return ", " + commit.references.map {
+            "\($0.kind.accessibilityName) \($0.name)"
+        }.joined(separator: ", ")
+    }
+}
+
+private struct RepositoryHistoryGraphView: View {
+    let row: RepositoryHistory.GraphRow?
+    let laneCount: Int
+
+    var body: some View {
+        Canvas { context, size in
+            let middleY = size.height / 2
+            let laneInset: CGFloat = 4
+            let usableWidth = max(size.width - laneInset * 2, 0)
+            let lineStyle = StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round)
+
+            func xPosition(for lane: Int) -> CGFloat {
+                guard laneCount > 1 else { return size.width / 2 }
+                return laneInset + CGFloat(lane) * usableWidth / CGFloat(laneCount - 1)
+            }
+
+            guard let row else {
+                let dot = CGRect(x: size.width / 2 - 3, y: middleY - 3, width: 6, height: 6)
+                context.fill(Path(ellipseIn: dot), with: .color(.primary.opacity(0.75)))
+                return
+            }
+
+            for edge in row.continuationEdges {
+                var path = Path()
+                path.move(to: .init(x: xPosition(for: edge.fromLane), y: 0))
+                path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
+                context.stroke(path, with: .color(.secondary.opacity(0.45)), style: lineStyle)
+            }
+
+            let commitX = xPosition(for: row.commitLane)
+            if row.hasIncomingEdge {
+                var path = Path()
+                path.move(to: .init(x: commitX, y: 0))
+                path.addLine(to: .init(x: commitX, y: middleY))
+                context.stroke(path, with: .color(.primary.opacity(0.75)), style: lineStyle)
+            }
+
+            for edge in row.parentEdges {
+                var path = Path()
+                path.move(to: .init(x: commitX, y: middleY))
+                path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
+                context.stroke(path, with: .color(.primary.opacity(0.75)), style: lineStyle)
+            }
+
+            let dot = CGRect(x: commitX - 3, y: middleY - 3, width: 6, height: 6)
+            context.fill(Path(ellipseIn: dot), with: .color(.primary))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private extension RepositoryHistory.Reference.Kind {
+    var systemImage: String {
+        switch self {
+        case .branch: "arrow.triangle.branch"
+        case .remoteBranch: "network"
+        case .tag: "tag"
+        }
+    }
+
+    var accessibilityName: String {
+        switch self {
+        case .branch: "branch"
+        case .remoteBranch: "remote branch"
+        case .tag: "tag"
+        }
     }
 }
 
 private struct RepositoryCommitDetailView: View {
     @Bindable var model: AppModel
+    @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
+    @State private var commitPendingReset: RepositoryHistory.Commit?
+    @State private var commitPendingRebasePlan: RepositoryHistory.Commit?
 
     @ViewBuilder
     var body: some View {
-        if let commit = model.selectedHistoryCommit {
-            VStack(spacing: 0) {
-                commitHeader(commit)
-                Divider()
-                patchContent
+        Group {
+            if let commit = model.selectedHistoryCommit {
+                VStack(spacing: 0) {
+                    commitHeader(commit)
+                    Divider()
+                    RepositoryRevisionChangesView(
+                        filesState: model.commitFilesState,
+                        selectedFileID: $model.selectedHistoryFileID,
+                        selectedFile: model.selectedHistoryFile,
+                        patchState: model.commitPatchState,
+                        retryFiles: { Task { await model.loadSelectedCommitFiles() } },
+                        retryPatch: { Task { await model.loadSelectedCommitPatch() } },
+                        loadExpandedPatch: {
+                            Task {
+                                await model.loadSelectedCommitPatch(
+                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                                )
+                            }
+                        }
+                    )
+                }
+            } else {
+                ContentUnavailableView(
+                    "Select a Commit",
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Choose a commit to inspect its message and changes.")
+                )
             }
-        } else {
-            ContentUnavailableView(
-                "Select a Commit",
-                systemImage: "clock.arrow.circlepath",
-                description: Text("Choose a commit to inspect its message and changes.")
-            )
+        }
+        .sheet(item: $mergeCommitPendingRevert) { commit in
+            RevertMergeCommitSheet(model: model, commit: commit)
+        }
+        .sheet(item: $commitPendingReset) { commit in
+            ResetCurrentBranchSheet(model: model, commit: commit)
+        }
+        .sheet(item: $commitPendingRebasePlan) { commit in
+            InteractiveRebasePlanSheet(model: model, commit: commit)
         }
     }
 
     private func commitHeader(_ commit: RepositoryHistory.Commit) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(commit.subject)
-                .font(.headline)
-                .textSelection(.enabled)
-
-            if !commit.body.isEmpty {
-                Text(commit.body)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(commit.subject)
+                    .font(.headline)
                     .textSelection(.enabled)
-            }
 
-            Text("\(commit.authorName) <\(commit.authorEmail)> · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                if !commit.body.isEmpty {
+                    Text(commit.body)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(4)
+                        .textSelection(.enabled)
+                }
 
-            Text("Commit \(commit.id)")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
+                Text("\(commit.authorName) <\(commit.authorEmail)> · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
-            if !commit.parentIDs.isEmpty {
-                Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
+                Text("Commit \(commit.id)")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+
+                if !commit.parentIDs.isEmpty {
+                    Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 8) {
+                let rebasePlanUnavailableReason = rebasePlanUnavailableReason
+                Button("Rebase Plan…", systemImage: "list.number") {
+                    commitPendingRebasePlan = commit
+                }
+                .disabled(model.isLoading || rebasePlanUnavailableReason != nil)
+                .help(
+                    rebasePlanUnavailableReason
+                        ?? "Preview the default pick plan from this commit through HEAD"
+                )
+                .accessibilityLabel("Preview Interactive Rebase plan from \(commit.subject)")
+                .accessibilityHint(
+                    rebasePlanUnavailableReason
+                        ?? "Shows a read-only plan without changing the Repository"
+                )
+
+                let revertUnavailableReason = historyWriteUnavailableReason
+                Button("Revert", systemImage: "arrow.uturn.backward") {
+                    if commit.parentIDs.count > 1 {
+                        mergeCommitPendingRevert = commit
+                    } else {
+                        Task { await model.revertCommit(commit) }
+                    }
+                }
+                .disabled(model.isLoading || revertUnavailableReason != nil)
+                .help(
+                    revertUnavailableReason
+                        ?? "Create a new commit that reverses this commit on the current branch"
+                )
+                .accessibilityHint(
+                    revertUnavailableReason
+                        ?? "Creates a new commit and keeps the selected commit in History"
+                )
+
+                let resetUnavailableReason = resetUnavailableReason(for: commit)
+                Button(role: .destructive) {
+                    commitPendingReset = commit
+                } label: {
+                    Label("Reset…", systemImage: "arrow.counterclockwise")
+                }
+                .disabled(model.isLoading || resetUnavailableReason != nil)
+                .help(
+                    resetUnavailableReason
+                        ?? "Move the current branch to this commit and keep working files"
+                )
+                .accessibilityLabel("Reset current branch to \(commit.subject)")
+                .accessibilityHint(
+                    resetUnavailableReason
+                        ?? "Choose whether reset changes stay staged or unstaged"
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -801,35 +1708,862 @@ private struct RepositoryCommitDetailView: View {
         .padding(.vertical, 10)
     }
 
-    @ViewBuilder
-    private var patchContent: some View {
-        switch model.commitPatchState {
-        case .noSelection:
-            ContentUnavailableView(
-                "No Commit Changes",
-                systemImage: "doc.text.magnifyingglass"
-            )
-        case .loading:
-            ProgressView("Loading Commit Changes…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn’t Load Commit Changes", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") {
-                    Task { await model.loadSelectedCommitPatch() }
+    private var rebasePlanUnavailableReason: String? {
+        guard let repository = model.repository else {
+            return "The Repository is no longer available."
+        }
+        guard case .branch = repository.head, !repository.isUnborn else {
+            return "Switch to a local branch before previewing an Interactive Rebase plan."
+        }
+        guard repository.operation == nil else {
+            return "Finish or abort the current Git operation before previewing a Rebase plan."
+        }
+        return nil
+    }
+
+    private var historyWriteUnavailableReason: String? {
+        guard let repository = model.repository else {
+            return "The Repository is no longer available."
+        }
+        guard repository.changes.isEmpty else {
+            return "Commit or Stash the current changes before reverting a commit."
+        }
+        guard case .branch = repository.head, !repository.isUnborn else {
+            return "Switch to a local branch before reverting a commit."
+        }
+        return nil
+    }
+
+    private func resetUnavailableReason(
+        for commit: RepositoryHistory.Commit
+    ) -> String? {
+        if let historyWriteUnavailableReason {
+            return historyWriteUnavailableReason
+        }
+        guard
+            case .loaded(let history) = model.historyState,
+            history.headCommitID != commit.id
+        else {
+            return "The selected commit is already the current branch’s HEAD."
+        }
+        return nil
+    }
+
+}
+
+private struct InteractiveRebasePlanSheet: View {
+    private enum Phase: Equatable {
+        case loading
+        case editing
+        case reviewing
+        case running
+        case failed(String)
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.gallaeTheme) private var theme
+    let model: AppModel
+    let commit: RepositoryHistory.Commit
+    @State private var phase = Phase.loading
+    @State private var plan: RepositoryInteractiveRebasePlan?
+    @State private var rewordMessages: [String: String] = [:]
+    @State private var executionError: String?
+    @State private var executionTask: Task<Void, Never>?
+    @State private var isConfirmingExecution = false
+    @FocusState private var focusedRewordStepID: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            header
+
+            Group {
+                switch phase {
+                case .loading:
+                    ProgressView("Building Rebase Plan…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failed(let message):
+                    ContentUnavailableView {
+                        Label("Couldn’t Build Rebase Plan", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button("Try Again") {
+                            Task { await load() }
+                        }
+                    }
+                case .editing:
+                    if let plan {
+                        editor(plan)
+                    }
+                case .reviewing:
+                    if let plan {
+                        review(plan)
+                    }
+                case .running:
+                    ProgressView("Running Interactive Rebase…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .accessibilityLabel("Try Again")
             }
-        case .loaded(let patch):
-            commitPatch(patch.content)
+
+            Divider()
+
+            HStack {
+                Text(footerMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if phase == .reviewing {
+                    Button("Back") {
+                        executionError = nil
+                        phase = .editing
+                    }
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    Button("Run Rebase…", role: .destructive) {
+                        isConfirmingExecution = true
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(executionValidationMessage != nil)
+                    .accessibilityHint(
+                        executionValidationMessage
+                            ?? "Confirm before rewriting the current local branch"
+                    )
+                } else if phase == .running {
+                    Button("Cancel Rebase", role: .cancel) {
+                        executionTask?.cancel()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityHint("Abort Interactive Rebase and restore the original branch")
+                } else {
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+                if phase == .editing {
+                    Button("Review Plan") {
+                        reviewPlan()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(plan?.validationError != nil)
+                    .accessibilityHint(
+                        validationMessage ?? "Enter Reword messages and review the edited plan"
+                    )
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 620, height: 520)
+        .task(id: commit.id) {
+            await load()
+        }
+        .confirmationDialog(
+            "Run Interactive Rebase?",
+            isPresented: $isConfirmingExecution
+        ) {
+            Button("Run Rebase", role: .destructive) {
+                executePlan()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This rewrites commit IDs on the current local branch. Other refs and remotes are not moved, and Gallae will not force-push.")
+        }
+        .interactiveDismissDisabled(phase == .running)
+        .onDisappear {
+            executionTask?.cancel()
         }
     }
 
     @ViewBuilder
-    private func commitPatch(_ content: RepositoryDiff.Section.Content) -> some View {
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(headerTitle, systemImage: "list.number")
+                .font(.title2.bold())
+            Text("Commits from \(commit.id.prefix(8)) through the current HEAD run from top to bottom.")
+                .foregroundStyle(.secondary)
+            Text(headerDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func editor(_ plan: RepositoryInteractiveRebasePlan) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            List {
+                ForEach(Array(plan.steps.enumerated()), id: \.element.id) { index, step in
+                    HStack(spacing: 8) {
+                        Text(index + 1, format: .number)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, alignment: .trailing)
+
+                        Picker("Action for \(step.subject)", selection: actionBinding(for: step)) {
+                            ForEach(RepositoryInteractiveRebasePlan.Action.allCases, id: \.self) { action in
+                                Text(action.title).tag(action)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 92)
+                        .help(step.action.detail)
+                        .accessibilityHint(step.action.detail)
+
+                        Text(step.subject)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(step.id.prefix(8))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+
+                        Button("Move Up", systemImage: "chevron.up") {
+                            move(stepID: step.id, offset: -1)
+                        }
+                        .labelStyle(.iconOnly)
+                        .disabled(index == 0)
+                        .help("Move \(step.subject) up")
+                        .accessibilityLabel("Move \(step.subject) up")
+
+                        Button("Move Down", systemImage: "chevron.down") {
+                            move(stepID: step.id, offset: 1)
+                        }
+                        .labelStyle(.iconOnly)
+                        .disabled(index == plan.steps.count - 1)
+                        .help("Move \(step.subject) down")
+                        .accessibilityLabel("Move \(step.subject) down")
+                    }
+                }
+                .onMove(perform: move)
+            }
+            .listStyle(.inset)
+
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(theme.colors.statusConflict)
+                    .accessibilityLabel("Invalid Rebase plan: \(validationMessage)")
+            }
+        }
+    }
+
+    private func review(_ plan: RepositoryInteractiveRebasePlan) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            List(Array(plan.steps.enumerated()), id: \.element.id) { index, step in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        Text(index + 1, format: .number)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, alignment: .trailing)
+                        Text(step.action.rawValue)
+                            .font(.caption.monospaced().weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(theme.colors.badgeBackground, in: Capsule())
+                        Text(step.subject)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(step.id.prefix(8))
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        "\(step.action.title) \(step.subject), commit \(step.id.prefix(8)), position \(index + 1)"
+                    )
+
+                    if step.action == .reword {
+                        TextField(
+                            "New commit message",
+                            text: rewordMessageBinding(for: step),
+                            axis: .vertical
+                        )
+                        .lineLimit(2...4)
+                        .focused($focusedRewordStepID, equals: step.id)
+                        .accessibilityLabel("New commit message for \(step.subject)")
+                    }
+                }
+            }
+            .listStyle(.inset)
+
+            if let message = executionError ?? executionValidationMessage {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(theme.colors.statusConflict)
+                    .accessibilityLabel("Interactive Rebase unavailable: \(message)")
+            }
+        }
+    }
+
+    private var headerTitle: String {
+        switch phase {
+        case .editing:
+            "Edit Interactive Rebase Plan"
+        case .reviewing:
+            "Review Interactive Rebase Plan"
+        case .running:
+            "Running Interactive Rebase"
+        case .loading, .failed:
+            "Interactive Rebase Plan"
+        }
+    }
+
+    private var headerDetail: String {
+        switch phase {
+        case .editing:
+            "Choose an action and drag rows or use the arrow buttons to reorder them. Merge commits are omitted."
+        case .reviewing:
+            "Enter each Reword message, then verify the final order and actions."
+        case .running:
+            "Git is applying the reviewed plan to the current local branch."
+        case .loading, .failed:
+            "Merge commits are omitted from the default linear plan."
+        }
+    }
+
+    private var footerMessage: String {
+        switch phase {
+        case .reviewing:
+            "Run only after checking the order, messages, and rewritten History."
+        case .running:
+            "Cancel aborts the Rebase and restores the original branch."
+        case .loading, .editing, .failed:
+            "HEAD, the index, and working files stay unchanged."
+        }
+    }
+
+    private var executionValidationMessage: String? {
+        guard model.repository?.changes.isEmpty == true else {
+            return "Commit or Stash the current changes before running Interactive Rebase."
+        }
+        guard let plan else { return "The Rebase plan is no longer available." }
+        for step in plan.steps where step.action == .reword {
+            if rewordMessages[step.id]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                return "Enter a commit message for every Reword step."
+            }
+        }
+        return nil
+    }
+
+    private var validationMessage: String? {
+        guard let plan else { return nil }
+        switch plan.validationError {
+        case .none:
+            return nil
+        case .noCommits:
+            return "Keep at least one commit instead of dropping every row."
+        case .actionNeedsPreviousCommit(let stepID):
+            let action = plan.steps.first { $0.id == stepID }?.action.title ?? "This action"
+            return "\(action) needs an earlier commit that is not dropped."
+        }
+    }
+
+    private func actionBinding(
+        for step: RepositoryInteractiveRebasePlan.Step
+    ) -> Binding<RepositoryInteractiveRebasePlan.Action> {
+        Binding(
+            get: {
+                plan?.steps.first { $0.id == step.id }?.action ?? step.action
+            },
+            set: { action in
+                guard var plan, let index = plan.steps.firstIndex(where: { $0.id == step.id }) else {
+                    return
+                }
+                plan.steps[index].action = action
+                self.plan = plan
+            }
+        )
+    }
+
+    private func rewordMessageBinding(
+        for step: RepositoryInteractiveRebasePlan.Step
+    ) -> Binding<String> {
+        Binding(
+            get: { rewordMessages[step.id] ?? step.subject },
+            set: { rewordMessages[step.id] = $0 }
+        )
+    }
+
+    private func reviewPlan() {
+        guard let plan else { return }
+        for step in plan.steps where step.action == .reword && rewordMessages[step.id] == nil {
+            rewordMessages[step.id] = step.subject
+        }
+        executionError = nil
+        phase = .reviewing
+        focusedRewordStepID = plan.steps.first { $0.action == .reword }?.id
+    }
+
+    private func executePlan() {
+        guard let plan, executionValidationMessage == nil else { return }
+        executionError = nil
+        phase = .running
+        executionTask = Task {
+            do {
+                try await model.executeInteractiveRebase(
+                    plan,
+                    rewordMessages: rewordMessages,
+                    startingAt: commit
+                )
+                executionTask = nil
+                dismiss()
+            } catch is CancellationError {
+                executionTask = nil
+                phase = .reviewing
+            } catch {
+                executionTask = nil
+                executionError = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+                phase = .reviewing
+            }
+        }
+    }
+
+    private func move(fromOffsets offsets: IndexSet, toOffset destination: Int) {
+        guard var plan else { return }
+        plan.steps.move(fromOffsets: offsets, toOffset: destination)
+        self.plan = plan
+    }
+
+    private func move(stepID: String, offset: Int) {
+        guard
+            var plan,
+            let index = plan.steps.firstIndex(where: { $0.id == stepID }),
+            plan.steps.indices.contains(index + offset)
+        else {
+            return
+        }
+        plan.steps.swapAt(index, index + offset)
+        self.plan = plan
+    }
+
+    @MainActor
+    private func load() async {
+        phase = .loading
+        plan = nil
+        rewordMessages = [:]
+        executionError = nil
+        do {
+            let plan = try await model.interactiveRebasePlan(startingAt: commit)
+            self.plan = plan
+            phase = .editing
+        } catch is CancellationError {
+            return
+        } catch {
+            phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
+        }
+    }
+}
+
+private extension RepositoryInteractiveRebasePlan.Action {
+    var title: String { rawValue.capitalized }
+
+    var detail: String {
+        switch self {
+        case .pick:
+            "Use this commit as it is."
+        case .reword:
+            "Use this commit and edit its message during Rebase."
+        case .squash:
+            "Combine this commit with the previous one and keep both messages."
+        case .fixup:
+            "Combine this commit with the previous one and discard this message."
+        case .drop:
+            "Remove this commit from the rewritten History."
+        }
+    }
+}
+
+private struct ResetCurrentBranchSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let model: AppModel
+    let commit: RepositoryHistory.Commit
+    @State private var mode = RepositoryResetMode.mixed
+    @State private var isConfirmingHardReset = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Reset Current Branch", systemImage: "arrow.counterclockwise")
+                    .font(.title2.bold())
+                Text("Move \(branchName) to \(commit.subject) (\(commit.id.prefix(8))).")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Text("Later commits leave this local branch’s History. Remote branches are not changed.")
+
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Reset Mode", selection: $mode) {
+                    Text("Keep files as unstaged changes (Mixed)")
+                        .tag(RepositoryResetMode.mixed)
+                    Text("Keep changes staged (Soft)")
+                        .tag(RepositoryResetMode.soft)
+                    Text("Discard later files and changes (Hard)")
+                        .tag(RepositoryResetMode.hard)
+                }
+                .pickerStyle(.radioGroup)
+                .accessibilityHint("Choose whether changes stay staged, unstaged, or are discarded")
+
+                Text(modeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Reset Branch", role: .destructive) {
+                    if mode == .hard {
+                        isConfirmingHardReset = true
+                    } else {
+                        resetBranch()
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isLoading)
+                .accessibilityHint(modeDescription)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+        .confirmationDialog(
+            "Discard Files and Hard Reset?",
+            isPresented: $isConfirmingHardReset
+        ) {
+            Button("Hard Reset to \(commit.id.prefix(8))", role: .destructive) {
+                resetBranch()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "The branch, index, and working tree will match the selected commit. "
+                    + "Later files and changes will be removed or replaced, and blocking untracked "
+                    + "files or folders may be deleted. Gallae cannot undo this action."
+            )
+        }
+    }
+
+    private var branchName: String {
+        if case .branch(let name) = model.repository?.head {
+            name
+        } else {
+            "current branch"
+        }
+    }
+
+    private var modeDescription: String {
+        switch mode {
+        case .mixed:
+            "The index moves to the target commit while files stay on disk. Reverted changes become unstaged or untracked."
+        case .soft:
+            "The index and files stay unchanged. Reverted changes remain staged and ready to recommit."
+        case .hard:
+            "The index and working tree are replaced with the target commit. Later files and changes are discarded."
+        }
+    }
+
+    private func resetBranch() {
+        dismiss()
+        Task { await model.resetCurrentBranch(to: commit, mode: mode) }
+    }
+}
+
+private struct RevertMergeCommitSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let model: AppModel
+    let commit: RepositoryHistory.Commit
+    @State private var selectedMainlineParent: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Revert Merge Commit", systemImage: "arrow.uturn.backward")
+                    .font(.title2.bold())
+                Text(commit.subject)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Choose the parent to keep as the mainline. Git will reverse the merge’s changes relative to this parent.")
+
+                Picker("Mainline Parent", selection: $selectedMainlineParent) {
+                    ForEach(Array(commit.parentIDs.enumerated()), id: \.offset) { index, parentID in
+                        Text(parentLabel(number: index + 1, id: parentID))
+                            .tag(Optional(index + 1))
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                .accessibilityHint("Choose which parent side remains after reverting the merge")
+
+                Text("The merge commit stays in History. Git records a new commit and treats the merged tree changes as unwanted.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Revert Merge") {
+                    guard let selectedMainlineParent else { return }
+                    dismiss()
+                    Task {
+                        await model.revertCommit(
+                            commit,
+                            mainlineParent: selectedMainlineParent
+                        )
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.isLoading || selectedMainlineParent == nil)
+                .accessibilityHint("Create a new commit that reverses this merge relative to the selected parent")
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+    }
+
+    private func parentLabel(number: Int, id: String) -> String {
+        guard
+            case .loaded(let history) = model.historyState,
+            let parent = history.commits.first(where: { $0.id == id })
+        else {
+            return "Parent \(number) · \(id.prefix(8))"
+        }
+        return "Parent \(number) · \(parent.subject) · \(id.prefix(8))"
+    }
+}
+
+private struct RepositoryStashDetailView: View {
+    @Bindable var model: AppModel
+    @State private var applyingStashID: String?
+    @State private var stashPendingDeletion: RepositoryStash?
+
+    @ViewBuilder
+    var body: some View {
+        if let stash = model.selectedStash {
+            VStack(spacing: 0) {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(stash.subject)
+                            .font(.headline)
+                            .textSelection(.enabled)
+                        Text("\(stash.reference) · \(stash.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Stash \(stash.id)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+
+                    Spacer()
+
+                    if applyingStashID == stash.id {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Applying Stash")
+                    }
+                    Button(role: .destructive) {
+                        stashPendingDeletion = stash
+                    } label: {
+                        Label("Delete…", systemImage: "trash")
+                    }
+                    .disabled(model.isLoading || applyingStashID != nil)
+                    .help("Permanently delete this Stash")
+                    .accessibilityHint("Show a confirmation before permanently deleting this Stash")
+
+                    Button("Apply", systemImage: "arrow.down.doc") {
+                        applyingStashID = stash.id
+                        Task {
+                            defer { applyingStashID = nil }
+                            await model.applyStash(stash)
+                        }
+                    }
+                    .disabled(model.isLoading || applyingStashID != nil)
+                    .accessibilityHint("Restore this Stash’s saved changes without deleting it")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+
+                Divider()
+
+                RepositoryRevisionChangesView(
+                    filesState: model.stashFilesState,
+                    selectedFileID: $model.selectedStashFileID,
+                    selectedFile: model.selectedStashFile,
+                    patchState: model.stashPatchState,
+                    retryFiles: { Task { await model.loadSelectedStashFiles() } },
+                    retryPatch: { Task { await model.loadSelectedStashPatch() } },
+                    loadExpandedPatch: {
+                        Task {
+                            await model.loadSelectedStashPatch(
+                                maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                            )
+                        }
+                    }
+                )
+            }
+            .confirmationDialog(
+                "Delete Stash?",
+                isPresented: Binding(
+                    get: { stashPendingDeletion != nil },
+                    set: { if !$0 { stashPendingDeletion = nil } }
+                ),
+                presenting: stashPendingDeletion
+            ) { stash in
+                Button("Delete Stash", role: .destructive) {
+                    Task { await model.dropStash(stash) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { stash in
+                Text(
+                    "This permanently deletes “\(stash.subject)” without applying it. It doesn’t change HEAD, the index, or working files. Gallae cannot undo this action."
+                )
+            }
+        } else {
+            ContentUnavailableView(
+                "Select a Stash",
+                systemImage: "archivebox",
+                description: Text("Choose a Stash to inspect its saved changes.")
+            )
+        }
+    }
+}
+
+private struct RepositoryRevisionChangesView: View {
+    let filesState: RepositoryCommitFilesLoadState
+    @Binding var selectedFileID: String?
+    let selectedFile: RepositoryCommitFile?
+    let patchState: RepositoryCommitPatchLoadState
+    let retryFiles: () -> Void
+    let retryPatch: () -> Void
+    let loadExpandedPatch: () -> Void
+
+    @ViewBuilder
+    var body: some View {
+        switch filesState {
+        case .noSelection:
+            ContentUnavailableView(
+                "No Saved Changes",
+                systemImage: "doc.text.magnifyingglass"
+            )
+        case .loading:
+            ProgressView("Loading Changed Files…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Changed Files", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again", action: retryFiles)
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let files) where files.isEmpty:
+            ContentUnavailableView(
+                "No Saved Changes",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("This revision does not change any files from its base.")
+            )
+        case .loaded(let files):
+            revisionFiles(files)
+        }
+    }
+
+    private func revisionFiles(_ files: [RepositoryCommitFile]) -> some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Changed Files")
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    Text(files.count, format: .number)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                List(files, selection: $selectedFileID) { file in
+                    RepositoryCommitFileRow(file: file)
+                        .tag(file.id)
+                        .listRowInsets(.init(top: 7, leading: 10, bottom: 7, trailing: 10))
+                }
+                .listStyle(.plain)
+                .accessibilityLabel("Changed Files, \(files.count) files")
+            }
+            .frame(minWidth: 180, idealWidth: 220, maxWidth: 280)
+
+            VStack(spacing: 0) {
+                if let file = selectedFile {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(file.fileName)
+                            .font(.callout.weight(.semibold))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(file.path)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+
+                    Divider()
+                }
+
+                revisionPatchContent
+            }
+            .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private var revisionPatchContent: some View {
+        switch patchState {
+        case .noSelection:
+            ContentUnavailableView(
+                "Select a Changed File",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("Choose a file to inspect its patch.")
+            )
+        case .loading:
+            ProgressView("Loading Changes…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed(let message):
+            ContentUnavailableView {
+                Label("Couldn’t Load Changes", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(message)
+            } actions: {
+                Button("Try Again", action: retryPatch)
+                .accessibilityLabel("Try Again")
+            }
+        case .loaded(let patch):
+            revisionPatch(patch.content)
+        }
+    }
+
+    @ViewBuilder
+    private func revisionPatch(_ content: RepositoryDiff.Section.Content) -> some View {
         switch content {
         case .text(let lines):
             GeometryReader { proxy in
@@ -844,7 +2578,7 @@ private struct RepositoryCommitDetailView: View {
                 }
                 .defaultScrollAnchor(.topLeading, for: .alignment)
             }
-            .accessibilityLabel("Selected commit changes")
+            .accessibilityLabel("Selected saved changes")
         case .binary:
             RepositoryDiffNotice(
                 title: "Binary Changes",
@@ -859,30 +2593,96 @@ private struct RepositoryCommitDetailView: View {
             )
         case .tooLarge(let byteLimit):
             RepositoryDiffNotice(
-                title: "Commit Changes Too Large",
+                title: "Changes Too Large",
                 message: "The patch exceeds the \(ByteCountFormatter.string(fromByteCount: Int64(byteLimit), countStyle: .file)) preview limit.",
                 fileURL: nil,
                 primaryAction: byteLimit < RepositoryInspector.maximumExpandedDiffBytes
                     ? (
                         "Load Larger Preview",
-                        {
-                            Task {
-                                await model.loadSelectedCommitPatch(
-                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
-                                )
-                            }
-                        }
+                        loadExpandedPatch
                     )
                     : nil
             )
+        case .missing:
+            RepositoryDiffNotice(
+                title: "Version Missing",
+                message: "This saved version is not present in the Git index.",
+                fileURL: nil
+            )
         case .unavailable(let message):
             RepositoryDiffNotice(
-                title: "No Commit Changes",
+                title: "No Saved Changes",
                 message: message,
                 fileURL: nil
             )
         }
     }
+}
+
+private struct RepositoryCommitFileRow: View {
+    let file: RepositoryCommitFile
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "doc.text")
+                .foregroundStyle(statusColor)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(file.fileName)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if !file.parentPath.isEmpty {
+                    Text(file.parentPath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                if let originalPath = file.originalPath {
+                    Text("From \(originalPath)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: 4)
+
+            Text(file.state.label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(statusColor)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(theme.colors.badgeBackground, in: .capsule)
+        }
+        .contentShape(.rect)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            ([file.path, file.state.label] + [file.originalPath.map { "From \($0)" }].compactMap(\.self))
+                .joined(separator: ", ")
+        )
+    }
+
+    private var statusColor: Color {
+        switch file.state {
+        case .modified: theme.colors.statusModified
+        case .typeChanged, .renamed: theme.colors.statusRenamed
+        case .added, .copied: theme.colors.statusAdded
+        case .deleted: theme.colors.statusDeleted
+        case .untracked: theme.colors.statusUntracked
+        }
+    }
+}
+
+private enum ConflictResolutionConfirmation {
+    case side(RepositoryConflictSide)
+    case workingTree
 }
 
 private struct RepositoryDiffView: View {
@@ -891,16 +2691,20 @@ private struct RepositoryDiffView: View {
     let canStage: Bool
     let canUnstage: Bool
     let canDiscard: Bool
+    let canResolveConflict: Bool
     let canStageHunks: Bool
     let canUnstageHunks: Bool
     let isBusy: Bool
     let stage: () -> Void
     let unstage: () -> Void
     let discard: (RepositorySummary.Change.ID) -> Void
+    let resolveConflict: (RepositoryConflictSide) -> Void
+    let markConflictResolved: () -> Void
     let updateHunk: (RepositoryDiff.Hunk) -> Void
     let retry: () -> Void
     let loadExpanded: () -> Void
     @State private var isConfirmingDiscard = false
+    @State private var pendingConflictResolution: ConflictResolutionConfirmation?
 
     var body: some View {
         switch state {
@@ -951,6 +2755,29 @@ private struct RepositoryDiffView: View {
 
                 Spacer()
 
+                if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                    Button("Mark Resolved…") {
+                        pendingConflictResolution = .workingTree
+                    }
+                    .disabled(isBusy)
+                    .help("Stage this file’s current working tree state as resolved")
+                    .accessibilityHint("Shows a confirmation before staging the file as resolved")
+
+                    Button("Use Ours…") {
+                        pendingConflictResolution = .side(.ours)
+                    }
+                    .disabled(isBusy)
+                    .help("Resolve this file using the Ours version")
+                    .accessibilityHint("Shows a confirmation before replacing and staging this file")
+
+                    Button("Use Theirs…") {
+                        pendingConflictResolution = .side(.theirs)
+                    }
+                    .disabled(isBusy)
+                    .help("Resolve this file using the Theirs version")
+                    .accessibilityHint("Shows a confirmation before replacing and staging this file")
+                }
+
                 if canDiscard {
                     Button("Discard…", role: .destructive) {
                         isConfirmingDiscard = true
@@ -982,25 +2809,32 @@ private struct RepositoryDiffView: View {
 
             Divider()
 
-            GeometryReader { proxy in
-                ScrollView([.horizontal, .vertical]) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(diff.sections) { section in
-                            RepositoryDiffSectionView(
-                                section: section,
-                                fileURL: fileURL,
-                                canStageHunks: canStageHunks,
-                                canUnstageHunks: canUnstageHunks,
-                                isBusy: isBusy,
-                                updateHunk: updateHunk,
-                                loadExpanded: loadExpanded
-                            )
+            if diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                RepositoryConflictComparisonView(
+                    sections: diff.sections,
+                    loadExpanded: loadExpanded
+                )
+            } else {
+                GeometryReader { proxy in
+                    ScrollView([.horizontal, .vertical]) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(diff.sections) { section in
+                                RepositoryDiffSectionView(
+                                    section: section,
+                                    fileURL: fileURL,
+                                    canStageHunks: canStageHunks,
+                                    canUnstageHunks: canUnstageHunks,
+                                    isBusy: isBusy,
+                                    updateHunk: updateHunk,
+                                    loadExpanded: loadExpanded
+                                )
+                            }
                         }
+                        .frame(minWidth: proxy.size.width, alignment: .leading)
+                        .textSelection(.enabled)
                     }
-                    .frame(minWidth: proxy.size.width, alignment: .leading)
-                    .textSelection(.enabled)
+                    .defaultScrollAnchor(.topLeading, for: .alignment)
                 }
-                .defaultScrollAnchor(.topLeading, for: .alignment)
             }
         }
         .alert("Discard Unstaged Changes?", isPresented: $isConfirmingDiscard) {
@@ -1013,6 +2847,188 @@ private struct RepositoryDiffView: View {
                 "This replaces the file on disk with its staged version, or its last committed version when nothing is staged. Gallae cannot undo this action."
             )
         }
+        .alert(
+            pendingConflictResolution.map { confirmation in
+                switch confirmation {
+                case .side(let side): "Use \(side.label) to Resolve?"
+                case .workingTree: "Mark Conflict Resolved?"
+                }
+            } ?? "Resolve Conflict?",
+            isPresented: Binding(
+                get: { pendingConflictResolution != nil },
+                set: { if !$0 { pendingConflictResolution = nil } }
+            )
+        ) {
+            if let confirmation = pendingConflictResolution {
+                switch confirmation {
+                case .side(let side):
+                    Button("Use \(side.label)", role: .destructive) {
+                        pendingConflictResolution = nil
+                        resolveConflict(side)
+                    }
+                case .workingTree:
+                    Button("Mark Resolved") {
+                        pendingConflictResolution = nil
+                        markConflictResolved()
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingConflictResolution = nil
+            }
+        } message: {
+            if let confirmation = pendingConflictResolution {
+                switch confirmation {
+                case .side(let side):
+                    Text(conflictResolutionMessage(for: side, in: diff))
+                case .workingTree:
+                    Text(
+                        "This stages the file’s current state on disk, including deletion, as resolved. Gallae does not check for conflict markers and cannot undo this action."
+                    )
+                }
+            }
+        }
+    }
+
+    private func conflictResolutionMessage(
+        for side: RepositoryConflictSide,
+        in diff: RepositoryDiff
+    ) -> String {
+        let scope: RepositoryDiff.Scope = side == .ours ? .ours : .theirs
+        if diff.sections.first(where: { $0.scope == scope })?.content == .missing {
+            return "The \(side.label) version has no file. This deletes \(diff.fileName) and stages the deletion as resolved. Gallae cannot undo this action."
+        }
+        return "This replaces \(diff.fileName) with the \(side.label) version and stages it as resolved. Gallae cannot undo this action."
+    }
+}
+
+private struct RepositoryConflictComparisonView: View {
+    let sections: [RepositoryDiff.Section]
+    let loadExpanded: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                RepositoryConflictVersionView(
+                    section: section,
+                    loadExpanded: loadExpanded
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if index < sections.count - 1 {
+                    Divider()
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Base, Ours, and Theirs conflict comparison")
+    }
+}
+
+private struct RepositoryConflictVersionView: View {
+    let section: RepositoryDiff.Section
+    let loadExpanded: () -> Void
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(section.scope.label, systemImage: section.scope.systemImage)
+                    .font(.caption.weight(.semibold))
+                Text(section.scope.stageLabel)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.badgeBackground)
+
+            Divider()
+            content
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch section.content {
+        case .text(let lines) where lines.isEmpty:
+            ContentUnavailableView(
+                "Empty File",
+                systemImage: "doc",
+                description: Text("This version contains no text.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .text(let lines):
+            GeometryReader { proxy in
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines) { line in
+                            RepositoryConflictLineView(line: line)
+                        }
+                    }
+                    .frame(minWidth: proxy.size.width, alignment: .leading)
+                    .textSelection(.enabled)
+                }
+                .defaultScrollAnchor(.topLeading, for: .alignment)
+            }
+        case .binary:
+            RepositoryDiffNotice(
+                title: "Binary File",
+                message: "Gallae does not render this version as text.",
+                fileURL: nil
+            )
+        case .unsupportedEncoding:
+            RepositoryDiffNotice(
+                title: "Unsupported Text Encoding",
+                message: "This version is not valid UTF-8 and cannot be displayed safely.",
+                fileURL: nil
+            )
+        case .tooLarge(let byteLimit):
+            RepositoryDiffNotice(
+                title: "Version Too Large",
+                message: "This version exceeds the \(ByteCountFormatter.string(fromByteCount: Int64(byteLimit), countStyle: .file)) preview limit.",
+                fileURL: nil,
+                primaryAction: byteLimit < RepositoryInspector.maximumExpandedDiffBytes
+                    ? ("Load Larger Preview", loadExpanded)
+                    : nil
+            )
+        case .missing:
+            RepositoryDiffNotice(
+                title: "No \(section.scope.label) Version",
+                message: section.scope.missingMessage,
+                fileURL: nil
+            )
+        case .unavailable(let message):
+            RepositoryDiffNotice(
+                title: "Version Unavailable",
+                message: message,
+                fileURL: nil
+            )
+        }
+    }
+}
+
+private struct RepositoryConflictLineView: View {
+    let line: RepositoryDiff.Line
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            Text(line.newLineNumber.map(String.init) ?? "")
+                .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                .padding(.trailing, 8)
+                .foregroundStyle(theme.colors.diffMetadataText)
+            Text(line.text.isEmpty ? " " : line.text)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.callout.monospaced())
+        .foregroundStyle(theme.colors.diffText)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            line.newLineNumber.map { "Line \($0): \(line.text)" } ?? line.text
+        )
     }
 }
 
@@ -1079,6 +3095,12 @@ private struct RepositoryDiffSectionView: View {
                     primaryAction: byteLimit < RepositoryInspector.maximumExpandedDiffBytes
                         ? ("Load Larger Preview", loadExpanded)
                         : nil
+                )
+            case .missing:
+                RepositoryDiffNotice(
+                    title: "Version Missing",
+                    message: "This version is not present in the Git index.",
+                    fileURL: nil
                 )
             case .unavailable(let message):
                 RepositoryDiffNotice(title: "Diff Unavailable", message: message, fileURL: fileURL)
@@ -1185,6 +3207,33 @@ extension RepositorySummary.Upstream {
     }
 }
 
+private extension RepositorySummary.Operation.Kind {
+    var name: String {
+        switch self {
+        case .merge: "Merge"
+        case .rebase: "Rebase"
+        }
+    }
+
+    var label: String {
+        "\(name) in Progress"
+    }
+}
+
+private extension RepositorySummary.Operation {
+    var conflictLabel: String {
+        unresolvedConflictCount == 0
+            ? "No unresolved conflicts"
+            : "\(unresolvedConflictCount) unresolved conflict\(unresolvedConflictCount == 1 ? "" : "s")"
+    }
+
+    var actionLabel: String {
+        canContinue
+            ? "Ready to Continue"
+            : "Resolve conflicts to Continue"
+    }
+}
+
 private extension RepositorySummary.Change {
     var fileName: String {
         path.split(separator: "/").last.map(String.init) ?? path
@@ -1240,7 +3289,9 @@ private extension RepositoryDiff.Scope {
         case .staged: "Staged"
         case .unstaged: "Working Tree"
         case .untracked: "Untracked"
-        case .conflict: "Conflict"
+        case .base: "Base"
+        case .ours: "Ours"
+        case .theirs: "Theirs"
         }
     }
 
@@ -1249,7 +3300,43 @@ private extension RepositoryDiff.Scope {
         case .staged: "tray.and.arrow.down"
         case .unstaged: "pencil.line"
         case .untracked: "questionmark.diamond"
-        case .conflict: "exclamationmark.triangle"
+        case .base: "1.circle"
+        case .ours: "2.circle"
+        case .theirs: "3.circle"
+        }
+    }
+
+    var isConflictVersion: Bool {
+        switch self {
+        case .base, .ours, .theirs: true
+        case .staged, .unstaged, .untracked: false
+        }
+    }
+
+    var stageLabel: String {
+        switch self {
+        case .base: "Git index stage 1"
+        case .ours: "Git index stage 2"
+        case .theirs: "Git index stage 3"
+        case .staged, .unstaged, .untracked: ""
+        }
+    }
+
+    var missingMessage: String {
+        switch self {
+        case .base: "The file has no common ancestor version."
+        case .ours: "The file does not exist in Ours."
+        case .theirs: "The file does not exist in Theirs."
+        case .staged, .unstaged, .untracked: "This version is not present."
+        }
+    }
+}
+
+private extension RepositoryConflictSide {
+    var label: String {
+        switch self {
+        case .ours: "Ours"
+        case .theirs: "Theirs"
         }
     }
 }

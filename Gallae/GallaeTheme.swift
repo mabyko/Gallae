@@ -28,6 +28,7 @@ struct GallaeTheme: Sendable {
         let repositorySummaryMaximumWidth: CGFloat
         let changeListMinimumWidth: CGFloat
         let changeListIdealWidth: CGFloat
+        let historyGraphWidth: CGFloat
         let diffLineNumberWidth: CGFloat
     }
 
@@ -61,6 +62,7 @@ struct GallaeTheme: Sendable {
             repositorySummaryMaximumWidth: 340,
             changeListMinimumWidth: 320,
             changeListIdealWidth: 320,
+            historyGraphWidth: 44,
             diffLineNumberWidth: 44
         )
     )
