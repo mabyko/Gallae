@@ -668,6 +668,13 @@ GallaeApp
 - History 행 메뉴는 그 commit이 현재 HEAD의 descendant이고 local branch가 닿아 있으면 현재 branch를 당긴다. 두 방향 모두 위치 프레임의 `Fast-Forward <이동하는 branch> to <도착>` 한 꼴로 표기하고, 실행은 기존 Integrate fast-forward(`merge --ff-only`) 경로를 재사용하며 VoiceOver 액션으로도 제공한다.
 - Commit Signing 설정 캡션은 이 화면이 앱 고유 상태 없는 global Git 설정의 뷰이며 탭을 열 때마다 다시 읽는다는 점을 명시한다.
 
+### 6H-1 · remote branch 삭제와 Worktree 연쇄 정리 — 완료
+
+- History의 remote-tracking 배지 우클릭에 `Delete on Remote…`와 `Remove Tracking Reference…`를 제공한다. 원격 삭제는 force 없는 삭제 push 하나만 보내고 기존 remote 작업의 진행·Cancel·Escape를 쓰며, 확인 문구가 다른 사용자 영향·local 유지·보호 branch 거부 가능성을 설명한다. tracking ref 정리는 local ref만 제거하고 Fetch로 되살릴 수 있음을 알린다.
+- remote 이름은 configured remote 목록과 가장 긴 접두사 일치로 해석해 `/`가 든 branch 이름도 정확히 나눈다.
+- `Remove Worktree…` 확인은 정리 범위를 함께 고른다. Worktree만, branch 안전 삭제까지, Tracking remote branch가 있으면 원격 삭제까지. 각 단계는 기존 규칙과 안전장치를 재사용하고, 뒤 단계가 실패해도 완료된 앞 단계는 되돌리지 않으며 다시 읽은 화면이 실제 상태를 보여 준다.
+- 실제 bare remote 통합 테스트로 원격 branch 삭제와 tracking ref 동반 제거, tracking ref 단독 제거의 원격 불변, upstream 조회를 검증한다.
+
 ## 각 단계의 검증
 
 모든 단계는 실행 가능한 앱과 `xcodebuild test` 성공으로 끝낸다. Git parser와 탐색처럼 분기나 반복이 있는 로직은 임시 디렉터리와 임시 Repository를 사용한 작은 통합 테스트를 남긴다. 경쟁 앱의 코드, 에셋, 문구, 정확한 수치와 동작을 fixture나 기준값으로 사용하지 않는다.

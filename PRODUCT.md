@@ -471,7 +471,7 @@ fast-forward와 겹치지 않는 그 Worktree의 local 수정은 보존하고, �
 
 History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 Integrate의 보내기 방향과 같은 경로로 그 branch를 현재 HEAD로 옮기는 동작을, 반대로 그 commit이 현재 HEAD의 descendant이면 현재 branch를 당기는 동작을 제공한다. 두 방향은 조건상 함께 나타나지 않는다. Fast-forward 표기는 앱 전체가 git 문서의 위치 프레임 하나를 쓴다. 항상 `Fast-Forward <이동하는 branch> to <도착 branch>`로, 첫 단어가 움직이는 ref이고 `to` 뒤가 도착 위치다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 기존 Integrate fast-forward의 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
 
-remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
+tag 배지에는 쓰기 동작을 제공하지 않고, remote-tracking 배지의 정리 동작은 열여덟 번째 수직 슬라이스에서 다룬다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
 
 ## Advanced 열두 번째 수직 슬라이스
 
@@ -497,7 +497,7 @@ ref 이동은 Git의 Worktree 체크아웃 보호를 우회하므로, 이 경로
 
 History의 commit 행 메뉴는 현재 branch가 아닌 local branch에 정리 동작을 잇는다. 다른 Worktree에 체크아웃된 branch에는 `Remove Worktree…`를 제공해, 삭제되는 폴더 경로와 branch·commit이 유지된다는 점을 확인한 뒤 Worktree 등록과 폴더를 제거한다. local 변경이나 진행 중인 작업이 남아 있으면 git이 거부하며 강제로 지우지 않고, 주 working tree는 제거 대상이 아니다.
 
-어느 Worktree에도 체크아웃되지 않은 branch에는 `Remove Branch…`를 제공한다. 확인 문구는 branch ref가 삭제되고 다른 ref에서 도달 가능한 commit은 유지된다는 점을 설명한다. 실행은 안전한 삭제만 사용해 현재 branch에 합쳐지지 않은 branch는 git이 거부하고 원인을 표시한다. 강제 삭제, 현재 branch 삭제와 remote branch 삭제는 제공하지 않는다. 성공하면 Repository와 History·ref 표시를 다시 읽는다.
+어느 Worktree에도 체크아웃되지 않은 branch에는 `Remove Branch…`를 제공한다. 확인 문구는 branch ref가 삭제되고 다른 ref에서 도달 가능한 commit은 유지된다는 점을 설명한다. 실행은 안전한 삭제만 사용해 현재 branch에 합쳐지지 않은 branch는 git이 거부하고 원인을 표시한다. 강제 삭제와 현재 branch 삭제는 제공하지 않으며, remote branch 삭제는 열여덟 번째 수직 슬라이스에서 다룬다. 성공하면 Repository와 History·ref 표시를 다시 읽는다.
 
 같은 정리 동작은 branch 선택기의 행 우클릭 메뉴에서도 같은 확인과 규칙으로 제공하며, 실행 뒤 branch 목록을 다시 읽는다.
 
@@ -512,6 +512,18 @@ Repository별 서명 설정은 Git 규칙대로 계속 우선하며, Gallae는 �
 History에서 commit을 선택하면 그 commit의 서명 상태를 검증해 상세에 표시한다. 유효한 서명은 서명자 또는 키 ID와 함께, 신뢰를 확인하지 못한 서명·무효한 서명·검증할 수 없는 서명은 각각 구분해 보여 주고, 서명 없는 commit에는 배지를 두지 않는다.
 
 검증은 선택한 commit 하나만 수행해 목록 읽기를 느리게 하지 않으며, 조회 전용으로 Repository 상태를 바꾸지 않는다. GPG를 쓸 수 없으면 검증 불가로 표시한다.
+
+## Advanced 열여덟 번째 수직 슬라이스
+
+History의 remote-tracking 배지 우클릭에 정리 동작을 제공한다. `Delete on Remote…`는 확인 뒤 해당 remote branch를 원격 저장소에서 삭제한다. 확인 문구는 그 remote를 쓰는 다른 사용자에게도 영향이 있고, local branch·commit은 유지되며, 서버의 보호 규칙이 삭제를 거부할 수 있다는 점을 설명한다. 실행은 force 없는 삭제 push 하나만 보내고 기존 remote 작업처럼 진행 상태와 Cancel·Escape를 제공하며, 성공하면 local tracking ref도 함께 사라진다.
+
+`Remove Tracking Reference…`는 local tracking ref 하나만 제거하고 원격 저장소는 바꾸지 않는다. 확인 문구는 Fetch가 그 ref를 되살릴 수 있다는 점을 알린다. remote 이름은 configured remote 목록과 가장 길게 일치하는 접두사로 해석해 이름에 `/`가 든 branch도 정확히 다룬다. 두 동작 모두 성공하면 Repository와 History·ref 표시를 다시 읽고, tag 배지는 계속 조회 전용이다.
+
+## Advanced 열아홉 번째 수직 슬라이스
+
+`Remove Worktree…` 확인은 정리 범위를 함께 고르게 한다. `Remove Worktree`는 기존처럼 Worktree만 제거하고, `Remove Worktree and Branch`는 이어서 그 branch를 안전 삭제한다. branch에 Tracking remote branch가 있으면 원격 삭제까지 잇는 세 번째 선택을 함께 보여 준다.
+
+각 단계는 기존 규칙을 그대로 쓴다. dirty Worktree는 git이 제거를 거부하고, 합쳐지지 않은 branch는 안전 삭제가 거부하며, 원격 삭제는 열여덟 번째와 같은 확인 내용·push 경로를 따른다. 뒤 단계가 실패해도 완료된 앞 단계는 되돌리지 않고, 오류와 다시 읽은 화면이 실제 진행 상태를 보여 준다.
 
 ## 디자인 시안 2
 

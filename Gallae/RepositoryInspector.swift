@@ -849,6 +849,55 @@ struct RepositoryInspector: Sendable {
         return worktreeURL
     }
 
+    func trackingBranch(
+        of branch: String,
+        in repository: RepositorySummary
+    ) async throws -> String? {
+        try Task.checkCancellation()
+        let trackingRef = try await Task.detached(priority: .userInitiated) {
+            try Self.trackingBranchSynchronously(of: branch, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return trackingRef
+    }
+
+    func deleteRemoteBranch(
+        trackingRef: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        let cancellation = GitProcessCancellation()
+        return try await withTaskCancellationHandler {
+            do {
+                let updatedRepository = try await Task.detached(priority: .userInitiated) {
+                    try Self.deleteRemoteBranchSynchronously(
+                        trackingRef: trackingRef,
+                        in: repository,
+                        cancellation: cancellation
+                    )
+                }.value
+                try Task.checkCancellation()
+                return updatedRepository
+            } catch {
+                try Task.checkCancellation()
+                throw error
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    func removeRemoteTrackingReference(
+        _ trackingRef: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.removeRemoteTrackingReferenceSynchronously(trackingRef, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
     func deleteBranch(
         named branch: String,
         in repository: RepositorySummary
@@ -2215,6 +2264,84 @@ struct RepositoryInspector: Sendable {
             throw RepositoryBranchError.worktreeCreationFailed(result.standardError)
         }
         return worktreeURL
+    }
+
+    private static func trackingBranchSynchronously(
+        of branch: String,
+        in repository: RepositorySummary
+    ) throws -> String? {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "for-each-ref", "--format=%(upstream:short)", "refs/heads/\(branch)"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.unreadable(result.standardError)
+        }
+        let trackingRef = line(from: result.standardOutput)
+        return trackingRef.isEmpty ? nil : trackingRef
+    }
+
+    // remote 이름은 configured 목록과 가장 길게 일치하는 접두사로 해석해
+    // 이름에 `/`가 든 branch도 정확히 나눈다.
+    private static func resolveTrackingReference(
+        _ trackingRef: String,
+        in repository: RepositorySummary
+    ) throws -> (remote: String, branch: String) {
+        let remotesResult = try runGit([
+            "-C", repository.rootURL.path,
+            "remote"
+        ])
+        guard remotesResult.status == 0 else {
+            throw RepositoryBranchError.unreadable(remotesResult.standardError)
+        }
+        let remotes = text(from: remotesResult.standardOutput)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        guard
+            let remote = remotes
+                .filter({ trackingRef.hasPrefix($0 + "/") })
+                .max(by: { $0.count < $1.count })
+        else {
+            throw RepositoryBranchError.trackingReferenceUnavailable
+        }
+        let branch = String(trackingRef.dropFirst(remote.count + 1))
+        guard !branch.isEmpty else {
+            throw RepositoryBranchError.trackingReferenceUnavailable
+        }
+        return (remote, branch)
+    }
+
+    private static func deleteRemoteBranchSynchronously(
+        trackingRef: String,
+        in repository: RepositorySummary,
+        cancellation: GitProcessCancellation
+    ) throws -> RepositorySummary {
+        let (remote, branch) = try resolveTrackingReference(trackingRef, in: repository)
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "push", "--quiet", remote, "--delete", branch
+        ], cancellation: cancellation)
+        if cancellation.isCancelled {
+            throw CancellationError()
+        }
+        guard result.status == 0 else {
+            throw RepositoryPushError.failed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func removeRemoteTrackingReferenceSynchronously(
+        _ trackingRef: String,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "branch", "--delete", "--remotes", "--", trackingRef
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.trackingReferenceRemovalFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
     }
 
     private static func deleteBranchSynchronously(
@@ -4271,6 +4398,8 @@ enum RepositoryBranchError: LocalizedError, Equatable {
     case worktreeRemovalFailed(String)
     case deletionUnavailable
     case deletionFailed(String)
+    case trackingReferenceUnavailable
+    case trackingReferenceRemovalFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -4338,6 +4467,12 @@ enum RepositoryBranchError: LocalizedError, Equatable {
             message.isEmpty
                 ? "Git couldn’t delete the branch. Unmerged branches and branches checked out in a Worktree are kept."
                 : "Git couldn’t delete the branch. Unmerged branches and branches checked out in a Worktree are kept.\n\n\(message)"
+        case .trackingReferenceUnavailable:
+            "The remote for this tracking reference is no longer configured. Reload the Repository and try again."
+        case .trackingReferenceRemovalFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t remove the tracking reference."
+                : "Git couldn’t remove the tracking reference.\n\n\(message)"
         case .rebaseUnavailable:
             "Choose another local branch to rebase a current branch that has a commit."
         case .rebaseRequiresCleanRepository:

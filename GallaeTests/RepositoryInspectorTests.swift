@@ -4259,6 +4259,89 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
     }
 
+    func testDeletesRemoteBranchAndItsTrackingReference() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let remoteURL = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: remoteURL)
+        }
+
+        try runGit(["init", "--quiet", "--bare", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", repositoryURL.path, "branch", "topic"])
+        try runGit(["-C", repositoryURL.path, "push", "--quiet", "origin", "topic"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        _ = try await inspector.deleteRemoteBranch(trackingRef: "origin/topic", in: repository)
+
+        try runGit(
+            ["-C", remoteURL.path, "show-ref", "--verify", "--quiet", "refs/heads/topic"],
+            expectedStatus: 1
+        )
+        try runGit(
+            ["-C", repositoryURL.path, "show-ref", "--verify", "--quiet", "refs/remotes/origin/topic"],
+            expectedStatus: 1
+        )
+        let branches = try await inspector.localBranches(in: repository)
+        XCTAssertTrue(branches.contains("topic"))
+    }
+
+    func testRemovesTrackingReferenceWithoutTouchingRemote() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let remoteURL = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: remoteURL)
+        }
+
+        try runGit(["init", "--quiet", "--bare", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", repositoryURL.path, "push", "--quiet", "origin", "main"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        _ = try await inspector.removeRemoteTrackingReference("origin/main", in: repository)
+
+        try runGit(
+            ["-C", repositoryURL.path, "show-ref", "--verify", "--quiet", "refs/remotes/origin/main"],
+            expectedStatus: 1
+        )
+        try runGit(["-C", remoteURL.path, "show-ref", "--verify", "--quiet", "refs/heads/main"])
+    }
+
+    func testTrackingBranchReflectsConfiguredUpstream() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let remoteURL = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: remoteURL)
+        }
+
+        try runGit(["init", "--quiet", "--bare", remoteURL.path])
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "remote", "add", "origin", remoteURL.path])
+        try runGit(["-C", repositoryURL.path, "push", "--quiet", "--set-upstream", "origin", "main"])
+        try runGit(["-C", repositoryURL.path, "branch", "local-only"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        let tracked = try await inspector.trackingBranch(of: "main", in: repository)
+        XCTAssertEqual(tracked, "origin/main")
+        let untracked = try await inspector.trackingBranch(of: "local-only", in: repository)
+        XCTAssertNil(untracked)
+    }
+
     func testDeletesMergedBranchSafely() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

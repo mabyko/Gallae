@@ -1506,6 +1506,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
     case push
     case addRemoteAndPublish(name: String, url: String)
     case publishTo(remote: String)
+    case deleteRemoteBranch(trackingRef: String)
 
     var progressTitle: String {
         switch self {
@@ -1519,6 +1520,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .push: "Pushing Local Commits…"
         case .addRemoteAndPublish: "Adding Remote and Publishing…"
         case .publishTo(let remote): "Publishing to \(remote)…"
+        case .deleteRemoteBranch(let trackingRef): "Deleting \(trackingRef) on Remote…"
         }
     }
 
@@ -1531,6 +1533,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .push: "Cancel Push"
         case .addRemoteAndPublish: "Cancel Publish"
         case .publishTo: "Cancel Publish"
+        case .deleteRemoteBranch: "Cancel Remote Deletion"
         }
     }
 
@@ -1541,6 +1544,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .pull: "Couldn’t Pull"
         case .push: "Couldn’t Push"
         case .publish, .addRemoteAndPublish, .publishTo: "Couldn’t Publish"
+        case .deleteRemoteBranch: "Couldn’t Delete Remote Branch"
         }
     }
 
@@ -1555,6 +1559,8 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
             "Stop publishing the current branch and keep the Repository open"
         case .publishTo:
             "Stop publishing the current branch and keep the Repository open"
+        case .deleteRemoteBranch:
+            "Stop deleting the remote branch and keep the Repository open"
         }
     }
 }
@@ -2432,6 +2438,8 @@ final class AppModel {
                     )
                 case .publishTo(let remote):
                     try await inspector.publish(to: remote, in: repository)
+                case .deleteRemoteBranch(let trackingRef):
+                    try await inspector.deleteRemoteBranch(trackingRef: trackingRef, in: repository)
                 }
                 guard generation == inspectionGeneration else { return }
                 apply(updatedRepository, showWorkspaceOnSuccess: false)
@@ -2864,8 +2872,63 @@ final class AppModel {
         }
     }
 
-    func removeWorktree(at worktreeURL: URL) async {
+    func trackingRemoteBranch(for branch: String) async -> String? {
+        guard let repository else { return nil }
+        return (try? await inspector.trackingBranch(of: branch, in: repository)) ?? nil
+    }
+
+    func deleteRemoteBranch(_ trackingRef: String) {
+        startRemoteOperation(.deleteRemoteBranch(trackingRef: trackingRef))
+    }
+
+    func removeTrackingReference(_ trackingRef: String) async {
         guard !isLoading, let repository else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.removeRemoteTrackingReference(
+                trackingRef,
+                in: repository
+            )
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Remove Tracking Reference")
+        }
+    }
+
+    // 각 단계는 앞 단계 성공 뒤에만 실행하며, 실패하면 완료된 앞 단계는 되돌리지 않는다.
+    func removeWorktree(
+        at worktreeURL: URL,
+        deletingBranch branch: String?,
+        deletingRemoteTrackingRef trackingRef: String?
+    ) async {
+        guard await removeWorktree(at: worktreeURL) else { return }
+        if let branch {
+            guard await deleteBranch(branch) else { return }
+        }
+        if let trackingRef,
+           let task = startRemoteOperation(.deleteRemoteBranch(trackingRef: trackingRef)) {
+            await task.value
+        }
+    }
+
+    @discardableResult
+    func removeWorktree(at worktreeURL: URL) async -> Bool {
+        guard !isLoading, let repository else { return false }
 
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -2883,19 +2946,22 @@ final class AppModel {
                 at: worktreeURL,
                 in: repository
             )
-            guard generation == inspectionGeneration else { return }
+            guard generation == inspectionGeneration else { return false }
             temporaryWorktrees.removeValue(forKey: worktreeURL)
             apply(updatedRepository, showWorkspaceOnSuccess: false)
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard generation == inspectionGeneration else { return }
+            guard generation == inspectionGeneration else { return false }
             present(error, title: "Couldn’t Remove Worktree")
+            return false
         }
     }
 
-    func deleteBranch(_ branch: String) async {
-        guard !isLoading, let repository else { return }
+    @discardableResult
+    func deleteBranch(_ branch: String) async -> Bool {
+        guard !isLoading, let repository else { return false }
 
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -2910,13 +2976,15 @@ final class AppModel {
 
         do {
             let updatedRepository = try await inspector.deleteBranch(named: branch, in: repository)
-            guard generation == inspectionGeneration else { return }
+            guard generation == inspectionGeneration else { return false }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
+            return true
         } catch is CancellationError {
-            return
+            return false
         } catch {
-            guard generation == inspectionGeneration else { return }
+            guard generation == inspectionGeneration else { return false }
             present(error, title: "Couldn’t Delete Branch")
+            return false
         }
     }
 

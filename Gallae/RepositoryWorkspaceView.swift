@@ -676,11 +676,29 @@ private struct RepositoryBranchPicker: View {
             Button("Remove Worktree", role: .destructive) {
                 Task { await model.removeWorktree(at: request.worktreeURL) }
             }
+            Button("Remove Worktree and Branch", role: .destructive) {
+                Task {
+                    await model.removeWorktree(
+                        at: request.worktreeURL,
+                        deletingBranch: request.branch,
+                        deletingRemoteTrackingRef: nil
+                    )
+                }
+            }
+            if let trackingRef = request.trackingRef {
+                Button("Remove Worktree, Branch, and \(trackingRef)", role: .destructive) {
+                    Task {
+                        await model.removeWorktree(
+                            at: request.worktreeURL,
+                            deletingBranch: request.branch,
+                            deletingRemoteTrackingRef: trackingRef
+                        )
+                    }
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: { request in
-            Text(
-                "This removes the Worktree folder at \(request.worktreeURL.path). The \(request.branch) branch and its commits stay. Git keeps the Worktree if changes or an operation remain inside."
-            )
+            Text(request.confirmationMessage)
         }
         .confirmationDialog(
             "Delete Branch?",
@@ -844,10 +862,14 @@ private struct RepositoryBranchPicker: View {
                                 systemImage: "folder.badge.minus",
                                 role: .destructive
                             ) {
-                                pendingWorktreeRemoval = .init(
-                                    branch: branch,
-                                    worktreeURL: worktreeURL
-                                )
+                                Task {
+                                    let trackingRef = await model.trackingRemoteBranch(for: branch)
+                                    pendingWorktreeRemoval = .init(
+                                        branch: branch,
+                                        worktreeURL: worktreeURL,
+                                        trackingRef: trackingRef
+                                    )
+                                }
                             }
                             .disabled(model.isLoading)
                         } else {
@@ -1174,6 +1196,15 @@ private struct RepositoryChangeBadge: Identifiable {
 private struct WorktreeRemovalRequest {
     let branch: String
     let worktreeURL: URL
+    let trackingRef: String?
+
+    var confirmationMessage: String {
+        var message = "This removes the Worktree folder at \(worktreeURL.path); git keeps it if changes or an operation remain inside. Removing the branch is a safe delete that keeps unmerged branches."
+        if let trackingRef {
+            message += " Deleting \(trackingRef) also removes it on the remote for everyone using it."
+        }
+        return message
+    }
 }
 
 private struct RepositoryHistoryView: View {
@@ -1182,6 +1213,8 @@ private struct RepositoryHistoryView: View {
     @State private var searchText = ""
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
+    @State private var pendingRemoteBranchDeletion: String?
+    @State private var pendingTrackingReferenceRemoval: String?
 
     var body: some View {
         HSplitView {
@@ -1261,11 +1294,29 @@ private struct RepositoryHistoryView: View {
             Button("Remove Worktree", role: .destructive) {
                 Task { await model.removeWorktree(at: request.worktreeURL) }
             }
+            Button("Remove Worktree and Branch", role: .destructive) {
+                Task {
+                    await model.removeWorktree(
+                        at: request.worktreeURL,
+                        deletingBranch: request.branch,
+                        deletingRemoteTrackingRef: nil
+                    )
+                }
+            }
+            if let trackingRef = request.trackingRef {
+                Button("Remove Worktree, Branch, and \(trackingRef)", role: .destructive) {
+                    Task {
+                        await model.removeWorktree(
+                            at: request.worktreeURL,
+                            deletingBranch: request.branch,
+                            deletingRemoteTrackingRef: trackingRef
+                        )
+                    }
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: { request in
-            Text(
-                "This removes the Worktree folder at \(request.worktreeURL.path). The \(request.branch) branch and its commits stay. Git keeps the Worktree if changes or an operation remain inside."
-            )
+            Text(request.confirmationMessage)
         }
         .confirmationDialog(
             "Delete Branch?",
@@ -1283,6 +1334,42 @@ private struct RepositoryHistoryView: View {
         } message: { branch in
             Text(
                 "This deletes the \(branch) branch reference with a safe delete. Branches not merged into the current branch are kept, and commits stay reachable from other references."
+            )
+        }
+        .confirmationDialog(
+            "Delete Remote Branch?",
+            isPresented: Binding(
+                get: { pendingRemoteBranchDeletion != nil },
+                set: { if !$0 { pendingRemoteBranchDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingRemoteBranchDeletion
+        ) { trackingRef in
+            Button("Delete \(trackingRef)", role: .destructive) {
+                model.deleteRemoteBranch(trackingRef)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { trackingRef in
+            Text(
+                "This deletes \(trackingRef) on its remote for everyone using that remote. Local branches and commits stay, and the server may reject deleting a protected branch."
+            )
+        }
+        .confirmationDialog(
+            "Remove Tracking Reference?",
+            isPresented: Binding(
+                get: { pendingTrackingReferenceRemoval != nil },
+                set: { if !$0 { pendingTrackingReferenceRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingTrackingReferenceRemoval
+        ) { trackingRef in
+            Button("Remove \(trackingRef)", role: .destructive) {
+                Task { await model.removeTrackingReference(trackingRef) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { trackingRef in
+            Text(
+                "This removes only the local tracking reference \(trackingRef). The branch on the remote is not changed, and Fetch can restore the reference."
             )
         }
     }
@@ -1365,10 +1452,23 @@ private struct RepositoryHistoryView: View {
                                 Task { await model.openRepository(at: url) }
                             },
                             requestWorktreeRemoval: { branch, url in
-                                pendingWorktreeRemoval = .init(branch: branch, worktreeURL: url)
+                                Task {
+                                    let trackingRef = await model.trackingRemoteBranch(for: branch)
+                                    pendingWorktreeRemoval = .init(
+                                        branch: branch,
+                                        worktreeURL: url,
+                                        trackingRef: trackingRef
+                                    )
+                                }
                             },
                             requestBranchDeletion: { branch in
                                 pendingBranchDeletion = branch
+                            },
+                            requestRemoteBranchDeletion: { trackingRef in
+                                pendingRemoteBranchDeletion = trackingRef
+                            },
+                            requestTrackingReferenceRemoval: { trackingRef in
+                                pendingTrackingReferenceRemoval = trackingRef
                             }
                         )
                         .tag(commit.id)
@@ -2036,6 +2136,8 @@ private struct RepositoryHistoryRow: View {
     var openWorktree: (URL) -> Void = { _ in }
     var requestWorktreeRemoval: (String, URL) -> Void = { _, _ in }
     var requestBranchDeletion: (String) -> Void = { _ in }
+    var requestRemoteBranchDeletion: (String) -> Void = { _ in }
+    var requestTrackingReferenceRemoval: (String) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -2135,11 +2237,33 @@ private struct RepositoryHistoryRow: View {
                     }
                 }
             }
+            ForEach(remoteBranchReferences) { reference in
+                Button("Delete \(reference.name) on Remote") {
+                    requestRemoteBranchDeletion(reference.name)
+                }
+                Button("Remove tracking reference \(reference.name)") {
+                    requestTrackingReferenceRemoval(reference.name)
+                }
+            }
         }
     }
 
     @ViewBuilder
     private var branchMenuSections: some View {
+        ForEach(remoteBranchReferences) { reference in
+            Section(reference.name) {
+                Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
+                    requestRemoteBranchDeletion(reference.name)
+                }
+                Button(
+                    "Remove Tracking Reference…",
+                    systemImage: "minus.circle",
+                    role: .destructive
+                ) {
+                    requestTrackingReferenceRemoval(reference.name)
+                }
+            }
+        }
         ForEach(localBranchReferences) { reference in
             Section(reference.name) {
                 if let worktreeURL = worktreeURLs[reference.name] {
@@ -2210,6 +2334,10 @@ private struct RepositoryHistoryRow: View {
 
     private var localBranchReferences: [RepositoryHistory.Reference] {
         commit.references.filter { $0.kind == .branch && $0.name != currentBranchName }
+    }
+
+    private var remoteBranchReferences: [RepositoryHistory.Reference] {
+        commit.references.filter { $0.kind == .remoteBranch }
     }
 
     private var topologyAccessibilityLabel: String {
