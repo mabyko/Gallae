@@ -61,6 +61,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 - 화면마다 필요한 역할만 둔다. Repository Library는 **Library Folder 탐색 · Repository 목록 · 선택 요약**의 세 역할로 나눈다.
 - 첫 Changes는 상단 Repository 문맥 아래에 **변경 목록 · diff**의 2열만 둔다. 역할이 없는 빈 탐색 패널은 만들지 않는다.
 - 현재 브랜치와 추적 대상 remote branch 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
+- 메인 윈도우 제목은 Active Repository 이름을 표시하고, macOS 제목 표시줄의 프록시 아이콘으로 Repository 경로를 노출한다.
 - Git의 branch upstream 관계는 사용자 화면에서 `Tracking`으로 표시한다. `upstream`은 내부 Git 용어 또는 실제 remote 이름일 때만 그대로 쓴다.
 - 선택은 곧 문맥이다. 선택한 저장소, 파일, 커밋이 바뀌면 나머지 영역이 예측 가능하게 갱신되어야 한다.
 - 위험한 동작은 일반 탐색과 시각적으로 구분하고, 되돌릴 수 없는 경우에만 확인을 요구한다.
@@ -77,7 +78,10 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 ### 조작
 
 - 메뉴와 화면 버튼은 같은 명령 모델을 공유한다.
-- 주요 명령은 macOS 메뉴에서 발견할 수 있고 안정적인 단축키를 제공한다.
+- 주요 명령은 macOS 메뉴에서 발견할 수 있고 안정적인 단축키를 제공한다. View 메뉴는 ⌘1–⌘4로 Changes·History·Stashes·Reflog를 전환하고 ⇧⌘L로 Repository Library로 돌아간다. Repository 메뉴는 Fetch(⌥⌘F), Fetch & Prune, Pull(⌥⌘↓), Push 또는 Publish(⌥⌘↑), Refresh Repository(⌘R)를 제공한다.
+- 진행 표시가 상호작용을 가리는 범위는 작업 성격에 맞춘다. 사용자가 직접 실행한 원격 작업만 즉시 중앙 진행 표시와 Cancel을 보여 주고, 짧은 로컬 작업은 일정 시간 이상 걸릴 때만 진행 표시를 낸다. 자동 Fetch는 작업 공간을 가리지 않는 모서리 표시와 Cancel을 사용한다.
+- 선택 전환과 새로고침은 이전에 읽은 내용을 유지한 채 제자리에서 갱신하고, 로드가 길어질 때만 진행 표시로 바꾼다.
+- 오류 알림은 실패한 작업을 제목으로 밝힌다.
 - 상단의 현재 브랜치 버튼 한 번으로 검색 가능한 브랜치 목록을 열며, Navigator가 있는 화면에서는 전체 목록과 현재 항목도 함께 표시한다.
 - 커밋 작성은 문맥을 잃는 모달보다 현재 변경사항과 함께 보이는 인라인 영역을 우선한다.
 - 작은 창에서는 보조 영역부터 접고, 선택 항목과 핵심 동작은 남긴다.
@@ -139,7 +143,7 @@ Commit 제목은 계속 필수이며, 사용자는 필요할 때 여러 줄 본�
 
 ## Commit 네 번째 수직 슬라이스
 
-사용자는 명시적인 `Amend last commit` 선택 뒤 현재 staged 변경과 입력한 제목·본문으로 최신 commit을 교체할 수 있다. unstaged 변경은 포함하지 않으며, 아직 commit이 없는 Repository에서는 Amend를 제공하지 않는다.
+사용자는 명시적인 `Amend last commit` 선택 뒤 현재 staged 변경과 입력한 제목·본문으로 최신 commit을 교체할 수 있다. Amend를 선택했을 때 두 입력이 모두 비어 있으면 최신 commit의 제목과 본문을 미리 채우고, 선택을 해제하면 수정하지 않은 프리필만 지운다. unstaged 변경은 포함하지 않으며, 아직 commit이 없는 Repository에서는 Amend를 제공하지 않는다.
 
 성공하면 commit 수는 늘리지 않고 최신 HEAD와 Repository 상태를 다시 읽으며 입력과 Amend 선택을 비운다. 실패하면 staged 상태와 입력·선택을 유지한다. discard와 충돌 해결은 이후 수직 슬라이스로 남긴다.
 
@@ -151,7 +155,7 @@ Commit 제목은 계속 필수이며, 사용자는 필요할 때 여러 줄 본�
 
 ## History 첫 수직 슬라이스
 
-사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다.
+사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다. 표시 한도에 도달하면 목록 끝에 더 오래된 commit이 표시되지 않음을 알린다.
 
 commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent와 first-parent 기준 전체 patch를 같은 Workspace에서 읽는다. root commit도 표시하며 목록과 patch의 로딩·빈 상태·오류·재시도를 구분한다. 이 단계는 조회 전용이고, commit 그래프, 모든 branch/ref, 검색·필터, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
 
@@ -215,13 +219,13 @@ Fetch 대상 선택은 Sync 열두 번째 수직 슬라이스, 명시적인 prun
 
 사용자는 Repository Workspace 상단의 Pull로 현재 branch의 configured upstream을 가져와 fast-forward한다. Pull은 `--ff-only`로 실행해 merge commit을 만들거나 local commit을 rebase하지 않는다.
 
-remote 변경과 겹치지 않는 local working tree 수정은 보존한다. upstream이 없거나 branch가 갈라졌거나 local 수정 때문에 갱신할 수 없으면 현재 HEAD·index·working tree를 유지하고 원인을 표시한다. Fetch 단계에서 remote-tracking ref가 갱신된 경우에는 최신 ahead/behind를 다시 읽어 보여 준다.
+remote 변경과 겹치지 않는 local working tree 수정은 보존한다. upstream이 없으면 Pull을 비활성으로 표시해 실행 전에 상태를 알린다. branch가 갈라졌거나 local 수정 때문에 갱신할 수 없으면 현재 HEAD·index·working tree를 유지하고 원인을 표시한다. Fetch 단계에서 remote-tracking ref가 갱신된 경우에는 최신 ahead/behind를 다시 읽어 보여 준다.
 
 진행 상태와 Cancel을 표시하고 Escape로도 취소할 수 있다. 성공하면 Repository, Changes와 History를 다시 읽는다. merge/rebase 방식 선택, remote 선택, 강제 갱신과 자동 Pull은 이후 수직 슬라이스로 남긴다.
 
 ## Sync 세 번째 수직 슬라이스
 
-사용자는 Repository Workspace 상단의 Push로 upstream이 설정된 현재 branch를 Git 설정이 고르는 기본 push 목적지에 보낸다. 인자 없는 Push로 기존 `push.default`와 remote 설정을 존중하며 force, upstream 생성과 refspec 지정은 사용하지 않는다.
+사용자는 Repository Workspace 상단의 Push로 upstream이 설정된 현재 branch를 Git 설정이 고르는 기본 push 목적지에 보낸다. 보낼 commit이 있으면 그 수를 Push 버튼 제목에 함께 표시한다. 인자 없는 Push로 기존 `push.default`와 remote 설정을 존중하며 force, upstream 생성과 refspec 지정은 사용하지 않는다.
 
 Push는 commit만 전송하고 현재 HEAD·index·working tree와 local 수정을 바꾸지 않는다. non-fast-forward, upstream 없음, remote 거부와 인증·네트워크 실패는 기존 Workspace를 유지한 채 원인을 표시한다.
 
@@ -363,7 +367,7 @@ hard Reset도 변경이 없는 attached local branch와 현재 HEAD의 과거 an
 
 ## Recovery 열두 번째 수직 슬라이스
 
-사용자는 Repository 상단의 `Integrate`에서 현재 branch를 제외한 local branch 하나를 골라 현재 branch를 fast-forward한다. 선택 화면은 현재 branch와 merge commit을 만들지 않는다는 점을 먼저 보여 주며, Fast-Forward 또는 Return으로 실행하고 Cancel 또는 Escape로 닫을 수 있다.
+사용자는 Repository 상단의 `Integrate`에서 현재 branch를 제외한 local branch 하나를 골라 현재 branch를 fast-forward한다. 선택 화면은 현재 branch와 merge commit을 만들지 않는다는 점을 먼저 보여 주며, Fast-Forward 또는 Return으로 실행하고 Cancel 또는 Escape로 닫을 수 있다. 선택한 branch에 대해서는 두 branch의 고유 commit 수를 함께 보여 주고, fast-forward할 수 없거나 가져올 commit이 없는 관계에서는 해당 동작을 비활성으로 표시한다.
 
 Gallae는 `--ff-only`만 사용한다. 두 branch가 갈라졌거나 local 변경과 대상 파일이 겹치면 merge commit, rebase나 강제 덮어쓰기를 하지 않고 기존 HEAD·index·working tree를 유지한다. 겹치지 않는 local 변경과 선택한 source branch는 보존하며, 성공하면 Repository·Changes·History와 Reflog를 다시 읽는다. detached HEAD, unborn branch와 선택할 다른 local branch가 없는 상태는 실행하지 않는다.
 

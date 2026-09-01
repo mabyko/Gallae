@@ -83,6 +83,16 @@ struct RepositoryActivity: Equatable, Sendable {
     let recentCommits: [Commit]
 }
 
+struct RepositoryCommitMessage: Equatable, Sendable {
+    let subject: String
+    let body: String
+}
+
+struct RepositoryBranchDivergence: Equatable, Sendable {
+    let uniqueToCurrent: Int
+    let uniqueToOther: Int
+}
+
 struct RepositoryHistory: Equatable, Sendable {
     struct GraphEdge: Equatable, Sendable {
         let fromLane: Int
@@ -375,6 +385,7 @@ enum RepositoryConflictSide: Hashable, Sendable {
 struct RepositoryInspector: Sendable {
     static let maximumDisplayedDiffBytes = 2 * 1_024 * 1_024
     static let maximumExpandedDiffBytes = 16 * 1_024 * 1_024
+    static let maximumHistoryCommits = 100
 
     private static let gitURL = URL(fileURLWithPath: "/usr/bin/git")
 
@@ -553,6 +564,29 @@ struct RepositoryInspector: Sendable {
         }.value
         try Task.checkCancellation()
         return updatedRepository
+    }
+
+    func headCommitMessage(
+        in repository: RepositorySummary
+    ) async throws -> RepositoryCommitMessage {
+        try Task.checkCancellation()
+        let message = try await Task.detached(priority: .userInitiated) {
+            try Self.headCommitMessageSynchronously(in: repository)
+        }.value
+        try Task.checkCancellation()
+        return message
+    }
+
+    func divergence(
+        from branch: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositoryBranchDivergence {
+        try Task.checkCancellation()
+        let divergence = try await Task.detached(priority: .userInitiated) {
+            try Self.divergenceSynchronously(from: branch, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return divergence
     }
 
     func localBranches(in repository: RepositorySummary) async throws -> [String] {
@@ -1406,6 +1440,56 @@ struct RepositoryInspector: Sendable {
         return try inspectSynchronously(at: repository.rootURL)
     }
 
+    private static func headCommitMessageSynchronously(
+        in repository: RepositorySummary
+    ) throws -> RepositoryCommitMessage {
+        guard !repository.isUnborn else {
+            return .init(subject: "", body: "")
+        }
+
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "log", "-1", "--no-show-signature", "--format=%B", "HEAD", "--"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryInspectionError.unreadableHistory(result.standardError)
+        }
+
+        let message = text(from: result.standardOutput)
+        let lines = message.split(separator: "\n", omittingEmptySubsequences: false)
+        let subject = lines.first.map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body = lines.dropFirst()
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return .init(subject: subject, body: body)
+    }
+
+    private static func divergenceSynchronously(
+        from branch: String,
+        in repository: RepositorySummary
+    ) throws -> RepositoryBranchDivergence {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "rev-list", "--left-right", "--count",
+            "HEAD...refs/heads/\(branch)", "--"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.unreadable(result.standardError)
+        }
+
+        let counts = line(from: result.standardOutput)
+            .split { $0 == "\t" || $0 == " " }
+        guard
+            counts.count == 2,
+            let uniqueToCurrent = Int(counts[0]),
+            let uniqueToOther = Int(counts[1])
+        else {
+            throw RepositoryInspectionError.invalidGitOutput
+        }
+        return .init(uniqueToCurrent: uniqueToCurrent, uniqueToOther: uniqueToOther)
+    }
+
     private static func localBranchesSynchronously(
         in repository: RepositorySummary
     ) throws -> [String] {
@@ -2127,7 +2211,7 @@ struct RepositoryInspector: Sendable {
 
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "log", "-100", "--topo-order", "-z", "--no-show-signature",
+            "log", "-\(maximumHistoryCommits)", "--topo-order", "-z", "--no-show-signature",
             "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b",
             "--branches", "--remotes", "--tags", "HEAD", "--"
         ])

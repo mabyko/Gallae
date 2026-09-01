@@ -8,11 +8,20 @@ private enum RepositoryChangeViewMode: Int {
     case status
 }
 
-private enum RepositoryWorkspaceSection: Int {
+enum RepositoryWorkspaceSection: Int, CaseIterable {
     case changes
     case history
     case stashes
     case reflog
+
+    var title: String {
+        switch self {
+        case .changes: "Changes"
+        case .history: "History"
+        case .stashes: "Stashes"
+        case .reflog: "Reflog"
+        }
+    }
 }
 
 struct RepositoryWorkspaceView: View {
@@ -24,6 +33,7 @@ struct RepositoryWorkspaceView: View {
     @State private var commitSubject = ""
     @State private var commitBody = ""
     @State private var isAmending = false
+    @State private var amendPrefill: RepositoryCommitMessage?
     @State private var isBranchPickerPresented = false
     @State private var isConfirmingOperationAbort = false
     @FocusState private var isChangeListFocused: Bool
@@ -55,6 +65,7 @@ struct RepositoryWorkspaceView: View {
             commitSubject = ""
             commitBody = ""
             isAmending = false
+            amendPrefill = nil
             isConfirmingOperationAbort = false
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
         }
@@ -95,6 +106,7 @@ struct RepositoryWorkspaceView: View {
                 model.selectedChangeID = focusedID
             }
         }
+        .focusedSceneValue(\.workspaceSection, $workspaceSection)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
         .confirmationDialog(
@@ -139,10 +151,9 @@ struct RepositoryWorkspaceView: View {
                     Spacer()
 
                     Picker("Workspace", selection: $workspaceSection) {
-                        Text("Changes").tag(RepositoryWorkspaceSection.changes)
-                        Text("History").tag(RepositoryWorkspaceSection.history)
-                        Text("Stashes").tag(RepositoryWorkspaceSection.stashes)
-                        Text("Reflog").tag(RepositoryWorkspaceSection.reflog)
+                        ForEach(RepositoryWorkspaceSection.allCases, id: \.self) { section in
+                            Text(section.title).tag(section)
+                        }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
@@ -404,6 +415,26 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .padding(12)
+        .onChange(of: isAmending) { _, isOn in
+            if isOn {
+                guard commitSubject.isEmpty, commitBody.isEmpty else { return }
+                Task {
+                    guard
+                        let message = await model.headCommitMessage(),
+                        isAmending, commitSubject.isEmpty, commitBody.isEmpty
+                    else { return }
+                    commitSubject = message.subject
+                    commitBody = message.body
+                    amendPrefill = message
+                }
+            } else if let amendPrefill {
+                self.amendPrefill = nil
+                if commitSubject == amendPrefill.subject, commitBody == amendPrefill.body {
+                    commitSubject = ""
+                    commitBody = ""
+                }
+            }
+        }
     }
 
     private func changeHierarchyList(_ repository: RepositorySummary) -> some View {
@@ -1132,18 +1163,30 @@ private struct RepositoryHistoryView: View {
                     Button("Clear Search") { searchText = "" }
                 }
             } else {
-                List(commits, selection: $model.selectedHistoryCommitID) { commit in
-                    RepositoryHistoryRow(
-                        commit: commit,
-                        isHEAD: commit.id == history.headCommitID,
-                        graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
-                        graphLaneCount: history.graphLaneCount
-                    )
-                    .tag(commit.id)
-                    .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+                VStack(spacing: 0) {
+                    List(commits, selection: $model.selectedHistoryCommitID) { commit in
+                        RepositoryHistoryRow(
+                            commit: commit,
+                            isHEAD: commit.id == history.headCommitID,
+                            graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
+                            graphLaneCount: history.graphLaneCount
+                        )
+                        .tag(commit.id)
+                        .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+                    }
+                    .listStyle(.plain)
+                    .accessibilityLabel("Commit History, \(commits.count) commits")
+
+                    if history.commits.count == RepositoryInspector.maximumHistoryCommits {
+                        Divider()
+                        Text("Showing the latest \(history.commits.count) commits · older commits aren’t listed")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                    }
                 }
-                .listStyle(.plain)
-                .accessibilityLabel("Commit History, \(commits.count) commits")
             }
         }
     }

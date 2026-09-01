@@ -3778,6 +3778,53 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testReadsHeadCommitMessageSubjectAndBody() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "feature.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "--all"])
+        try runGit([
+            "-C", repositoryURL.path, "commit", "--quiet",
+            "-m", "Add feature", "-m", "First paragraph.\n\nSecond paragraph."
+        ])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let message = try await inspector.headCommitMessage(in: repository)
+
+        XCTAssertEqual(message.subject, "Add feature")
+        XCTAssertEqual(message.body, "First paragraph.\n\nSecond paragraph.")
+    }
+
+    func testReadsBranchDivergenceCounts() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "branch", "feature"])
+        try write("current\n", to: "current.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Current work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "feature"])
+        try write("feature-1\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature one")
+        try write("feature-2\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature two")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        let diverged = try await inspector.divergence(from: "feature", in: repository)
+        XCTAssertEqual(diverged, .init(uniqueToCurrent: 1, uniqueToOther: 2))
+
+        let identical = try await inspector.divergence(from: "main", in: repository)
+        XCTAssertEqual(identical, .init(uniqueToCurrent: 0, uniqueToOther: 0))
+    }
+
     private func makeTemporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GallaeTests-\(UUID().uuidString)", directoryHint: .isDirectory)

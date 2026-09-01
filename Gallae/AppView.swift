@@ -14,11 +14,14 @@ struct AppView: View {
     @State private var folderSelection: FolderSelection?
     @State private var isFolderImporterPresented = false
     @State private var expandedLibraryHierarchyFolderIDs: Set<URL> = []
+    @State private var showsDelayedLocalProgress = false
 
     var body: some View {
         Group {
-            if model.screen == .workspace, model.repository != nil {
+            if model.screen == .workspace, let repository = model.repository {
                 RepositoryWorkspaceView(model: model)
+                    .navigationTitle(repository.name)
+                    .navigationDocument(repository.rootURL)
             } else {
                 RepositoryLibraryView(
                     model: model,
@@ -28,30 +31,35 @@ struct AppView: View {
                     reconnectRepository: { url in chooseRepository(replacing: url) },
                     expandedHierarchyFolderIDs: $expandedLibraryHierarchyFolderIDs
                 )
+                .navigationTitle("Gallae for Git")
             }
         }
         .frame(minWidth: 720, minHeight: 480)
         .overlay {
-            if model.isLoading {
-                VStack(spacing: 12) {
-                    ProgressView(
-                        model.remoteOperation?.progressTitle
-                            ?? (model.isWritingRepository
-                                ? "Updating Repository…"
-                                : "Reading Repository…")
-                    )
-                    if let remoteOperation = model.remoteOperation {
-                        Button(remoteOperation.cancelTitle) {
-                            model.cancelRemoteOperation()
-                        }
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityLabel(remoteOperation.cancelTitle)
-                        .accessibilityHint(remoteOperation.cancelAccessibilityHint)
-                    }
-                }
-                    .padding(20)
-                    .background(.regularMaterial, in: .rect(cornerRadius: 12))
+            if let remoteOperation = model.remoteOperation, remoteOperation != .automaticFetch {
+                progressBox(remoteOperation.progressTitle, cancelling: remoteOperation)
+            } else if model.isLoading, model.remoteOperation == nil, showsDelayedLocalProgress {
+                progressBox(
+                    model.isWritingRepository
+                        ? "Updating Repository…"
+                        : "Reading Repository…"
+                )
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if model.remoteOperation == .automaticFetch {
+                automaticFetchIndicator
+            }
+        }
+        .task(id: model.isLoading) {
+            showsDelayedLocalProgress = false
+            guard model.isLoading else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+            } catch {
+                return
+            }
+            showsDelayedLocalProgress = true
         }
         .toolbar {
             ToolbarItemGroup {
@@ -119,7 +127,12 @@ struct AppView: View {
                     Button("Pull", systemImage: "arrow.down.to.line") {
                         model.pullRepository()
                     }
-                    .disabled(model.repository == nil || model.isLoading)
+                    .disabled(!model.canPullRepository || model.isLoading)
+                    .help(
+                        model.canPullRepository
+                            ? "Fast-forward the current branch from its tracking branch"
+                            : "Pull needs a local branch with a tracking branch"
+                    )
                     .accessibilityHint(
                         "Fast-forward the current branch from its tracking branch without merging or rebasing"
                     )
@@ -137,7 +150,6 @@ struct AppView: View {
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
                     }
-                    .keyboardShortcut("r")
                     .disabled(model.repository == nil || model.isLoading)
                     .accessibilityHint("Read the current Repository state again")
                 }
@@ -214,7 +226,7 @@ struct AppView: View {
             }
         }
         .alert(
-            "Couldn’t Complete the Request",
+            model.errorTitle ?? "Couldn’t Complete the Request",
             isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }
@@ -234,6 +246,7 @@ struct AppView: View {
         .onOpenURL { url in
             Task { await model.openRepository(at: url) }
         }
+        .focusedSceneValue(\.appModel, model)
         .focusedSceneValue(\.openRepository) {
             chooseRepository()
         }
@@ -241,6 +254,47 @@ struct AppView: View {
             guard phase == .active, model.repository != nil else { return }
             Task { await model.refreshRepository() }
         }
+    }
+
+    private func progressBox(
+        _ title: String,
+        cancelling operation: RepositoryRemoteOperation? = nil
+    ) -> some View {
+        VStack(spacing: 12) {
+            ProgressView(title)
+            if let operation {
+                Button(operation.cancelTitle) {
+                    model.cancelRemoteOperation()
+                }
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel(operation.cancelTitle)
+                .accessibilityHint(operation.cancelAccessibilityHint)
+            }
+        }
+        .padding(20)
+        .background(.regularMaterial, in: .rect(cornerRadius: 12))
+    }
+
+    private var automaticFetchIndicator: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Fetching Automatically…")
+                .font(.callout)
+            Button("Cancel") {
+                model.cancelRemoteOperation()
+            }
+            .controlSize(.small)
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(RepositoryRemoteOperation.automaticFetch.cancelTitle)
+            .accessibilityHint(RepositoryRemoteOperation.automaticFetch.cancelAccessibilityHint)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: .capsule)
+        .padding(12)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Fetching Automatically")
     }
 
     private func chooseFolder() {
@@ -281,6 +335,7 @@ private struct RepositoryIntegrateBranchSheet: View {
     @Bindable var model: AppModel
     let repositoryRootURL: URL
     @State private var selectedBranch: String?
+    @State private var divergence: RepositoryBranchDivergence?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -293,6 +348,12 @@ private struct RepositoryIntegrateBranchSheet: View {
 
             branchContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if let divergenceDescription {
+                Label(divergenceDescription, systemImage: "arrow.triangle.branch")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             if hasCleanRepository {
                 Label(
@@ -320,7 +381,10 @@ private struct RepositoryIntegrateBranchSheet: View {
                 Button("Rebase Current Branch") {
                     integrateBranch(.rebase)
                 }
-                .disabled(selectedBranch == nil || !hasCleanRepository || model.isLoading)
+                .disabled(
+                    selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
+                        || model.isLoading
+                )
                 .accessibilityHint(
                     "Replay the current branch commits onto the selected local branch"
                 )
@@ -328,7 +392,10 @@ private struct RepositoryIntegrateBranchSheet: View {
                 Button("Create Merge Commit") {
                     integrateBranch(.mergeCommit)
                 }
-                .disabled(selectedBranch == nil || !hasCleanRepository || model.isLoading)
+                .disabled(
+                    selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
+                        || model.isLoading
+                )
                 .accessibilityHint(
                     "Create a merge commit from the selected divergent local branch"
                 )
@@ -338,7 +405,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(selectedBranch == nil || model.isLoading)
+                .disabled(selectedBranch == nil || !canFastForward || model.isLoading)
                 .accessibilityHint("Fast-forward the current branch to the selected local branch")
             }
         }
@@ -347,10 +414,41 @@ private struct RepositoryIntegrateBranchSheet: View {
         .task(id: repositoryRootURL) {
             await model.loadLocalBranches()
         }
+        .task(id: selectedBranch) {
+            divergence = nil
+            guard let branch = selectedBranch else { return }
+            let result = await model.branchDivergence(from: branch)
+            guard !Task.isCancelled, branch == selectedBranch else { return }
+            divergence = result
+        }
         .onChange(of: model.localBranchesState, initial: true) { _, _ in
             reconcileSelection()
         }
         .interactiveDismissDisabled(model.isLoading)
+    }
+
+    private var divergenceDescription: String? {
+        guard let selectedBranch, let divergence else { return nil }
+        let ours = divergence.uniqueToCurrent
+        let theirs = divergence.uniqueToOther
+        switch (ours, theirs) {
+        case (0, 0):
+            return "\(currentBranch) and \(selectedBranch) point at the same commit."
+        case (_, 0):
+            return "\(currentBranch) already contains every commit of \(selectedBranch)."
+        case (0, _):
+            return "\(selectedBranch) is \(theirs) commit\(theirs == 1 ? "" : "s") ahead. Fast-Forward applies them to \(currentBranch)."
+        default:
+            return "Diverged · \(currentBranch) has \(ours) and \(selectedBranch) has \(theirs) unique commit\(theirs == 1 ? "" : "s"). Fast-Forward isn’t possible."
+        }
+    }
+
+    private var canFastForward: Bool {
+        divergence.map { $0.uniqueToCurrent == 0 && $0.uniqueToOther > 0 } ?? true
+    }
+
+    private var hasCommitsToIntegrate: Bool {
+        divergence.map { $0.uniqueToOther > 0 } ?? true
     }
 
     @ViewBuilder
@@ -1181,6 +1279,16 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         }
     }
 
+    var failureTitle: String {
+        switch self {
+        case .fetch: "Couldn’t Fetch"
+        case .automaticFetch: "Couldn’t Fetch Automatically"
+        case .pull: "Couldn’t Pull"
+        case .push: "Couldn’t Push"
+        case .publish, .addRemoteAndPublish, .publishTo: "Couldn’t Publish"
+        }
+    }
+
     var cancelAccessibilityHint: String {
         switch self {
         case .fetch: "Stop the current Fetch and keep the Repository open"
@@ -1335,6 +1443,7 @@ final class AppModel {
     var automaticFetchEnabled: Bool
     var repositorySheetRequest: RepositorySheetRequest?
     var isRepositoryStale = false
+    var errorTitle: String?
     var errorMessage: String?
     var libraryFolders: [RepositoryLibraryFolder] = []
     var recentRepositories: [RepositoryLocation] = []
@@ -1344,11 +1453,19 @@ final class AppModel {
     private(set) var libraryRepositorySummaries: [URL: RepositorySummary] = [:]
 
     var pushTitle: String {
-        repository?.upstream == nil ? "Publish" : "Push"
+        guard let upstream = repository?.upstream else { return "Publish" }
+        guard let ahead = upstream.ahead, ahead > 0 else { return "Push" }
+        return "Push \(ahead)"
     }
 
     var canPushRepository: Bool {
         guard let repository, !repository.isUnborn else { return false }
+        guard case .branch = repository.head else { return false }
+        return true
+    }
+
+    var canPullRepository: Bool {
+        guard let repository, repository.upstream != nil else { return false }
         guard case .branch = repository.head else { return false }
         return true
     }
@@ -1782,7 +1899,8 @@ final class AppModel {
             rememberOnSuccess: true,
             markCurrentStaleOnFailure: false,
             showWorkspaceOnSuccess: true,
-            presentFailure: true
+            presentFailure: true,
+            failureTitle: "Couldn’t Open Repository"
         )
     }
 
@@ -1793,6 +1911,7 @@ final class AppModel {
             markCurrentStaleOnFailure: false,
             showWorkspaceOnSuccess: true,
             presentFailure: true,
+            failureTitle: "Couldn’t Open Repository",
             addLibraryFolderWhenNotWorkingTree: true
         )
     }
@@ -1804,7 +1923,8 @@ final class AppModel {
             rememberOnSuccess: false,
             markCurrentStaleOnFailure: true,
             showWorkspaceOnSuccess: false,
-            presentFailure: true
+            presentFailure: true,
+            failureTitle: "Couldn’t Refresh Repository"
         )
     }
 
@@ -2063,7 +2183,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 if operation == .automaticFetch {
                     setAutomaticFetchEnabled(false)
-                    present(error)
+                    present(error, title: operation.failureTitle)
                 } else if case .fetch(remote: nil, pruning: let pruning) = operation,
                    case .remoteSelectionRequired(let remotes) = error
                 {
@@ -2073,7 +2193,7 @@ final class AppModel {
                         pruning: pruning
                     )
                 } else {
-                    present(error)
+                    present(error, title: operation.failureTitle)
                 }
             } catch let error as RepositoryPushError {
                 guard generation == inspectionGeneration else { return }
@@ -2089,10 +2209,10 @@ final class AppModel {
                             remotes: remotes
                         )
                     default:
-                        present(error)
+                        present(error, title: operation.failureTitle)
                     }
                 } else {
-                    present(error)
+                    present(error, title: operation.failureTitle)
                 }
             } catch {
                 guard generation == inspectionGeneration else { return }
@@ -2105,7 +2225,7 @@ final class AppModel {
                 {
                     apply(refreshedRepository, showWorkspaceOnSuccess: false)
                 }
-                present(error)
+                present(error, title: operation.failureTitle)
             }
         }
         remoteTask = task
@@ -2181,7 +2301,7 @@ final class AppModel {
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
-            present(error)
+            present(error, title: "Couldn’t Switch Branch")
             return false
         }
     }
@@ -2218,7 +2338,7 @@ final class AppModel {
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
-            present(error)
+            present(error, title: "Couldn’t Create Branch")
             return false
         }
     }
@@ -2278,7 +2398,12 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return false }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            let title = switch action {
+            case .fastForward: "Couldn’t Fast-Forward"
+            case .mergeCommit: "Couldn’t Create Merge Commit"
+            case .rebase: "Couldn’t Rebase"
+            }
+            present(error, title: title)
             return false
         }
     }
@@ -2351,7 +2476,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Apply Stash")
         }
     }
 
@@ -2388,7 +2513,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Delete Stash")
         }
     }
 
@@ -2435,7 +2560,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Revert Commit")
         }
     }
 
@@ -2481,7 +2606,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Reset Branch")
         }
     }
 
@@ -2520,7 +2645,7 @@ final class AppModel {
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
             guard generation == inspectionGeneration else { return }
-            present(error)
+            present(error, title: "Couldn’t Stage Changes")
         }
     }
 
@@ -2559,7 +2684,7 @@ final class AppModel {
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
             guard generation == inspectionGeneration else { return }
-            present(error)
+            present(error, title: "Couldn’t Unstage Changes")
         }
     }
 
@@ -2590,7 +2715,7 @@ final class AppModel {
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
             guard generation == inspectionGeneration else { return }
-            present(error)
+            present(error, title: "Couldn’t Discard Changes")
         }
     }
 
@@ -2631,7 +2756,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Resolve Conflict")
         }
     }
 
@@ -2671,7 +2796,7 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            present(error, title: "Couldn’t Resolve Conflict")
         }
     }
 
@@ -2725,7 +2850,8 @@ final class AppModel {
                 guard generation == inspectionGeneration else { return }
                 apply(refreshedRepository, showWorkspaceOnSuccess: false)
             }
-            present(error)
+            let kindName = operation.kind == .merge ? "Merge" : "Rebase"
+            present(error, title: aborting ? "Couldn’t Abort \(kindName)" : "Couldn’t Continue \(kindName)")
         }
     }
 
@@ -2757,7 +2883,10 @@ final class AppModel {
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch {
             guard generation == inspectionGeneration else { return }
-            present(error)
+            present(
+                error,
+                title: hunk.scope == .staged ? "Couldn’t Unstage Hunk" : "Couldn’t Stage Hunk"
+            )
         }
     }
 
@@ -2800,9 +2929,19 @@ final class AppModel {
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
-            present(error)
+            present(error, title: amend ? "Couldn’t Amend Commit" : "Couldn’t Commit")
             return false
         }
+    }
+
+    func headCommitMessage() async -> RepositoryCommitMessage? {
+        guard let repository, !repository.isUnborn else { return nil }
+        return try? await inspector.headCommitMessage(in: repository)
+    }
+
+    func branchDivergence(from branch: String) async -> RepositoryBranchDivergence? {
+        guard let repository else { return nil }
+        return try? await inspector.divergence(from: branch, in: repository)
     }
 
     func reconnectRecentRepository(_ oldURL: URL, to newURL: URL) async {
@@ -2831,7 +2970,7 @@ final class AppModel {
             apply(inspectedRepository, showWorkspaceOnSuccess: true)
         } catch {
             guard generation == inspectionGeneration else { return }
-            present(error)
+            present(error, title: "Couldn’t Open Repository")
         }
     }
 
@@ -2929,12 +3068,22 @@ final class AppModel {
         }
     }
 
-    func present(_ error: Error) {
+    func present(_ error: Error, title: String? = nil) {
         guard !(error is CancellationError) else { return }
         if let cocoaError = error as? CocoaError, cocoaError.code == .userCancelled {
             return
         }
+        errorTitle = title
         errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    // 250ms 안에 끝나는 로드는 이전 내용을 유지해 스피너 깜빡임을 만들지 않는다.
+    private func delayedSpinner(_ show: @escaping @MainActor () -> Void) -> Task<Void, Never> {
+        Task {
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            show()
+        }
     }
 
     func loadSelectedDiff(
@@ -2951,7 +3100,16 @@ final class AppModel {
 
         diffGeneration += 1
         let generation = diffGeneration
-        diffState = .loading
+        var pendingSpinner: Task<Void, Never>?
+        if case .loaded = diffState {
+            pendingSpinner = delayedSpinner { [self] in
+                guard generation == diffGeneration else { return }
+                diffState = .loading
+            }
+        } else {
+            diffState = .loading
+        }
+        defer { pendingSpinner?.cancel() }
 
         do {
             let diff = try await inspector.diff(
@@ -3078,8 +3236,17 @@ final class AppModel {
         commitFilesGeneration += 1
         let generation = commitFilesGeneration
         selectedHistoryFileID = nil
-        commitFilesState = .loading
         commitPatchState = .noSelection
+        var pendingSpinner: Task<Void, Never>?
+        if case .loaded = commitFilesState {
+            pendingSpinner = delayedSpinner { [self] in
+                guard generation == commitFilesGeneration else { return }
+                commitFilesState = .loading
+            }
+        } else {
+            commitFilesState = .loading
+        }
+        defer { pendingSpinner?.cancel() }
 
         do {
             let files = try await inspector.files(for: commit, in: repository)
@@ -3122,7 +3289,16 @@ final class AppModel {
 
         commitPatchGeneration += 1
         let generation = commitPatchGeneration
-        commitPatchState = .loading
+        var pendingSpinner: Task<Void, Never>?
+        if case .loaded = commitPatchState {
+            pendingSpinner = delayedSpinner { [self] in
+                guard generation == commitPatchGeneration else { return }
+                commitPatchState = .loading
+            }
+        } else {
+            commitPatchState = .loading
+        }
+        defer { pendingSpinner?.cancel() }
 
         do {
             let patch = try await inspector.patch(
@@ -3227,8 +3403,17 @@ final class AppModel {
         stashFilesGeneration += 1
         let generation = stashFilesGeneration
         selectedStashFileID = nil
-        stashFilesState = .loading
         stashPatchState = .noSelection
+        var pendingSpinner: Task<Void, Never>?
+        if case .loaded = stashFilesState {
+            pendingSpinner = delayedSpinner { [self] in
+                guard generation == stashFilesGeneration else { return }
+                stashFilesState = .loading
+            }
+        } else {
+            stashFilesState = .loading
+        }
+        defer { pendingSpinner?.cancel() }
 
         do {
             let files = try await inspector.files(for: stash, in: repository)
@@ -3261,7 +3446,16 @@ final class AppModel {
 
         stashPatchGeneration += 1
         let generation = stashPatchGeneration
-        stashPatchState = .loading
+        var pendingSpinner: Task<Void, Never>?
+        if case .loaded = stashPatchState {
+            pendingSpinner = delayedSpinner { [self] in
+                guard generation == stashPatchGeneration else { return }
+                stashPatchState = .loading
+            }
+        } else {
+            stashPatchState = .loading
+        }
+        defer { pendingSpinner?.cancel() }
 
         do {
             let patch = try await inspector.patch(
@@ -3286,6 +3480,7 @@ final class AppModel {
         markCurrentStaleOnFailure: Bool,
         showWorkspaceOnSuccess: Bool,
         presentFailure: Bool,
+        failureTitle: String? = nil,
         addLibraryFolderWhenNotWorkingTree: Bool = false
     ) async -> Bool {
         inspectionGeneration += 1
@@ -3328,7 +3523,7 @@ final class AppModel {
                 isRepositoryStale = true
             }
             if presentFailure {
-                present(error)
+                present(error, title: failureTitle)
             } else if !(error is CancellationError) {
                 libraryRepositorySummaries[url] = nil
                 libraryRepositorySummaryErrors[url] = Self.message(for: error)
@@ -3357,7 +3552,15 @@ final class AppModel {
         selectedChangeID = previousSelection.flatMap { selectedID in
             inspectedRepository.changes.contains(where: { $0.id == selectedID }) ? selectedID : nil
         } ?? inspectedRepository.changes.first?.id
-        diffState = selectedChangeID == nil ? .noSelection : .loading
+        if selectedChangeID == nil {
+            diffState = .noSelection
+        } else if selectedChangeID != previousSelection {
+            diffState = .loading
+        } else if case .loaded = diffState {
+            // 같은 파일이 그대로 선택돼 있으면 현재 diff를 유지하고 reload가 제자리에서 교체한다.
+        } else {
+            diffState = .loading
+        }
         historyState = .notLoaded
         localBranchesState = .notLoaded
         localBranchWorktreeURLs = [:]
@@ -3374,6 +3577,7 @@ final class AppModel {
         libraryRepositorySummaries[cacheID] = inspectedRepository
         libraryRepositorySummaryErrors[cacheID] = nil
         isRepositoryStale = false
+        errorTitle = nil
         errorMessage = nil
         if showWorkspaceOnSuccess {
             screen = .workspace
