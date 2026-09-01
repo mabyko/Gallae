@@ -4259,6 +4259,86 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: worktreeURL.path))
     }
 
+    func testDeletesMergedBranchSafely() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "branch", "merged"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        _ = try await inspector.deleteBranch(named: "merged", in: repository)
+
+        let branches = try await inspector.localBranches(in: repository)
+        XCTAssertFalse(branches.contains("merged"))
+        XCTAssertTrue(branches.contains("main"))
+    }
+
+    func testDeleteBranchRefusesUnmergedBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "unmerged"])
+        try write("extra\n", to: "extra.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Unmerged work")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        do {
+            _ = try await inspector.deleteBranch(named: "unmerged", in: repository)
+            XCTFail("Expected the unmerged branch deletion to fail")
+        } catch let error as RepositoryBranchError {
+            guard case .deletionFailed = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+        let branches = try await inspector.localBranches(in: repository)
+        XCTAssertTrue(branches.contains("unmerged"))
+    }
+
+    func testDeleteBranchRefusesCurrentBranch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        do {
+            _ = try await inspector.deleteBranch(named: "main", in: repository)
+            XCTFail("Expected the current branch deletion to fail")
+        } catch let error as RepositoryBranchError {
+            XCTAssertEqual(error, .deletionUnavailable)
+        }
+        let branches = try await inspector.localBranches(in: repository)
+        XCTAssertTrue(branches.contains("main"))
+    }
+
+    func testAuthorIdentityInitialsAndStableColorIndex() {
+        XCTAssertEqual(AuthorIdentity.initials(for: "Eugene Epilo9er"), "EE")
+        XCTAssertEqual(AuthorIdentity.initials(for: "홍길동"), "홍")
+        XCTAssertEqual(AuthorIdentity.initials(for: ""), "?")
+
+        let index = AuthorIdentity.colorIndex(for: "epilo9er@gmail.com", paletteCount: 8)
+        XCTAssertTrue((0..<8).contains(index))
+        XCTAssertEqual(
+            AuthorIdentity.colorIndex(for: "EPILO9ER@GMAIL.COM", paletteCount: 8),
+            index
+        )
+        XCTAssertEqual(AuthorIdentity.colorIndex(for: "someone@example.com", paletteCount: 0), 0)
+    }
+
     func testInstallsCommandLineToolIntoWritableDirectory() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

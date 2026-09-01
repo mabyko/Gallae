@@ -68,6 +68,9 @@ struct RepositoryWorkspaceView: View {
             amendPrefill = nil
             isConfirmingOperationAbort = false
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
+            if model.repository?.changes.isEmpty == true, workspaceSection == .changes {
+                workspaceSection = .history
+            }
         }
         .onChange(of: model.repository?.changes) { _, changes in
             let availableIDs = Set((changes ?? []).map(\.id))
@@ -609,6 +612,8 @@ private struct RepositoryBranchPicker: View {
     @State private var selectedBranch: String?
     @State private var newBranchName = ""
     @State private var isCreatingBranch = false
+    @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
+    @State private var pendingBranchDeletion: String?
     @FocusState private var isSearchFocused: Bool
     @FocusState private var isNewBranchFocused: Bool
 
@@ -629,7 +634,7 @@ private struct RepositoryBranchPicker: View {
             branchActions
         }
         .frame(width: 340, height: 360)
-        .task {
+        .task(id: model.repositoryRevision) {
             await model.loadLocalBranches()
             isSearchFocused = true
         }
@@ -638,6 +643,42 @@ private struct RepositoryBranchPicker: View {
         }
         .onChange(of: searchText) {
             reconcileSelection()
+        }
+        .confirmationDialog(
+            "Remove Worktree?",
+            isPresented: Binding(
+                get: { pendingWorktreeRemoval != nil },
+                set: { if !$0 { pendingWorktreeRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingWorktreeRemoval
+        ) { request in
+            Button("Remove Worktree", role: .destructive) {
+                Task { await model.removeWorktree(at: request.worktreeURL) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { request in
+            Text(
+                "This removes the Worktree folder at \(request.worktreeURL.path). The \(request.branch) branch and its commits stay. Git keeps the Worktree if changes or an operation remain inside."
+            )
+        }
+        .confirmationDialog(
+            "Delete Branch?",
+            isPresented: Binding(
+                get: { pendingBranchDeletion != nil },
+                set: { if !$0 { pendingBranchDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingBranchDeletion
+        ) { branch in
+            Button("Delete \(branch)", role: .destructive) {
+                Task { await model.deleteBranch(branch) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { branch in
+            Text(
+                "This deletes the \(branch) branch reference with a safe delete. Branches not merged into the current branch are kept, and commits stay reachable from other references."
+            )
         }
     }
 
@@ -770,14 +811,38 @@ private struct RepositoryBranchPicker: View {
                 .listStyle(.plain)
                 .contextMenu(forSelectionType: String.self) { branches in
                     if let branch = branches.first, branch != currentBranch {
-                        Button(
-                            model.localBranchWorktreeURLs[branch] == nil
-                                ? "Switch"
-                                : "Open Worktree"
-                        ) {
-                            performPrimaryAction(for: branch)
+                        if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                            Button("Open Worktree", systemImage: "folder") {
+                                performPrimaryAction(for: branch)
+                            }
+                            .disabled(model.isLoading)
+
+                            Button(
+                                "Remove Worktree…",
+                                systemImage: "folder.badge.minus",
+                                role: .destructive
+                            ) {
+                                pendingWorktreeRemoval = .init(
+                                    branch: branch,
+                                    worktreeURL: worktreeURL
+                                )
+                            }
+                            .disabled(model.isLoading)
+                        } else {
+                            Button("Switch", systemImage: "arrow.triangle.branch") {
+                                performPrimaryAction(for: branch)
+                            }
+                            .disabled(model.isLoading)
+
+                            Button(
+                                "Remove Branch…",
+                                systemImage: "minus.circle",
+                                role: .destructive
+                            ) {
+                                pendingBranchDeletion = branch
+                            }
+                            .disabled(model.isLoading)
                         }
-                        .disabled(model.isLoading)
                     }
                 } primaryAction: { branches in
                     guard let branch = branches.first else { return }
@@ -1084,10 +1149,17 @@ private struct RepositoryChangeBadge: Identifiable {
     var id: String { label }
 }
 
+private struct WorktreeRemovalRequest {
+    let branch: String
+    let worktreeURL: URL
+}
+
 private struct RepositoryHistoryView: View {
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
     @State private var searchText = ""
+    @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
+    @State private var pendingBranchDeletion: String?
 
     var body: some View {
         HSplitView {
@@ -1139,6 +1211,7 @@ private struct RepositoryHistoryView: View {
         }
         .task(id: model.historyRequest) {
             await model.loadHistory()
+            await model.loadLocalBranches()
         }
         .task(id: model.commitFilesRequest) {
             await model.loadSelectedCommitFiles()
@@ -1150,6 +1223,42 @@ private struct RepositoryHistoryView: View {
             guard case .loaded = model.historyState else { return }
             guard model.selectedHistoryCommitID.map(visibleIDs.contains) != true else { return }
             model.selectedHistoryCommitID = visibleIDs.first
+        }
+        .confirmationDialog(
+            "Remove Worktree?",
+            isPresented: Binding(
+                get: { pendingWorktreeRemoval != nil },
+                set: { if !$0 { pendingWorktreeRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingWorktreeRemoval
+        ) { request in
+            Button("Remove Worktree", role: .destructive) {
+                Task { await model.removeWorktree(at: request.worktreeURL) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { request in
+            Text(
+                "This removes the Worktree folder at \(request.worktreeURL.path). The \(request.branch) branch and its commits stay. Git keeps the Worktree if changes or an operation remain inside."
+            )
+        }
+        .confirmationDialog(
+            "Delete Branch?",
+            isPresented: Binding(
+                get: { pendingBranchDeletion != nil },
+                set: { if !$0 { pendingBranchDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingBranchDeletion
+        ) { branch in
+            Button("Delete \(branch)", role: .destructive) {
+                Task { await model.deleteBranch(branch) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { branch in
+            Text(
+                "This deletes the \(branch) branch reference with a safe delete. Branches not merged into the current branch are kept, and commits stay reachable from other references."
+            )
         }
     }
 
@@ -1207,8 +1316,21 @@ private struct RepositoryHistoryView: View {
                             currentBranchName: currentBranchName,
                             canFastForwardBranchRefs: commit.id != history.headCommitID
                                 && reachableCommitIDs.contains(commit.id),
+                            worktreeURLs: model.localBranchWorktreeURLs,
                             fastForward: { branch in
                                 Task { await model.fastForwardBranchToCurrent(branch) }
+                            },
+                            switchToBranch: { branch in
+                                Task { await model.switchBranch(to: branch) }
+                            },
+                            openWorktree: { url in
+                                Task { await model.openRepository(at: url) }
+                            },
+                            requestWorktreeRemoval: { branch, url in
+                                pendingWorktreeRemoval = .init(branch: branch, worktreeURL: url)
+                            },
+                            requestBranchDeletion: { branch in
+                                pendingBranchDeletion = branch
                             }
                         )
                         .tag(commit.id)
@@ -1647,6 +1769,47 @@ private struct RepositoryStashRow: View {
     }
 }
 
+enum AuthorIdentity {
+    static func initials(for name: String) -> String {
+        let letters = name
+            .split(separator: " ")
+            .prefix(2)
+            .compactMap { $0.first.map(String.init) }
+        let joined = letters.joined().uppercased()
+        return joined.isEmpty ? "?" : joined
+    }
+
+    // 실행마다 바뀌는 hashValue 대신 안정적인 해시로 같은 작성자에게 항상 같은 색을 준다.
+    static func colorIndex(for identity: String, paletteCount: Int) -> Int {
+        guard paletteCount > 0 else { return 0 }
+        var hash: UInt64 = 5381
+        for scalar in identity.lowercased().unicodeScalars {
+            hash = (hash << 5) &+ hash &+ UInt64(scalar.value)
+        }
+        return Int(hash % UInt64(paletteCount))
+    }
+}
+
+private struct RepositoryAuthorBadge: View {
+    let name: String
+    let email: String
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        let palette = theme.colors.authorBadgeColors
+        let color = palette[AuthorIdentity.colorIndex(
+            for: email.isEmpty ? name : email,
+            paletteCount: palette.count
+        )]
+        Text(AuthorIdentity.initials(for: name))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(color.gradient, in: .circle)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct RepositoryHistoryRow: View {
     @Environment(\.gallaeTheme) private var theme
     let commit: RepositoryHistory.Commit
@@ -1655,7 +1818,12 @@ private struct RepositoryHistoryRow: View {
     let graphLaneCount: Int
     var currentBranchName: String? = nil
     var canFastForwardBranchRefs = false
+    var worktreeURLs: [String: URL] = [:]
     var fastForward: (String) -> Void = { _ in }
+    var switchToBranch: (String) -> Void = { _ in }
+    var openWorktree: (URL) -> Void = { _ in }
+    var requestWorktreeRemoval: (String, URL) -> Void = { _, _ in }
+    var requestBranchDeletion: (String) -> Void = { _ in }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1695,16 +1863,6 @@ private struct RepositoryHistoryRow: View {
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
                                 .background(.quaternary, in: .capsule)
-                                .contextMenu {
-                                    if let target = fastForwardTarget(for: reference) {
-                                        Button(
-                                            "Fast-Forward \(reference.name) to \(target)",
-                                            systemImage: "arrow.forward.to.line"
-                                        ) {
-                                            fastForward(reference.name)
-                                        }
-                                    }
-                                }
                         }
                         if commit.references.count > 2 {
                             Text("+\(commit.references.count - 2)")
@@ -1730,14 +1888,70 @@ private struct RepositoryHistoryRow: View {
             .frame(width: theme.metrics.historyGraphWidth)
         }
         .contentShape(.rect)
+        .contextMenu {
+            branchMenuSections
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))\(topologyAccessibilityLabel)\(referenceAccessibilityLabel)"
         )
         .accessibilityActions {
-            ForEach(fastForwardableReferences) { reference in
-                Button("Fast-Forward \(reference.name) to \(currentBranchName ?? "the current branch")") {
-                    fastForward(reference.name)
+            ForEach(localBranchReferences) { reference in
+                if let worktreeURL = worktreeURLs[reference.name] {
+                    Button("Open Worktree for \(reference.name)") {
+                        openWorktree(worktreeURL)
+                    }
+                    Button("Remove Worktree for \(reference.name)") {
+                        requestWorktreeRemoval(reference.name, worktreeURL)
+                    }
+                } else {
+                    Button("Switch to \(reference.name)") {
+                        switchToBranch(reference.name)
+                    }
+                    Button("Remove branch \(reference.name)") {
+                        requestBranchDeletion(reference.name)
+                    }
+                }
+                if let target = fastForwardTarget(for: reference) {
+                    Button("Fast-Forward \(reference.name) to \(target)") {
+                        fastForward(reference.name)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var branchMenuSections: some View {
+        ForEach(localBranchReferences) { reference in
+            Section(reference.name) {
+                if let worktreeURL = worktreeURLs[reference.name] {
+                    Button(
+                        worktreeURL.lastPathComponent == reference.name
+                            ? "Open Worktree"
+                            : "Open Worktree (\(worktreeURL.lastPathComponent))",
+                        systemImage: "folder"
+                    ) {
+                        openWorktree(worktreeURL)
+                    }
+                    Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
+                        requestWorktreeRemoval(reference.name, worktreeURL)
+                    }
+                } else {
+                    Button("Switch", systemImage: "arrow.triangle.branch") {
+                        switchToBranch(reference.name)
+                    }
+                    Button("Remove Branch…", systemImage: "minus.circle", role: .destructive) {
+                        requestBranchDeletion(reference.name)
+                    }
+                }
+                if let target = fastForwardTarget(for: reference) {
+                    Button(
+                        "Fast-Forward to \(target)",
+                        systemImage: "arrow.forward.to.line"
+                    ) {
+                        fastForward(reference.name)
+                    }
                 }
             }
         }
@@ -1755,8 +1969,8 @@ private struct RepositoryHistoryRow: View {
         return currentBranchName
     }
 
-    private var fastForwardableReferences: [RepositoryHistory.Reference] {
-        commit.references.filter { fastForwardTarget(for: $0) != nil }
+    private var localBranchReferences: [RepositoryHistory.Reference] {
+        commit.references.filter { $0.kind == .branch && $0.name != currentBranchName }
     }
 
     private var topologyAccessibilityLabel: String {
@@ -1919,12 +2133,6 @@ private struct RepositoryCommitDetailView: View {
                         .textSelection(.enabled)
                 }
 
-                Text("\(commit.authorName) <\(commit.authorEmail)> · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
                 Text("Commit \(commit.id)")
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
@@ -1941,6 +2149,7 @@ private struct RepositoryCommitDetailView: View {
 
             Spacer(minLength: 8)
 
+            VStack(alignment: .trailing, spacing: 12) {
             HStack(spacing: 8) {
                 let rebasePlanUnavailableReason = rebasePlanUnavailableReason
                 Button("Rebase Plan…", systemImage: "list.number") {
@@ -1991,6 +2200,29 @@ private struct RepositoryCommitDetailView: View {
                     resetUnavailableReason
                         ?? "Choose whether reset changes stay staged or unstaged"
                 )
+            }
+
+            HStack(spacing: 9) {
+                RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(commit.authorName)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text(commit.authorEmail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Text(commit.committedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(
+                "Author \(commit.authorName), \(commit.authorEmail), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
+            )
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

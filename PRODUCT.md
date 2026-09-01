@@ -60,6 +60,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 ### 정보 구조
 
 - 화면마다 필요한 역할만 둔다. Repository Library는 **Library Folder 탐색 · Repository 목록 · 선택 요약**의 세 역할로 나눈다.
+- 작업 트리가 깨끗한 Repository를 열면 빈 Changes 대신 History를 먼저 보여 준다.
 - 첫 Changes는 상단 Repository 문맥 아래에 **변경 목록 · diff**의 2열만 둔다. 역할이 없는 빈 탐색 패널은 만들지 않는다.
 - 현재 브랜치와 추적 대상 remote branch 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
 - 메인 윈도우 제목은 Active Repository 이름을 표시하고, macOS 제목 표시줄의 프록시 아이콘으로 Repository 경로를 노출한다.
@@ -157,7 +158,7 @@ Commit 제목은 계속 필수이며, 사용자는 필요할 때 여러 줄 본�
 
 ## History 첫 수직 슬라이스
 
-사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다. 표시 한도에 도달하면 목록 끝에 더 오래된 commit이 표시되지 않음을 알린다.
+사용자는 Repository 헤더에서 `Changes`와 `History`를 전환한다. History는 현재 HEAD에서 도달 가능한 최신 commit 최대 100개를 최신순으로 보여 주며, 각 행에는 제목·작성자·시간·축약 SHA를 표시한다. commit 상세는 작성자 이름·이메일·시각과 함께 이름 이니셜·이메일 기반 고정 색 배지로 작성자를 구분하고, 네트워크 아바타는 사용하지 않는다. 표시 한도에 도달하면 목록 끝에 더 오래된 commit이 표시되지 않음을 알린다.
 
 commit을 선택하면 제목과 본문, 작성자 이메일, 전체 SHA, parent와 first-parent 기준 전체 patch를 같은 Workspace에서 읽는다. root commit도 표시하며 목록과 patch의 로딩·빈 상태·오류·재시도를 구분한다. 이 단계는 조회 전용이고, commit 그래프, 모든 branch/ref, 검색·필터, 파일별 drill-down과 branch 이동·생성은 이후 수직 슬라이스로 남긴다.
 
@@ -449,7 +450,7 @@ fast-forward와 겹치지 않는 그 Worktree의 local 수정은 보존하고, �
 
 ## Advanced 열한 번째 수직 슬라이스
 
-History 목록에서 commit 행의 local branch ref 배지를 우클릭하면, 그 branch가 현재 HEAD의 ancestor이고 현재 branch가 아닐 때 `Fast-Forward <branch> to <현재 branch>`를 제공한다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 같은 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
+History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 `Fast-Forward to <현재 branch>`를 함께 제공한다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 같은 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
 
 remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
 
@@ -472,6 +473,14 @@ ref 이동은 Git의 Worktree 체크아웃 보호를 우회하므로, 이 경로
 어느 Worktree에도 체크아웃되지 않은 대상과의 merge가 충돌을 예측하면, 사용자가 명시적으로 선택한 경우에만 Gallae가 임시 linked Worktree를 만들어 대상 branch를 체크아웃하고 거기서 merge를 실행한다. 충돌은 그 Worktree를 같은 창의 Workspace로 열어 기존 충돌 해결·Continue·Abort 흐름으로 해결한다.
 
 임시 Worktree는 Workspace에 Gallae가 만든 것임을 표시하고 Recent에 남기지 않는다. 충돌 없이 merge가 끝나면 바로 제거하고, 충돌 해결을 거친 Worktree는 Continue·Abort 뒤 사용자 확인을 거쳐 제거한다. local 변경이나 진행 중인 작업이 남아 있으면 제거하지 않는다. 앱을 다시 실행하면 남은 임시 Worktree는 일반 Worktree로 취급해 기존 branch picker와 Worktree 흐름에서 다룬다. 이 슬라이스는 이 흐름에 필요한 생성·제거만 다루며, 일반적인 Worktree 생성·관리 UI는 이후 범위로 남긴다.
+
+## Advanced 열다섯 번째 수직 슬라이스
+
+History의 commit 행 메뉴는 현재 branch가 아닌 local branch에 정리 동작을 잇는다. 다른 Worktree에 체크아웃된 branch에는 `Remove Worktree…`를 제공해, 삭제되는 폴더 경로와 branch·commit이 유지된다는 점을 확인한 뒤 Worktree 등록과 폴더를 제거한다. local 변경이나 진행 중인 작업이 남아 있으면 git이 거부하며 강제로 지우지 않고, 주 working tree는 제거 대상이 아니다.
+
+어느 Worktree에도 체크아웃되지 않은 branch에는 `Remove Branch…`를 제공한다. 확인 문구는 branch ref가 삭제되고 다른 ref에서 도달 가능한 commit은 유지된다는 점을 설명한다. 실행은 안전한 삭제만 사용해 현재 branch에 합쳐지지 않은 branch는 git이 거부하고 원인을 표시한다. 강제 삭제, 현재 branch 삭제와 remote branch 삭제는 제공하지 않는다. 성공하면 Repository와 History·ref 표시를 다시 읽는다.
+
+같은 정리 동작은 branch 선택기의 행 우클릭 메뉴에서도 같은 확인과 규칙으로 제공하며, 실행 뒤 branch 목록을 다시 읽는다.
 
 ## 디자인 시안 2
 

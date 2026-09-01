@@ -19,7 +19,7 @@ Open & Inspect는 사용자가 Repository를 찾고, 열고, 현재 브랜치와
 ```text
 앱 실행
 ├─ Repository 경로와 함께 실행
-│  ├─ 유효함 → Repository Workspace / Changes
+│  ├─ 유효함 → Repository Workspace / Changes(작업 트리가 깨끗하면 History)
 │  └─ 열 수 없음 → 원인과 복구 경로
 ├─ 복원 가능한 Active Repository 있음 → Workspace 복원 후 새로고침
 └─ 복원할 항목 없음 → Repository Library
@@ -41,7 +41,7 @@ Library에서 선택은 요약만 바꾸고, 명시적인 Open 명령이 Workspa
 | Git 사용 불가 | Git 또는 Command Line Tools 문제 | 설치·복구 후 다시 시도 |
 | Git Repository가 아님 | 선택한 경로와 판정 | 다른 폴더 선택 |
 | bare Repository | 지원하지 않는 Repository 유형 | 다른 Repository 선택 |
-| Clean | 변경 파일이 없음 | Finder에서 열기 또는 이후 History로 이동 |
+| Clean | 변경 파일이 없음 | History를 먼저 표시하고, Changes에서는 Finder 열기 제공 |
 | detached HEAD | 브랜치 대신 현재 commit | 이후 브랜치 선택 |
 | unborn branch | 브랜치 이름과 아직 commit이 없다는 상태 | 현재 상태 계속 검사 |
 | History가 비어 있음 | 아직 commit이 없음 | Changes로 돌아가 첫 commit 작성 |
@@ -645,6 +645,15 @@ GallaeApp
 - 충돌 없이 끝나면 임시 Worktree를 바로 제거하고, Continue·Abort로 작업이 끝나면 확인을 거쳐 제거한다. 변경이 남아 있으면 `worktree remove`가 거부하므로 강제로 지우지 않는다.
 - 임시 추적은 세션 안에서만 유지하며, 앱 재실행 뒤 남은 임시 Worktree는 일반 Worktree로 취급해 기존 branch picker·Worktree 흐름에서 다룬다.
 - 실제 임시 Repository 통합 테스트로 생성·체크아웃 branch, dirty 상태의 제거 거부와 정리 뒤 제거를 확인한다.
+
+### 6E-1 · History commit 행 메뉴와 branch·Worktree 정리 — 완료
+
+- History commit 행 우클릭 메뉴는 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 주고, 행 배지로 표시되지 않은 숨은 ref도 포함한다. 각 섹션은 Switch 또는 Open Worktree, 가능하면 Fast-Forward를 제공한다.
+- 다른 Worktree에 체크아웃된 branch에는 `Remove Worktree…`를 제공한다. 확인 문구는 삭제되는 폴더 경로와 branch·commit 유지를 설명하고, 변경이나 진행 중인 작업이 남아 있으면 git이 거부한다. 주 working tree는 git이 제거를 거부한다.
+- 체크아웃되지 않은 branch에는 `Remove Branch…`를 제공한다. 안전한 삭제만 사용해 합쳐지지 않은 branch는 거부하고, 현재 branch와 remote branch 삭제·강제 삭제는 제공하지 않는다.
+- 같은 동작을 VoiceOver 사용자 지정 액션으로 제공하고, 성공하면 Repository와 History·ref 표시를 다시 읽는다.
+- 같은 정리 동작을 branch 선택기의 행 우클릭 메뉴에서도 같은 확인·규칙으로 제공하고, 실행 뒤 Repository revision을 따라 branch 목록을 다시 읽는다.
+- 실제 임시 Repository 통합 테스트로 합쳐진 branch 삭제, 합쳐지지 않은 branch·현재 branch 거부와 ref 유지를 확인한다.
 
 ## 각 단계의 검증
 

@@ -2847,6 +2847,62 @@ final class AppModel {
         }
     }
 
+    func removeWorktree(at worktreeURL: URL) async {
+        guard !isLoading, let repository else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.removeWorktree(
+                at: worktreeURL,
+                in: repository
+            )
+            guard generation == inspectionGeneration else { return }
+            temporaryWorktrees.removeValue(forKey: worktreeURL)
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Remove Worktree")
+        }
+    }
+
+    func deleteBranch(_ branch: String) async {
+        guard !isLoading, let repository else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.deleteBranch(named: branch, in: repository)
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Delete Branch")
+        }
+    }
+
     func removeTemporaryWorktree(at worktreeURL: URL) async {
         guard let entry = temporaryWorktreeEntry(for: worktreeURL) else { return }
         pendingTemporaryWorktreeRemovalURL = nil

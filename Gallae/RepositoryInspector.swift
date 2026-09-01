@@ -819,6 +819,18 @@ struct RepositoryInspector: Sendable {
         return worktreeURL
     }
 
+    func deleteBranch(
+        named branch: String,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.deleteBranchSynchronously(named: branch, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
     func removeWorktree(
         at worktreeURL: URL,
         in repository: RepositorySummary
@@ -2145,6 +2157,25 @@ struct RepositoryInspector: Sendable {
             throw RepositoryBranchError.worktreeCreationFailed(result.standardError)
         }
         return worktreeURL
+    }
+
+    private static func deleteBranchSynchronously(
+        named branch: String,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        let currentRepository = try inspectSynchronously(at: repository.rootURL)
+        if case .branch(branch) = currentRepository.head {
+            throw RepositoryBranchError.deletionUnavailable
+        }
+
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "branch", "--delete", "--", branch
+        ])
+        guard result.status == 0 else {
+            throw RepositoryBranchError.deletionFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
     }
 
     private static func removeWorktreeSynchronously(
@@ -4180,6 +4211,8 @@ enum RepositoryBranchError: LocalizedError, Equatable {
     case mergeInWorktreeConflicted(URL)
     case worktreeCreationFailed(String)
     case worktreeRemovalFailed(String)
+    case deletionUnavailable
+    case deletionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -4241,6 +4274,12 @@ enum RepositoryBranchError: LocalizedError, Equatable {
             message.isEmpty
                 ? "Git couldn’t remove the Worktree. Changes may remain inside it."
                 : "Git couldn’t remove the Worktree. Changes may remain inside it.\n\n\(message)"
+        case .deletionUnavailable:
+            "Switch to another branch before deleting the current branch."
+        case .deletionFailed(let message):
+            message.isEmpty
+                ? "Git couldn’t delete the branch. Unmerged branches and branches checked out in a Worktree are kept."
+                : "Git couldn’t delete the branch. Unmerged branches and branches checked out in a Worktree are kept.\n\n\(message)"
         case .rebaseUnavailable:
             "Choose another local branch to rebase a current branch that has a commit."
         case .rebaseRequiresCleanRepository:
