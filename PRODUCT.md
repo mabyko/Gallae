@@ -440,7 +440,7 @@ Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실�
 
 사용자는 Integrate에서 통합 방향을 먼저 고른다. `Into <현재 branch>`는 기존과 같이 선택한 local branch를 현재 branch로 fast-forward·merge commit·rebase한다. 새 방향 `From <현재 branch>`는 현재 branch가 이미 포함한 다른 local branch를 checkout 없이 현재 HEAD로 fast-forward한다. 두 방향은 같은 branch 목록과 divergence 표시를 공유하고, 각 방향에서 성립하지 않는 동작은 이유와 함께 비활성으로 표시한다.
 
-움직이는 ref는 실행 버튼 제목에(`Fast-Forward main`), 도착 지점은 방향 선택기와 안내 문장에 명시한다. 버튼에는 전치사를 넣지 않아 `From` 표기와 방향 프레임이 충돌하지 않게 한다. `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
+실행 버튼은 방향 선택기와 한 문장을 이루도록 `Fast-Forward to <대상 branch>`로 표기해 `From <현재 branch>` → `to <대상>` 흐름으로 읽히게 하고, 움직이는 ref와 도착 지점은 안내 문장이 함께 명시한다. `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
 
 `From` 방향의 merge commit과 rebase는 checkout 없이 충돌을 해결할 수 없으므로 제공하지 않고, force 계열 갱신도 제공하지 않는다. 이 슬라이스는 어느 Worktree에도 체크아웃되지 않은 대상 branch만 갱신하며, 다른 Worktree에 체크아웃된 branch는 폴더 배지와 함께 비활성으로 표시하고 다음 수직 슬라이스에서 다룬다.
 
@@ -452,7 +452,7 @@ fast-forward와 겹치지 않는 그 Worktree의 local 수정은 보존하고, �
 
 ## Advanced 열한 번째 수직 슬라이스
 
-History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 `Fast-Forward to <현재 branch>`를 함께 제공한다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 같은 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
+History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 Integrate의 `From` 방향과 같은 경로로 그 branch를 현재 HEAD로 옮기는 동작을, 반대로 그 commit이 현재 HEAD의 descendant이면 현재 branch를 당기는 동작을 제공한다. 두 방향은 조건상 함께 나타나지 않는다. Fast-forward 표기는 앱 전체가 하나의 흐름 프레임을 쓴다. `to`는 변경을 받는 branch, `from`은 보내는 branch다. 메뉴는 `Fast-Forward <갱신되는 branch> from <소스 branch>`로 첫 단어가 갱신되는 쪽을 말하고, Integrate 시트는 방향 선택기와 한 문장을 이루는 `Fast-Forward to <대상 branch>`를 쓴다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 기존 Integrate fast-forward의 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
 
 remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
 
@@ -488,7 +488,13 @@ History의 commit 행 메뉴는 현재 branch가 아닌 local branch에 정리 �
 
 사용자는 설정의 `Commit Signing`에서 commit 서명에 쓸 GPG 키를 고른다. Gallae는 Git의 `gpg.openpgp.program`·`gpg.program` 설정과 표준 설치 경로에서 GPG를 찾아 secret key 목록을 키 ID와 사용자 정보로 보여 준다. 키를 고르면 global Git 설정의 `user.signingkey`와 `commit.gpgsign`만 바꾸고, `No Signing Key`는 `commit.gpgsign`을 끄되 기존 `user.signingkey` 값은 지우지 않는다.
 
-Repository별 서명 설정은 Git 규칙대로 계속 우선하며, Gallae는 키를 만들거나 가져오지 않는다. `gpg.format`이 `ssh`면 SSH 서명이 설정돼 있음을 알리고 아무것도 바꾸지 않는다. GPG가 없거나 키 목록을 읽지 못하면 원인과 설치 안내를 표시하고, 적용 실패는 이전 선택을 유지한 채 오류를 보여 준다.
+Repository별 서명 설정은 Git 규칙대로 계속 우선하며, Gallae는 키를 만들거나 가져오지 않는다. `gpg.format`이 `ssh`면 SSH 서명이 설정돼 있음을 알리고 아무것도 바꾸지 않는다. GPG가 없거나 키 목록을 읽지 못하면 원인과 설치 안내를 표시하고, 적용 실패는 이전 선택을 유지한 채 오류를 보여 준다. 이 화면은 앱 고유 상태를 두지 않는 global Git 설정의 뷰이며, 탭을 열 때마다 현재 설정을 다시 읽는다.
+
+## Advanced 열일곱 번째 수직 슬라이스
+
+History에서 commit을 선택하면 그 commit의 서명 상태를 검증해 상세에 표시한다. 유효한 서명은 서명자 또는 키 ID와 함께, 신뢰를 확인하지 못한 서명·무효한 서명·검증할 수 없는 서명은 각각 구분해 보여 주고, 서명 없는 commit에는 배지를 두지 않는다.
+
+검증은 선택한 commit 하나만 수행해 목록 읽기를 느리게 하지 않으며, 조회 전용으로 Repository 상태를 바꾸지 않는다. GPG를 쓸 수 없으면 검증 불가로 표시한다.
 
 ## 디자인 시안 2
 

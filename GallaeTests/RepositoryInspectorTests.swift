@@ -4356,6 +4356,42 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(GitHubAvatarLookup.avatarURL(fromSearchResponse: Data("not json".utf8)))
     }
 
+    func testCommitSignatureStatusMapping() {
+        XCTAssertEqual(
+            RepositoryCommitSignature.make(status: "G", keyID: "ABCD", signer: "Eugene"),
+            .good(keyID: "ABCD", signer: "Eugene")
+        )
+        XCTAssertEqual(
+            RepositoryCommitSignature.make(status: "U", keyID: "ABCD", signer: ""),
+            .unverifiedTrust(keyID: "ABCD", signer: "")
+        )
+        for status in ["B", "X", "Y", "R"] {
+            XCTAssertEqual(
+                RepositoryCommitSignature.make(status: status, keyID: "", signer: ""),
+                .invalid
+            )
+        }
+        XCTAssertEqual(RepositoryCommitSignature.make(status: "E", keyID: "", signer: ""), .cannotCheck)
+        XCTAssertEqual(RepositoryCommitSignature.make(status: "N", keyID: "", signer: ""), .none)
+    }
+
+    func testCommitSignatureForUnsignedCommitIsNone() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "shared.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let history = try await inspector.history(in: repository)
+        let commit = try XCTUnwrap(history.commits.first)
+
+        let signature = try await inspector.commitSignature(for: commit, in: repository)
+        XCTAssertEqual(signature, .none)
+    }
+
     func testGPGKeyParserReadsSecretKeysAndMatchesConfiguredValues() {
         let output = """
         sec:u:4096:1:ABCDEF1234567890:1600000000:::u:::scESC:::+:::23::0:

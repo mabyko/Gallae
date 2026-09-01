@@ -99,6 +99,24 @@ struct RepositoryMergePrediction: Equatable, Sendable {
     let treeID: String
 }
 
+enum RepositoryCommitSignature: Equatable, Sendable {
+    case none
+    case good(keyID: String, signer: String)
+    case unverifiedTrust(keyID: String, signer: String)
+    case invalid
+    case cannotCheck
+
+    static func make(status: String, keyID: String, signer: String) -> RepositoryCommitSignature {
+        switch status {
+        case "G": .good(keyID: keyID, signer: signer)
+        case "U": .unverifiedTrust(keyID: keyID, signer: signer)
+        case "B", "X", "Y", "R": .invalid
+        case "E": .cannotCheck
+        default: .none
+        }
+    }
+}
+
 struct RepositoryHistory: Equatable, Sendable {
     struct GraphEdge: Equatable, Sendable {
         let fromLane: Int
@@ -747,6 +765,18 @@ struct RepositoryInspector: Sendable {
         }.value
         try Task.checkCancellation()
         return updatedRepository
+    }
+
+    func commitSignature(
+        for commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary
+    ) async throws -> RepositoryCommitSignature {
+        try Task.checkCancellation()
+        let signature = try await Task.detached(priority: .userInitiated) {
+            try Self.commitSignatureSynchronously(for: commit, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return signature
     }
 
     func mergePrediction(
@@ -1953,6 +1983,34 @@ struct RepositoryInspector: Sendable {
             throw RepositoryBranchError.fastForwardOutFailed(result.standardError)
         }
         return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func commitSignatureSynchronously(
+        for commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary
+    ) throws -> RepositoryCommitSignature {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "log", "-1", "--format=%G?%x00%GK%x00%GS", commit.id, "--"
+        ])
+        guard result.status == 0 else {
+            throw RepositoryHistoryError.unreadable(result.standardError)
+        }
+
+        let fields = result.standardOutput
+            .split(separator: 0, omittingEmptySubsequences: false)
+            .map {
+                String(decoding: $0, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        guard fields.count >= 3 else {
+            return .none
+        }
+        return RepositoryCommitSignature.make(
+            status: fields[0],
+            keyID: fields[1],
+            signer: fields[2]
+        )
     }
 
     private static func mergePredictionSynchronously(

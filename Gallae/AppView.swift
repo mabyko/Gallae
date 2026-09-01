@@ -468,7 +468,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                         )
                     }
                 } else {
-                    Button("Fast-Forward \(selectedBranch ?? "Branch")") {
+                    Button("Fast-Forward to \(selectedBranch ?? "Branch")") {
                         fastForwardSelectedBranch()
                     }
                     .buttonStyle(.borderedProminent)
@@ -1685,6 +1685,7 @@ final class AppModel {
     var selectedHistoryFileID: String?
     var commitFilesState: RepositoryCommitFilesLoadState = .noSelection
     var commitPatchState: RepositoryCommitPatchLoadState = .noSelection
+    private(set) var selectedCommitSignature: RepositoryCommitSignature?
     var selectedStashID: String?
     var stashesState: RepositoryStashesLoadState = .notLoaded
     var selectedReflogEntryID: String?
@@ -1748,6 +1749,7 @@ final class AppModel {
     @ObservationIgnored private var diffGeneration = 0
     @ObservationIgnored private var historyGeneration = 0
     @ObservationIgnored private var commitFilesGeneration = 0
+    @ObservationIgnored private var commitSignatureGeneration = 0
     @ObservationIgnored private var commitPatchGeneration = 0
     @ObservationIgnored private var stashesGeneration = 0
     @ObservationIgnored private var reflogGeneration = 0
@@ -3775,6 +3777,22 @@ final class AppModel {
             }
             throw error
         }
+    }
+
+    func loadSelectedCommitSignature() async {
+        commitSignatureGeneration += 1
+        let generation = commitSignatureGeneration
+        selectedCommitSignature = nil
+        guard let repository, let commit = selectedHistoryCommit else { return }
+
+        let signature = try? await inspector.commitSignature(for: commit, in: repository)
+        guard
+            generation == commitSignatureGeneration,
+            selectedHistoryCommit?.id == commit.id
+        else {
+            return
+        }
+        selectedCommitSignature = signature
     }
 
     func loadSelectedCommitFiles() async {

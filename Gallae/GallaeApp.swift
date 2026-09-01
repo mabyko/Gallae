@@ -381,7 +381,7 @@ private struct GallaeSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("Applies to the global Git configuration (user.signingkey, commit.gpgsign). Repositories with their own signing setting keep it.")
+                        Text("Reads and writes the global Git configuration (user.signingkey, commit.gpgsign) — the same values git itself uses, reloaded each time this tab opens. Repositories with their own signing setting keep it.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

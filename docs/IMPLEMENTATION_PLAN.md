@@ -607,7 +607,7 @@ GallaeApp
 ### 6C-1 · Integrate 방향 선택과 checkout 없는 reverse Fast-Forward — 완료
 
 - Integrate 시트에 `Into <현재 branch>`·`From <현재 branch>` 방향 선택기를 두고, 두 방향이 같은 branch 목록·divergence 표시를 공유한다. `From`은 현재 branch가 이미 포함한 branch를 checkout 없이 현재 HEAD로 fast-forward한다.
-- 움직이는 ref는 버튼 제목에(`Fast-Forward main`), 도착 지점은 방향 선택기와 안내 문장에 명시한다. 버튼에 전치사를 넣지 않아 `From` 표기와 충돌하지 않으며, `From`은 dirty working tree에서도 실행할 수 있고 ref 외에는 아무것도 바꾸지 않는다는 캡션을 보여 준다.
+- 실행 버튼은 방향 선택기와 한 문장을 이루는 `Fast-Forward to <대상 branch>`로 표기하고, `From`은 dirty working tree에서도 실행할 수 있고 ref 외에는 아무것도 바꾸지 않는다는 캡션을 보여 준다.
 - 실행 직전 대상이 현재 HEAD의 ancestor인지 `merge-base --is-ancestor`로 재확인하고, `git fetch . <현재>:<대상>` 실행 뒤 결과 ref가 HEAD와 일치하는지 검증한다. fetch는 non-fast-forward 거부를 종료 코드 0으로 보고하므로 결과 검증이 필수다.
 - merge commit·rebase·force는 `From` 방향에 제공하지 않는다. 이동은 대상 branch reflog에 남는다.
 - 실제 임시 Repository 통합 테스트로 checkout 없는 갱신과 dirty 파일 보존, diverged 거부와 ref 불변을 확인한다.
@@ -661,6 +661,12 @@ GallaeApp
 - 키 선택은 global Git 설정의 `user.signingkey`·`commit.gpgsign`만 바꾸고, `No Signing Key`는 `commit.gpgsign`만 끄고 기존 키 값은 남긴다. 적용 실패는 이전 선택으로 되돌리고 오류를 표시한다.
 - `gpg.format=ssh`는 SSH 서명 안내만 하고 바꾸지 않는다. GPG 없음·목록 실패·키 없음을 각각 구분해 안내하며 키 생성·가져오기는 하지 않는다.
 - colon 출력 파싱과 설정값(짧은 ID·긴 ID·fingerprint) 매칭은 단위 테스트로 검증한다.
+
+### 6G-1 · commit 서명 상태 표시와 History의 양방향 Fast-Forward — 완료
+
+- History에서 commit을 선택하면 그 commit 하나만 `%G?`로 검증해 상세에 서명 배지를 표시한다. 유효(서명자·키 ID), 신뢰 미확인, 무효, 검증 불가를 구분하고 서명 없는 commit에는 배지를 두지 않는다. 상태 매핑은 단위 테스트, 서명 없는 commit은 임시 Repository 통합 테스트로 확인한다.
+- History 행 메뉴는 그 commit이 현재 HEAD의 descendant이고 local branch가 닿아 있으면 현재 branch를 당긴다. 두 방향 모두 흐름 프레임의 `Fast-Forward <갱신되는 branch> from <소스>` 한 꼴로 표기하고, 실행은 기존 Integrate fast-forward(`merge --ff-only`) 경로를 재사용하며 VoiceOver 액션으로도 제공한다.
+- Commit Signing 설정 캡션은 이 화면이 앱 고유 상태 없는 global Git 설정의 뷰이며 탭을 열 때마다 다시 읽는다는 점을 명시한다.
 
 ## 각 단계의 검증
 

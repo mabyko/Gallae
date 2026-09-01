@@ -1238,6 +1238,9 @@ private struct RepositoryHistoryView: View {
         .task(id: model.commitFilesRequest) {
             await model.loadSelectedCommitFiles()
         }
+        .task(id: model.commitFilesRequest) {
+            await model.loadSelectedCommitSignature()
+        }
         .task(id: model.commitPatchRequest) {
             await model.loadSelectedCommitPatch()
         }
@@ -1328,6 +1331,7 @@ private struct RepositoryHistoryView: View {
                 }
             } else {
                 let reachableCommitIDs = history.headReachableCommitIDs()
+                let descendantCommitIDs = history.headDescendantCommitIDs()
                 VStack(spacing: 0) {
                     List(commits, selection: $model.selectedHistoryCommitID) { commit in
                         RepositoryHistoryRow(
@@ -1338,9 +1342,21 @@ private struct RepositoryHistoryView: View {
                             currentBranchName: currentBranchName,
                             canFastForwardBranchRefs: commit.id != history.headCommitID
                                 && reachableCommitIDs.contains(commit.id),
+                            canFastForwardCurrentHere: commit.id != history.headCommitID
+                                && descendantCommitIDs.contains(commit.id),
                             worktreeURLs: model.localBranchWorktreeURLs,
                             fastForward: { branch in
                                 Task { await model.fastForwardBranchToCurrent(branch) }
+                            },
+                            fastForwardCurrent: { branch in
+                                Task {
+                                    guard let rootURL = model.repository?.rootURL else { return }
+                                    _ = await model.integrateBranch(
+                                        branch,
+                                        action: .fastForward,
+                                        in: rootURL
+                                    )
+                                }
                             },
                             switchToBranch: { branch in
                                 Task { await model.switchBranch(to: branch) }
@@ -1394,6 +1410,24 @@ private extension RepositoryHistory {
         while let id = stack.popLast() {
             guard visited.insert(id).inserted, let commit = commitsByID[id] else { continue }
             stack.append(contentsOf: commit.parentIDs)
+        }
+        return visited
+    }
+
+    // HEAD를 ancestor로 갖는 commit들. 여기 닿은 branch로는 현재 branch를 fast-forward할 수 있다.
+    func headDescendantCommitIDs() -> Set<String> {
+        guard let headCommitID else { return [] }
+        var childrenByID: [String: [String]] = [:]
+        for commit in commits {
+            for parentID in commit.parentIDs {
+                childrenByID[parentID, default: []].append(commit.id)
+            }
+        }
+        var visited: Set<String> = []
+        var stack = [headCommitID]
+        while let id = stack.popLast() {
+            guard visited.insert(id).inserted else { continue }
+            stack.append(contentsOf: childrenByID[id] ?? [])
         }
         return visited
     }
@@ -1994,8 +2028,10 @@ private struct RepositoryHistoryRow: View {
     let graphLaneCount: Int
     var currentBranchName: String? = nil
     var canFastForwardBranchRefs = false
+    var canFastForwardCurrentHere = false
     var worktreeURLs: [String: URL] = [:]
     var fastForward: (String) -> Void = { _ in }
+    var fastForwardCurrent: (String) -> Void = { _ in }
     var switchToBranch: (String) -> Void = { _ in }
     var openWorktree: (URL) -> Void = { _ in }
     var requestWorktreeRemoval: (String, URL) -> Void = { _, _ in }
@@ -2089,8 +2125,13 @@ private struct RepositoryHistoryRow: View {
                     }
                 }
                 if let target = fastForwardTarget(for: reference) {
-                    Button("Fast-Forward \(reference.name) to \(target)") {
+                    Button("Fast-Forward \(reference.name) from \(target)") {
                         fastForward(reference.name)
+                    }
+                }
+                if let current = fastForwardCurrentTarget(for: reference) {
+                    Button("Fast-Forward \(current) from \(reference.name)") {
+                        fastForwardCurrent(reference.name)
                     }
                 }
             }
@@ -2123,14 +2164,36 @@ private struct RepositoryHistoryRow: View {
                 }
                 if let target = fastForwardTarget(for: reference) {
                     Button(
-                        "Fast-Forward to \(target)",
+                        "Fast-Forward \(reference.name) from \(target)",
                         systemImage: "arrow.forward.to.line"
                     ) {
                         fastForward(reference.name)
                     }
                 }
+                if let current = fastForwardCurrentTarget(for: reference) {
+                    Button(
+                        "Fast-Forward \(current) from \(reference.name)",
+                        systemImage: "arrow.down.to.line"
+                    ) {
+                        fastForwardCurrent(reference.name)
+                    }
+                }
             }
         }
+    }
+
+    private func fastForwardCurrentTarget(
+        for reference: RepositoryHistory.Reference
+    ) -> String? {
+        guard
+            canFastForwardCurrentHere,
+            reference.kind == .branch,
+            let currentBranchName,
+            reference.name != currentBranchName
+        else {
+            return nil
+        }
+        return currentBranchName
     }
 
     private func fastForwardTarget(for reference: RepositoryHistory.Reference) -> String? {
@@ -2248,6 +2311,7 @@ private extension RepositoryHistory.Reference.Kind {
 
 private struct RepositoryCommitDetailView: View {
     @Bindable var model: AppModel
+    @Environment(\.gallaeTheme) private var theme
     @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
     @State private var commitPendingReset: RepositoryHistory.Commit?
     @State private var commitPendingRebasePlan: RepositoryHistory.Commit?
@@ -2397,11 +2461,55 @@ private struct RepositoryCommitDetailView: View {
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                 }
+
+                if let signatureBadge {
+                    Label(signatureBadge.text, systemImage: signatureBadge.systemImage)
+                        .font(.caption)
+                        .foregroundStyle(signatureBadge.color)
+                        .help(signatureBadge.help)
+                        .accessibilityLabel("Commit signature: \(signatureBadge.text)")
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var signatureBadge: (text: String, systemImage: String, color: Color, help: String)? {
+        guard let signature = model.selectedCommitSignature else { return nil }
+        switch signature {
+        case .none:
+            return nil
+        case .good(let keyID, let signer):
+            return (
+                "Signed · \(signer.isEmpty ? keyID : signer)",
+                "checkmark.seal",
+                theme.colors.statusAdded,
+                "Good signature with key \(keyID)"
+            )
+        case .unverifiedTrust(let keyID, let signer):
+            return (
+                "Signed · \(signer.isEmpty ? keyID : signer) · trust not verified",
+                "checkmark.seal",
+                Color.secondary,
+                "The signature is valid, but the key’s trust isn’t verified (key \(keyID))"
+            )
+        case .invalid:
+            return (
+                "Invalid signature",
+                "xmark.seal",
+                theme.colors.statusConflict,
+                "The signature doesn’t verify, or its key is expired or revoked"
+            )
+        case .cannotCheck:
+            return (
+                "Signature can’t be verified",
+                "seal",
+                Color.secondary,
+                "The signing key isn’t available to verify this signature"
+            )
+        }
     }
 
     private var rebasePlanUnavailableReason: String? {
