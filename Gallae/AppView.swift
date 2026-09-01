@@ -383,8 +383,8 @@ private struct RepositoryIntegrateBranchSheet: View {
             }
 
             Picker("Direction", selection: $direction) {
-                Text("Into \(currentBranch)").tag(Direction.into)
-                Text("From \(currentBranch)").tag(Direction.from)
+                Text("Update \(currentBranch)").tag(Direction.into)
+                Text("Update another branch").tag(Direction.from)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -468,7 +468,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                         )
                     }
                 } else {
-                    Button("Fast-Forward to \(selectedBranch ?? "Branch")") {
+                    Button("Fast-Forward \(selectedBranch ?? "Branch") to \(currentBranch)") {
                         fastForwardSelectedBranch()
                     }
                     .buttonStyle(.borderedProminent)
@@ -585,7 +585,7 @@ private struct RepositoryIntegrateBranchSheet: View {
             case (0, 0):
                 return "\(currentBranch) and \(selectedBranch) point at the same commit."
             case (_, 0):
-                return "\(currentBranch) already contains every commit of \(selectedBranch). Switch to From \(currentBranch) to update it here."
+                return "\(currentBranch) already contains every commit of \(selectedBranch). Switch to Update another branch to fast-forward \(selectedBranch) here."
             case (0, _):
                 return "\(selectedBranch) is \(theirs) commit\(theirs == 1 ? "" : "s") ahead. Fast-Forward applies them to \(currentBranch)."
             default:

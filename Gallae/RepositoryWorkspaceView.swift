@@ -2125,12 +2125,12 @@ private struct RepositoryHistoryRow: View {
                     }
                 }
                 if let target = fastForwardTarget(for: reference) {
-                    Button("Fast-Forward \(reference.name) from \(target)") {
+                    Button("Fast-Forward \(reference.name) to \(target)") {
                         fastForward(reference.name)
                     }
                 }
                 if let current = fastForwardCurrentTarget(for: reference) {
-                    Button("Fast-Forward \(current) from \(reference.name)") {
+                    Button("Fast-Forward \(current) to \(reference.name)") {
                         fastForwardCurrent(reference.name)
                     }
                 }
@@ -2164,7 +2164,7 @@ private struct RepositoryHistoryRow: View {
                 }
                 if let target = fastForwardTarget(for: reference) {
                     Button(
-                        "Fast-Forward \(reference.name) from \(target)",
+                        "Fast-Forward \(reference.name) to \(target)",
                         systemImage: "arrow.forward.to.line"
                     ) {
                         fastForward(reference.name)
@@ -2172,7 +2172,7 @@ private struct RepositoryHistoryRow: View {
                 }
                 if let current = fastForwardCurrentTarget(for: reference) {
                     Button(
-                        "Fast-Forward \(current) from \(reference.name)",
+                        "Fast-Forward \(current) to \(reference.name)",
                         systemImage: "arrow.down.to.line"
                     ) {
                         fastForwardCurrent(reference.name)

@@ -91,6 +91,23 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 - 커밋 작성은 문맥을 잃는 모달보다 현재 변경사항과 함께 보이는 인라인 영역을 우선한다.
 - 작은 창에서는 보조 영역부터 접고, 선택 항목과 핵심 동작은 남긴다.
 
+## Fast-forward 표기 프레임
+
+앱 전체가 하나의 표기 프레임만 쓴다. 두 프레임을 혼용하면 같은 동작이 화면마다 다른 전치사로 읽히는 문제가 실제로 있었다. 어느 프레임을 고르든 전면 적용이 조건이다.
+
+**현재 결정: 위치 프레임.** git 문서와 reflog의 어순으로, ref가 이동한다는 사실을 그대로 표기한다.
+
+- 규칙: `Fast-Forward <이동하는 branch> to <도착 branch>` — 첫 단어가 움직이는 ref, `to` 뒤가 도착 위치.
+- 같은 동작은 어느 화면(Integrate 시트, History 행 메뉴)에서든 글자까지 같은 라벨을 쓴다.
+- Integrate 방향 선택기는 전치사를 쓰지 않는 `Update <현재 branch>` · `Update another branch`로 갱신되는 쪽만 말한다.
+
+**검토한 대안: 흐름 프레임.** `merge X into Y` · `pull from`처럼 변경의 흐름을 표기하는 GUI 관례다. `to`는 변경을 받는 branch, `from`은 보내는 branch가 된다. 이 프레임으로 전환하려면 다음을 한 변경에서 함께 바꾼다.
+
+1. History 행 메뉴 두 항목: `Fast-Forward <이동> to <도착>` → `Fast-Forward <갱신되는 branch> from <소스 branch>`
+2. Integrate 보내기 방향 버튼: `Fast-Forward <이동> to <도착>` → 방향 선택기와 한 문장을 이루는 `Fast-Forward to <대상>`
+3. 방향 선택기: `Update <현재>` · `Update another branch` → `Into <현재>` · `From <현재>`
+4. 이 절과 Advanced 아홉·열한 번째 수직 슬라이스, 구현 계획의 해당 완료 조건 서술
+
 ## 기능 로드맵
 
 | 단계 | 사용자 결과 | 포함 기능 |
@@ -438,27 +455,27 @@ Gallae는 다른 local ref를 함께 이동시키지 않고 강제 Push도 실�
 
 ## Advanced 아홉 번째 수직 슬라이스
 
-사용자는 Integrate에서 통합 방향을 먼저 고른다. `Into <현재 branch>`는 기존과 같이 선택한 local branch를 현재 branch로 fast-forward·merge commit·rebase한다. 새 방향 `From <현재 branch>`는 현재 branch가 이미 포함한 다른 local branch를 checkout 없이 현재 HEAD로 fast-forward한다. 두 방향은 같은 branch 목록과 divergence 표시를 공유하고, 각 방향에서 성립하지 않는 동작은 이유와 함께 비활성으로 표시한다.
+사용자는 Integrate에서 통합 방향을 먼저 고른다. 방향 선택기는 갱신되는 branch를 이름으로 말하는 `Update <현재 branch>`와 `Update another branch`로 표기해 전치사 없이 방향을 정한다. `Update <현재 branch>`는 선택한 local branch를 현재 branch로 fast-forward·merge commit·rebase한다. `Update another branch`(이하 보내기 방향)는 현재 branch가 이미 포함한 다른 local branch를 checkout 없이 현재 HEAD로 fast-forward한다. 두 방향은 같은 branch 목록과 divergence 표시를 공유하고, 각 방향에서 성립하지 않는 동작은 이유와 함께 비활성으로 표시한다.
 
-실행 버튼은 방향 선택기와 한 문장을 이루도록 `Fast-Forward to <대상 branch>`로 표기해 `From <현재 branch>` → `to <대상>` 흐름으로 읽히게 하고, 움직이는 ref와 도착 지점은 안내 문장이 함께 명시한다. `From` 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
+실행 버튼은 git 문서의 위치 프레임대로 `Fast-Forward <이동하는 branch> to <도착 branch>`로 표기해 어느 ref가 어디로 움직이는지 라벨만으로 드러낸다. 보내기 방향은 ref만 이동하므로 현재 working tree가 dirty해도 실행할 수 있으며, HEAD·index·working tree와 remote branch는 바꾸지 않는다. 실행 직전에 대상 branch가 현재 HEAD의 ancestor인지 다시 확인하고, diverged 상태거나 확인이 실패하면 ref를 바꾸지 않고 원인을 표시한다. 이동은 대상 branch의 reflog에 남는다.
 
-`From` 방향의 merge commit과 rebase는 checkout 없이 충돌을 해결할 수 없으므로 제공하지 않고, force 계열 갱신도 제공하지 않는다. 이 슬라이스는 어느 Worktree에도 체크아웃되지 않은 대상 branch만 갱신하며, 다른 Worktree에 체크아웃된 branch는 폴더 배지와 함께 비활성으로 표시하고 다음 수직 슬라이스에서 다룬다.
+보내기 방향의 merge commit과 rebase는 checkout 없이 충돌을 해결할 수 없으므로 제공하지 않고, force 계열 갱신도 제공하지 않는다. 이 슬라이스는 어느 Worktree에도 체크아웃되지 않은 대상 branch만 갱신하며, 다른 Worktree에 체크아웃된 branch는 폴더 배지와 함께 비활성으로 표시하고 다음 수직 슬라이스에서 다룬다.
 
 ## Advanced 열 번째 수직 슬라이스
 
-`From` 방향의 대상 branch가 다른 Worktree에 체크아웃된 경우, ref만 옮기면 그 Worktree의 파일과 어긋나므로 Gallae는 대신 해당 Worktree 폴더에서 `--ff-only` merge를 실행해 branch와 그 Worktree의 working tree를 함께 전진시킨다. 대상 행은 branch picker와 같은 폴더 배지로 Worktree를 표시하고, 실행 문구는 어느 폴더가 갱신되는지 밝힌다.
+보내기 방향의 대상 branch가 다른 Worktree에 체크아웃된 경우, ref만 옮기면 그 Worktree의 파일과 어긋나므로 Gallae는 대신 해당 Worktree 폴더에서 `--ff-only` merge를 실행해 branch와 그 Worktree의 working tree를 함께 전진시킨다. 대상 행은 branch picker와 같은 폴더 배지로 Worktree를 표시하고, 실행 문구는 어느 폴더가 갱신되는지 밝힌다.
 
 fast-forward와 겹치지 않는 그 Worktree의 local 수정은 보존하고, 겹치거나 진행 중인 Git 작업이 있으면 강제로 덮어쓰지 않고 원인을 표시한다. 누락되었거나 정리 가능한 Worktree는 대상으로 하지 않는다. 성공·실패 뒤에는 현재 Workspace의 Repository와 History를 다시 읽으며, 해당 Worktree를 열지는 않는다. 열기는 기존 branch picker의 Open Worktree를 유지한다.
 
 ## Advanced 열한 번째 수직 슬라이스
 
-History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 Integrate의 `From` 방향과 같은 경로로 그 branch를 현재 HEAD로 옮기는 동작을, 반대로 그 commit이 현재 HEAD의 descendant이면 현재 branch를 당기는 동작을 제공한다. 두 방향은 조건상 함께 나타나지 않는다. Fast-forward 표기는 앱 전체가 하나의 흐름 프레임을 쓴다. `to`는 변경을 받는 branch, `from`은 보내는 branch다. 메뉴는 `Fast-Forward <갱신되는 branch> from <소스 branch>`로 첫 단어가 갱신되는 쪽을 말하고, Integrate 시트는 방향 선택기와 한 문장을 이루는 `Fast-Forward to <대상 branch>`를 쓴다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 기존 Integrate fast-forward의 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
+History 목록에서 commit 행을 우클릭하면 그 commit에 닿은 모든 local branch를 branch 이름 섹션으로 나눠 보여 준다. 행에 배지로 표시되지 않은 숨은 ref도 포함한다. 현재 branch가 아닌 branch에는 branch picker와 같은 `Switch` 또는 `Open Worktree`를 제공하고, 그 branch가 현재 HEAD의 ancestor이면 Integrate의 보내기 방향과 같은 경로로 그 branch를 현재 HEAD로 옮기는 동작을, 반대로 그 commit이 현재 HEAD의 descendant이면 현재 branch를 당기는 동작을 제공한다. 두 방향은 조건상 함께 나타나지 않는다. Fast-forward 표기는 앱 전체가 git 문서의 위치 프레임 하나를 쓴다. 항상 `Fast-Forward <이동하는 branch> to <도착 branch>`로, 첫 단어가 움직이는 ref이고 `to` 뒤가 도착 위치다. 실행 규칙은 아홉·열 번째 수직 슬라이스와 기존 Integrate fast-forward의 검사·실행 경로를 재사용하며, 성공하면 History와 ref 표시를 다시 읽는다.
 
 remote-tracking branch와 tag 배지에는 쓰기 동작을 제공하지 않는다. 같은 동작은 키보드와 VoiceOver로도 접근할 수 있어야 하며, detached HEAD에서는 제공하지 않는다.
 
 ## Advanced 열두 번째 수직 슬라이스
 
-`From` 방향에서 대상 branch가 현재 branch와 갈라져 있으면 fast-forward 대신 `Create Merge Commit on <대상>`을 제공한다. Gallae는 실행 전에 in-memory merge(`merge-tree`)로 결과를 계산해 충돌이 없으면 그대로 실행할 수 있음을, 충돌이 있으면 실행하지 않고 충돌 파일 수와 목록을 미리 보여 준다.
+보내기 방향에서 대상 branch가 현재 branch와 갈라져 있으면 fast-forward 대신 `Create Merge Commit on <대상>`을 제공한다. Gallae는 실행 전에 in-memory merge(`merge-tree`)로 결과를 계산해 충돌이 없으면 그대로 실행할 수 있음을, 충돌이 있으면 실행하지 않고 충돌 파일 수와 목록을 미리 보여 준다.
 
 실행은 계산한 tree로 대상과 현재 branch를 부모로 하는 merge commit을 만들고, 이전 값 검증과 함께 대상 ref만 옮긴다. HEAD·index·working tree는 바꾸지 않으므로 현재 working tree가 dirty해도 실행할 수 있고, 이동 사유는 대상 branch의 reflog에 남는다. commit은 Git 기본 merge message 형식과 사용자의 identity·서명 설정을 따르되, worktree 없이 실행되므로 merge hook이 실행되지 않는다는 점을 실행 전에 알린다.
 
@@ -466,7 +483,7 @@ ref 이동은 Git의 Worktree 체크아웃 보호를 우회하므로, 이 경로
 
 ## Advanced 열세 번째 수직 슬라이스
 
-`From` 방향의 갈라진 대상 branch가 다른 Worktree에 체크아웃된 경우, 해당 Worktree 폴더에서 `--no-ff --no-edit` merge를 실행해 branch와 그 working tree를 함께 갱신한다. 이 경로는 일반 merge이므로 사용자의 identity·hook·서명 설정이 그대로 실행된다. 실행 전에는 같은 in-memory 예측으로 충돌 여부와 파일을 미리 보여 준다.
+보내기 방향의 갈라진 대상 branch가 다른 Worktree에 체크아웃된 경우, 해당 Worktree 폴더에서 `--no-ff --no-edit` merge를 실행해 branch와 그 working tree를 함께 갱신한다. 이 경로는 일반 merge이므로 사용자의 identity·hook·서명 설정이 그대로 실행된다. 실행 전에는 같은 in-memory 예측으로 충돌 여부와 파일을 미리 보여 준다.
 
 실행 직전에 그 Worktree가 여전히 대상 branch를 체크아웃 중인지 다시 확인한다. 그 Worktree에 진행 중인 Git 작업이 있거나 merge 대상과 겹치는 local 변경이 있으면 실행하지 않고 원인을 표시한다. merge가 충돌하면 강제로 덮어쓰지 않고 사용자가 고른다. 그 Worktree를 같은 창의 Workspace로 열어 기존 충돌 해결·Continue·Abort 흐름으로 잇거나, 즉시 Abort해 실행 전 상태 복원을 확인한다. 성공·실패 뒤에는 현재 Workspace의 Repository와 History를 다시 읽는다.
 
