@@ -593,9 +593,21 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 - **diff 배치.** Unified·Split은 diff 헤더 토글, 마지막 선택 기억.
 - **줄 단위 staging.** 거터 체크박스는 줄 단위 staging 기능이 들어올 때의 UI다. 그전까지는 hunk 버튼을 유지하고 둘을 설정으로 고르게 하지 않는다.
 - **커밋 작성.** staged가 없으면 한 줄 바(Commit …)로 접히고 생기면 펼쳐진다.
-- **보류.** History 맨 위의 Working Tree 행. 아래 다섯 과업 판정에서 결정한다.
+- **Working Tree 행 없음.** History 맨 위에 Working Tree 행을 두지 않는다. 아래 다섯 과업 판정의 결과다. 좁은 창에서 dirty 상태를 History 화면 안에서 보여 주는 이득 하나에, 맨 위 행이 commit이 아니게 되어 HEAD commit을 잘못 고를 위험과 1180pt에서 Navigator의 Changes 개수와 중복되는 비용이 붙는다.
 
 판정 방법은 Codex 제안을 따른다. 같은 데이터로 다섯 과업(현재 branch와 dirty 상태 말하기, hunk 하나 stage와 commit, commit의 branch 관계와 파일 찾기, stash 적용, reflog에서 복구 branch 만들기)을 1180pt와 720pt에서 수행하고, 클릭 수 대신 문맥을 잃은 횟수·가려진 핵심 명령·잘못 고를 수 있는 위험 동작·키보드 포커스 이동을 센다.
+
+판정 결과(7A-7). 데이터는 stash 1개, staged 1·unstaged 1·untracked 2, main보다 2 commit 앞선 feature 저장소이고, 접근성 트리로 각 화면에서 보이는 명령을 확인했다. 칸은 문맥 손실 · 가려진 명령 · 위험 동작 · 포커스 이동이다.
+
+| 과업 | 1180pt | 720pt | Working Tree 행이 바꾸는 것 |
+|---|---|---|---|
+| 현재 branch와 dirty 상태 | 0 · 0 · 0 · 0 | 0 · 1 · 0 · 0 | 720에서 History 화면에 있을 때만 가려진 명령 1이 0이 된다 |
+| hunk 하나 stage와 commit | 1 · 0 · 1 · 2 | 1 · 0 · 1 · 2 | 없음. 행 클릭은 ⌘1과 같다 |
+| commit의 branch 관계와 파일 | 0 · 0 · 0 · 1 | 0 · 0 · 0 · 1 | 위험 동작 +1. 맨 위 행이 commit이 아니라 HEAD commit이 둘째 행이 된다 |
+| stash 적용 | 1 · 0 · 1 · 1 | 1 · 0 · 1 · 1 | 없음 |
+| reflog에서 복구 branch | 1 · 0 · 0 · 2 | 1 · 0 · 0 · 2 | 없음 |
+
+위험 동작 1은 diff 헤더의 Discard…가 Stage 옆에, Stashes의 Delete…가 Apply 옆에 있는 것이며 둘 다 확인 대화상자가 막는다. 720pt에서 가려진 것은 dirty 개수 하나로, Floating Navigator를 열면 화면을 옮기지 않고 본다. 행은 그 하나를 History 화면에서만 돕고 위험을 하나 더한다.
 
 ### 다음 슬라이스
 
@@ -604,7 +616,7 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 3. Navigator 선택 문맥. branch·remote·tag 선택 시 본문, Stashes·Reflog 목적지 화면, branch 우클릭 메뉴.
 4. 재질·접근성 응답과 설정(Appearance, Translucent, Compact Rows), diff Split 보기.
 
-네 슬라이스는 구현 계획의 7A-1~7A-4로 끝났다. 남은 것은 보류한 Working Tree 행을 정하는 다섯 과업 판정이다.
+네 슬라이스는 구현 계획의 7A-1~7A-4로 끝났고, 다섯 과업 판정으로 Working Tree 행은 두지 않기로 했다.
 
 ## 디자인 시안 6
 

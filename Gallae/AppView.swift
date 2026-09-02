@@ -1331,8 +1331,8 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         switch self {
         case .fetch(let remote, let pruning):
             pruning
-                ? remote.map { "Fetching & Pruning from \($0)…" } ?? "Reading Fetch & Prune Remotes…"
-                : remote.map { "Fetching from \($0)…" } ?? "Reading Fetch Remotes…"
+                ? remote.map { "Fetching & Pruning from \($0)…" } ?? "Fetching & Pruning…"
+                : remote.map { "Fetching from \($0)…" } ?? "Fetching Remote Changes…"
         case .automaticFetch: "Fetching Automatically…"
         case .pull: "Pulling Remote Changes…"
         case .publish: "Publishing Local Branch…"

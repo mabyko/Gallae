@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-6 detail 열 최소폭 제거와 SwiftUI 분할 완료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
+> 현재 범위: 7A-7 다섯 과업 판정(Working Tree 행 없음)과 Fetch 진행 제목 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -727,6 +727,12 @@ GallaeApp
 - detail 열에서 최소·ideal 폭을 없앴다. 여섯 곳의 `HSplitView`(Changes, History, Remote, Stashes, Reflog, commit 파일 목록)는 `ResizableHSplit`로 바꿨다. `GeometryReader` 기반이라 최소폭이 없고, 좁아지면 앞 pane이 자기 최소폭까지 먼저 양보하고 그 아래서는 둘이 최소폭 비율로 줄어든다. 구분선 드래그 폭은 `@SceneStorage`에 남는다.
 - Navigator 접힘은 창 폭 변화에서만 일어난다. 구분선 드래그 중 열을 뒤집던 `foldOverwideNavigator`는 뺐다. 드래그 중 AppKit 분할 뷰와 상태가 어긋나 사이드바 내용이 왼쪽으로 밀리고 detail이 오른쪽으로 넘치던 원인이었다. 저장된 사이드바 폭을 ideal로 쓸 때는 320으로 캡한다.
 - 접근성 API로 확인했다. 1456pt 창에서 사이드바 300·500·554 모두 diff 오른쪽 끝이 창 끝과 같고, 1000·800·720으로 줄이면 창이 그 폭을 지키며 사이드바가 접히고 1456에서 돌아온다. 테스트 112개가 통과하고 분할 폭 규칙 테스트를 더했다. 안쪽 구분선 드래그는 합성 드래그가 먹지 않아 눈으로 확인한다.
+
+### 7A-7 · 다섯 과업 판정과 Fetch 진행 제목 — 완료
+
+- PRODUCT.md의 판정 방법대로 다섯 과업을 1180pt와 720pt에서 접근성 트리로 확인하고 표를 남겼다. History 맨 위의 Working Tree 행은 두지 않는다. 720pt에서 dirty 개수 하나가 가려지는 것은 Floating Navigator가 화면을 옮기지 않고 보여 주고, 행은 History 화면에서만 그것을 돕는 대신 HEAD commit을 둘째 행으로 밀어 잘못 고를 위험을 더한다.
+- 720pt 툴바는 제목이 짧은 저장소에서 Navigator·Library·Fetch·Pull·Publish·↻가 모두 보이고 오버플로가 없었다.
+- remote를 정하지 않은 Fetch의 진행 제목을 "Reading Fetch Remotes…"에서 "Fetching Remote Changes…"로, Prune은 "Fetching & Pruning…"으로 바꿨다. Pull의 "Pulling Remote Changes…"와 같은 꼴이다.
 
 ## 각 단계의 검증
 
