@@ -127,8 +127,10 @@ enum ResizableHSplitLayout {
         trailingMinimum: CGFloat,
         total: CGFloat
     ) -> CGFloat {
-        let available = max(total - dividerWidth, 0)
-        let clamped = min(max(preferred, leadingMinimum), leadingMaximum ?? .infinity)
+        // Whole points only: a lazy stack proposed a fractional width such as 940.8 falls back to its
+        // intrinsic width for that frame, so the diff flickered between narrow and full while dragging.
+        let available = max(total - dividerWidth, 0).rounded(.down)
+        let clamped = min(max(preferred, leadingMinimum), leadingMaximum ?? .infinity).rounded()
         if clamped + trailingMinimum <= available { return clamped }
         let yielded = available - trailingMinimum
         if yielded >= leadingMinimum { return yielded }
@@ -4454,8 +4456,8 @@ private struct RepositoryRevisionChangesView: View {
                         RepositoryDiffLinesView(lines: lines, layout: layout)
                     }
                     .frame(
-                        minWidth: proxy.size.width,
-                        maxWidth: layout == .split ? proxy.size.width : nil,
+                        minWidth: proxy.size.width.rounded(.down),
+                        maxWidth: layout == .split ? proxy.size.width.rounded(.down) : nil,
                         alignment: .leading
                     )
                     .textSelection(.enabled)
@@ -4719,8 +4721,8 @@ private struct RepositoryDiffView: View {
                             }
                         }
                         .frame(
-                            minWidth: proxy.size.width,
-                            maxWidth: layout == .split ? proxy.size.width : nil,
+                            minWidth: proxy.size.width.rounded(.down),
+                            maxWidth: layout == .split ? proxy.size.width.rounded(.down) : nil,
                             alignment: .leading
                         )
                         .textSelection(.enabled)
@@ -4859,7 +4861,7 @@ private struct RepositoryConflictVersionView: View {
                             RepositoryConflictLineView(line: line)
                         }
                     }
-                    .frame(minWidth: proxy.size.width, alignment: .leading)
+                    .frame(minWidth: proxy.size.width.rounded(.down), alignment: .leading)
                     .textSelection(.enabled)
                 }
                 .defaultScrollAnchor(.topLeading, for: .alignment)

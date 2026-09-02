@@ -2461,6 +2461,7 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(width(100, total: 1000), 320, "never below the leading minimum while there is room")
         XCTAssertEqual(width(450, total: 801), 400, "too wide: the leading pane yields to keep the trailing minimum")
         XCTAssertEqual(width(320, total: 361), 160, "narrower than both minimums: 320:400 of the 360 left")
+        XCTAssertEqual(width(340.6, total: 1000.8), 341, "whole points only, so lazy stacks accept the width")
         XCTAssertEqual(
             ResizableHSplitLayout.leadingWidth(
                 preferred: 500, leadingMinimum: 160, leadingMaximum: 280, trailingMinimum: 230, total: 1000
