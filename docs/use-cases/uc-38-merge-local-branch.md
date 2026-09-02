@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 다른 local branch의 직선상 commit을 현재 branch에 안전하게 반영한다. |
 | 시작 조건 | commit이 있는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, 또는 Repository 메뉴의 `Integrate…` |
+| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, Repository 메뉴의 `Integrate…`, 또는 Navigator branch 행의 문맥 메뉴·branch 화면의 `Integrate…`(그 branch가 미리 선택됨) |
 | 완료 상태 | 현재 branch가 선택한 source branch commit으로 fast-forward되고 Workspace가 갱신된다. |
 
 ## 정상 흐름

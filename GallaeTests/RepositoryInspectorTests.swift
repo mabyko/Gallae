@@ -2536,6 +2536,61 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testReadsHistoryOfOneReferenceAndListsTagsAndRemoteBranches() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        let baseID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "tag", "v1", baseID])
+
+        try write("main\n", to: "main.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let headID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", repositoryURL.path, "tag", "-a", "-m", "release", "v2", headID])
+
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "-b", "feature", baseID])
+        try write("feature\n", to: "feature.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        let featureID = try gitOutput([
+            "-C", repositoryURL.path, "rev-parse", "HEAD"
+        ]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // 같은 이름의 branch와 tag가 있어도 refs/heads·refs/tags로 서로 다른 ref를 읽는다.
+        try runGit(["-C", repositoryURL.path, "tag", "feature", baseID])
+        try runGit(["-C", repositoryURL.path, "update-ref", "refs/remotes/origin/main", headID])
+        try runGit(["-C", repositoryURL.path, "update-ref", "refs/remotes/origin/feature", featureID])
+        try runGit(["-C", repositoryURL.path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"])
+        try runGit(["-C", repositoryURL.path, "update-ref", "refs/remotes/upstream/main", baseID])
+        try runGit(["-C", repositoryURL.path, "checkout", "--quiet", "main"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        let featureHistory = try await inspector.history(in: repository, reference: "refs/heads/feature")
+        XCTAssertEqual(featureHistory.commits.map(\.id), [featureID, baseID])
+        XCTAssertEqual(featureHistory.headCommitID, headID)
+
+        let featureTagHistory = try await inspector.history(in: repository, reference: "refs/tags/feature")
+        XCTAssertEqual(featureTagHistory.commits.map(\.id), [baseID])
+
+        // Creation dates tie within one second here, so only membership is stable.
+        let tags = try await inspector.tags(in: repository)
+        XCTAssertEqual(Set(tags), ["v1", "v2", "feature"])
+
+        let originBranches = try await inspector.remoteBranches(of: "origin", in: repository)
+        XCTAssertEqual(originBranches, ["origin/feature", "origin/main"])
+        let upstreamBranches = try await inspector.remoteBranches(of: "upstream", in: repository)
+        XCTAssertEqual(upstreamBranches, ["upstream/main"])
+        let missingBranches = try await inspector.remoteBranches(of: "missing", in: repository)
+        XCTAssertEqual(missingBranches, [])
+    }
+
     func testBuildsHistoryGraphForMergeCommit() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

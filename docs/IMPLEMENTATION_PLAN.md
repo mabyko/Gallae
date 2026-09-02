@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-2 진행 표시 모델 완료 · 다음 7A-3 Navigator 선택 문맥(branch·remote·tag 본문, Stashes·Reflog 목적지 화면, branch 우클릭 메뉴)
+> 현재 범위: 7A-3 Navigator 선택 문맥 완료 · 다음 7A-4 재질·접근성 응답과 설정(Appearance·Translucent·Compact Rows), diff Split 보기
 
 ## 사용자 결과
 
@@ -678,8 +678,8 @@ GallaeApp
 ### 7A-1 · Workspace Navigator와 한 줄 문맥 바 — 완료
 
 - Repository Workspace는 `NavigationSplitView`의 Navigator · 목록 · 내용 3열이다. Navigator는 Workspace(Changes·History)와 Recovery(Stashes·Reflog) 목적지, local branch 목록, configured Remote 목록을 보여 준다. 목적지 선택은 기존 ⌘1~⌘4·View 메뉴와 같은 상태를 쓰고, Changes 행에는 변경 파일 수가 붙는다.
-- Branches 행은 선택 대상이 아니라 동작 대상이다. 현재 branch에는 HEAD, 다른 Worktree에 체크아웃된 branch에는 폴더 표시가 붙고, 이중 클릭 또는 문맥 메뉴로 Switch·Open Worktree·Remove Worktree…·Remove Branch…를 실행한다. 섹션 헤더의 `+`가 New Branch 시트를 열고, Navigator 하단의 필터가 목록을 좁힌다. 목록은 다시 읽는 동안 마지막 결과를 유지한다.
-- Remotes 행은 이름과 Fetch URL(도움말)을 보이고, 이중 클릭·문맥 메뉴·섹션 헤더 버튼이 기존 Remotes 시트를 연다. Repository 메뉴에 `Remotes…`와 `Integrate…`를 추가했다.
+- Branches 행은 이 슬라이스에서는 동작 대상만이었고 7A-3에서 선택 대상이 됐다. 현재 branch에는 HEAD, 다른 Worktree에 체크아웃된 branch에는 폴더 표시가 붙고, 이중 클릭 또는 문맥 메뉴로 Switch·Open Worktree·Remove Worktree…·Remove Branch…를 실행한다. 섹션 헤더의 `+`가 New Branch 시트를 열고, Navigator 하단의 필터가 목록을 좁힌다. 목록은 다시 읽는 동안 마지막 결과를 유지한다.
+- Remotes 행은 이름과 Fetch URL(도움말)을 보이고, 이 슬라이스에서는 이중 클릭·문맥 메뉴·섹션 헤더 버튼이 기존 Remotes 시트를 열었다(7A-3에서 remote 화면으로 대체). Repository 메뉴에 `Remotes…`(7A-3에서 제거)와 `Integrate…`를 추가했다.
 - 헤더는 저장소 이름·경로·segmented control 대신 한 줄 문맥 바다. 현재 branch가 메뉴 버튼이 되어 `Switch To`·`New Branch…`·`Integrate…`를 제공하고, Tracking·ahead/behind·unborn·새로고침 실패·임시 Worktree 표시는 같은 줄에 남는다. 진행 중인 Merge·Rebase 배너는 그대로다.
 - 툴바에서 Remotes·Integrate를 뺐다. 왼쪽은 Navigator 토글과 Library, 오른쪽은 Fetch·Pull·Push/Publish·Refresh다. 자동 사이드바 토글은 제거하고 View 메뉴의 `Hide/Show Navigator`(⌃⌘S)와 툴바 버튼이 같은 상태를 바꾼다.
 - 창 폭이 Navigator 이상 폭 220·Changes 목록 320·diff 400과 분할선을 합한 948pt보다 좁으면 Navigator를 먼저 접고, 다시 넓어지면 편다. 사용자가 좁은 창에서 직접 연 Navigator는 다음 크기 변경까지 유지한다. detail 열에 명시적 ideal 폭을 두어 분할 뷰가 diff의 자연 폭으로 창을 넘치지 않게 했다.
@@ -694,6 +694,15 @@ GallaeApp
 - 성공하면 캡슐이 결과를 2.5초 보이고 사라진다. Fetch는 `Fetched (from <remote>)`, Pull은 작업 전 behind 수로 `Pulled N commits`, Push는 ahead 수로 `Pushed N commits`, Publish는 목적지, remote branch 삭제는 대상 ref다. 실패는 기존대로 작업 이름을 제목으로 한 alert다.
 - 짧은 로컬 작업은 300ms가 지나면 같은 subtitle과 캡슐(Cancel 없음)로 `Updating`·`Reading Repository…`를 보여 준다.
 - 응답 없는 원격 주소를 가진 임시 Repository로 실행 중 상태를 접근성 API로 확인했다. 제목 subtitle, Fetch 아이콘 교체와 Fetch·Pull·Push 비활성, Refresh·Stage·Discard 활성, 캡슐의 Cancel과 취소 뒤 복귀, 로컬 bare remote로 `Fetched` 결과 캡슐 표시와 소멸을 확인했고 `xcodebuild test`가 통과했다.
+
+### 7A-3 · Navigator 선택 문맥 — 완료
+
+- Navigator 선택은 목적지(Changes·History·Stashes·Reflog) 또는 Git 객체(branch·remote·tag) 하나다. 목적지는 종전처럼 `@SceneStorage`와 ⌘1~⌘4·View 메뉴를 쓰고, 객체가 선택된 동안 View 메뉴의 목적지 항목에는 체크가 없다. 저장소를 바꾸면 이전 저장소의 객체 선택을 버리고 기억한 목적지로 돌아가고, 선택한 branch·remote·tag가 다시 읽은 목록에서 사라지면 History로 돌아간다.
+- branch·tag를 고르면 History 화면이 그 ref 하나의 log로 좁혀진다. `RepositoryHistoryRequest`에 fully qualified ref(`refs/heads/…`·`refs/tags/…`)가 붙어 같은 이름의 branch와 tag가 서로를 가리키지 않고, 선택이 바뀌면 그 ref의 끝 commit이 먼저 선택된다. 헤더는 ref 이름과 종류(Local branch·HEAD·Worktree 위치·Tag)를 보이고, branch 화면에는 `Switch` 또는 `Open Worktree`와 그 branch를 미리 고른 `Integrate…`가, tag 화면에는 그 tag에서 시작하는 `New Branch…`가 산다. Stashes·Reflog 요청은 ref와 무관하게 유지해 branch를 고를 때 다시 읽지 않는다.
+- remote를 고르면 본문이 remote 화면으로 바뀐다. 왼쪽은 그 remote의 remote-tracking branch 목록(문맥 메뉴로 `Delete on Remote…`·`Remove Tracking Reference…`, History 행과 같은 확인 문구를 공용 modifier로 공유), 오른쪽은 이름·Fetch URL·Push URL과 `Fetch`·`Fetch & Prune`·`Test Connection`(진행·Reachable·Cancel Test)·`Edit…`·`Remove…`다. Remotes 시트와 Repository 메뉴의 `Remotes…`는 제거했고, Navigator remote 행의 문맥 메뉴가 `Fetch`·`Fetch & Prune`을 준다.
+- Navigator에 Tags 섹션을 추가했다. Inspector가 `for-each-ref`로 tag(최근 생성 순)와 remote별 remote-tracking branch를 읽되, `refname:short`는 branch와 같은 이름의 tag를 `tags/<name>`으로, remote의 `HEAD` 별칭을 remote 이름으로 바꿔 내놓으므로 전체 refname에서 접두어를 직접 뗀다. Stashes 행에는 개수 배지가 붙고, Navigator 필터는 branch·remote·tag 모두에 적용된다.
+- Navigator branch 행의 문맥 메뉴에 `Integrate…`를 추가했고 Integrate 시트는 그 branch를 미리 고른 채 열린다. 현재 branch 행은 메뉴가 없다.
+- 임시 Repository(branch 2·remote 1·tag 2)에서 접근성 API로 branch 화면의 헤더·Switch·Integrate…와 2개 commit, remote 화면의 URL·버튼·remote branch 행, tag 화면의 `New Branch…`와 도달 commit 수, ⌘2로 History 복귀, 우클릭 메뉴(branch: Switch·Integrate…·Remove Branch…, remote: Fetch·Fetch & Prune, 현재 branch: 없음), View 메뉴 체크 없음, Integrate 시트의 미리 선택을 확인했다. Inspector 테스트가 같은 이름의 branch·tag 분리와 `origin/HEAD` 제외를 검증한다.
 
 ## 각 단계의 검증
 

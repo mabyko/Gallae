@@ -431,13 +431,48 @@ struct RepositoryInspector: Sendable {
         return activity
     }
 
-    func history(in repository: RepositorySummary) async throws -> RepositoryHistory {
+    /// `reference` narrows the log to one fully qualified ref (`refs/heads/main`, `refs/tags/v1`); nil reads every ref.
+    func history(
+        in repository: RepositorySummary,
+        reference: String? = nil
+    ) async throws -> RepositoryHistory {
         try Task.checkCancellation()
         let history = try await Task.detached(priority: .userInitiated) {
-            try Self.historySynchronously(in: repository)
+            try Self.historySynchronously(in: repository, reference: reference)
         }.value
         try Task.checkCancellation()
         return history
+    }
+
+    /// Tag names, newest tag first.
+    func tags(in repository: RepositorySummary) async throws -> [String] {
+        try Task.checkCancellation()
+        let tags = try await Task.detached(priority: .userInitiated) {
+            try Self.referenceNamesSynchronously(
+                in: repository,
+                pattern: "refs/tags",
+                dropping: "refs/tags/",
+                sort: "-creatordate"
+            )
+        }.value
+        try Task.checkCancellation()
+        return tags
+    }
+
+    /// Remote-tracking branch names of one remote, such as `origin/main`; the remote's `HEAD` alias is skipped.
+    func remoteBranches(of remote: String, in repository: RepositorySummary) async throws -> [String] {
+        try Task.checkCancellation()
+        let branches = try await Task.detached(priority: .userInitiated) {
+            try Self.referenceNamesSynchronously(
+                in: repository,
+                pattern: "refs/remotes/\(remote)/",
+                dropping: "refs/remotes/",
+                sort: "refname"
+            )
+            .filter { $0 != "\(remote)/HEAD" }
+        }.value
+        try Task.checkCancellation()
+        return branches
     }
 
     func interactiveRebasePlan(
@@ -2843,17 +2878,39 @@ struct RepositoryInspector: Sendable {
         return .init(commitCount: commitCount, recentCommits: recentCommits)
     }
 
+    /// Reads full ref names under `pattern` and drops `prefix`; `refname:short` would rename a tag that
+    /// shares its name with a branch to `tags/<name>` and a remote's `HEAD` alias to the bare remote name.
+    private static func referenceNamesSynchronously(
+        in repository: RepositorySummary,
+        pattern: String,
+        dropping prefix: String,
+        sort: String
+    ) throws -> [String] {
+        let result = try runGit([
+            "-C", repository.rootURL.path,
+            "for-each-ref", "--format=%(refname)", "--sort=\(sort)", pattern
+        ])
+        guard result.status == 0 else {
+            throw RepositoryReferenceError.unreadable(result.standardError)
+        }
+        return text(from: result.standardOutput)
+            .split(whereSeparator: \.isNewline)
+            .compactMap { line in
+                line.hasPrefix(prefix) ? String(line.dropFirst(prefix.count)) : nil
+            }
+    }
+
     private static func historySynchronously(
-        in repository: RepositorySummary
+        in repository: RepositorySummary,
+        reference: String?
     ) throws -> RepositoryHistory {
         guard !repository.isUnborn else { return .init(commits: []) }
 
         let result = try runGit([
             "-C", repository.rootURL.path,
             "log", "-\(maximumHistoryCommits)", "--topo-order", "-z", "--no-show-signature",
-            "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b",
-            "--branches", "--remotes", "--tags", "HEAD", "--"
-        ])
+            "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
+        ] + (reference.map { [$0, "--"] } ?? ["--branches", "--remotes", "--tags", "HEAD", "--"]))
         guard result.status == 0 else {
             throw RepositoryHistoryError.unreadable(result.standardError)
         }
@@ -4368,6 +4425,14 @@ enum RepositoryDiscardError: LocalizedError, Equatable {
         case .gitFailed:
             "Git couldn’t discard the selected file’s unstaged changes."
         }
+    }
+}
+
+enum RepositoryReferenceError: LocalizedError, Equatable {
+    case unreadable(String)
+
+    var errorDescription: String? {
+        "Git couldn’t read this Repository’s tags or remote branches."
     }
 }
 

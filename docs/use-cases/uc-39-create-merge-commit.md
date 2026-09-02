@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 서로 갈라진 다른 local branch의 commit을 현재 branch에 명시적인 merge commit으로 합친다. |
 | 시작 조건 | 변경이 없는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, 또는 Repository 메뉴의 `Integrate…` |
+| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, Repository 메뉴의 `Integrate…`, 또는 Navigator branch 행의 문맥 메뉴·branch 화면의 `Integrate…`(그 branch가 미리 선택됨) |
 | 완료 상태 | 현재 branch에 두 branch를 parent로 둔 merge commit이 생기고 Workspace가 갱신된다. |
 
 ## 정상 흐름

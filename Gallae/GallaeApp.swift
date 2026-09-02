@@ -3,7 +3,8 @@ import SwiftUI
 extension FocusedValues {
     @Entry var openRepository: (() -> Void)?
     @Entry var appModel: AppModel?
-    @Entry var workspaceSection: Binding<RepositoryWorkspaceSection>?
+    /// nil inside the Workspace while a branch, remote, or tag is selected in the Navigator.
+    @Entry var workspaceSection: Binding<RepositoryWorkspaceSection?>?
     @Entry var navigatorVisibility: Binding<NavigationSplitViewVisibility>?
 }
 
@@ -96,11 +97,6 @@ private struct GallaeCommands: Commands {
             .disabled(!canSync || model?.canPushRepository != true)
 
             Divider()
-
-            Button("Remotes…") {
-                model?.showRemotes()
-            }
-            .disabled(!isWorkspaceInteractive)
 
             Button("Integrate…") {
                 model?.showIntegrateBranch()

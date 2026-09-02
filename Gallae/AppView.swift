@@ -199,19 +199,15 @@ struct AppView: View {
             )
         ) { request in
             switch request {
-            case .remotes(let repositoryRootURL):
-                RepositoryRemotesSheet(
-                    model: model,
-                    repositoryRootURL: repositoryRootURL
-                )
             case .addRemote(let repositoryRootURL):
                 AddRemoteSheet(model: model, repositoryRootURL: repositoryRootURL)
             case .createStash(let repositoryRootURL):
                 CreateStashSheet(model: model, repositoryRootURL: repositoryRootURL)
-            case .integrateBranch(let repositoryRootURL):
+            case .integrateBranch(let repositoryRootURL, let branch):
                 RepositoryIntegrateBranchSheet(
                     model: model,
-                    repositoryRootURL: repositoryRootURL
+                    repositoryRootURL: repositoryRootURL,
+                    initialBranch: branch
                 )
             case .chooseFetchRemote(let repositoryRootURL, let remotes, let pruning):
                 ChooseRemoteSheet(
@@ -376,6 +372,12 @@ private struct RepositoryIntegrateBranchSheet: View {
     @State private var divergence: RepositoryBranchDivergence?
     @State private var mergePrediction: RepositoryMergePrediction?
     @State private var conflictedWorktreeURL: URL?
+
+    init(model: AppModel, repositoryRootURL: URL, initialBranch: String? = nil) {
+        self.model = model
+        self.repositoryRootURL = repositoryRootURL
+        _selectedBranch = State(initialValue: initialBranch)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -780,252 +782,7 @@ private struct RepositoryIntegrateBranchSheet: View {
     }
 }
 
-private struct RepositoryRemotesSheet: View {
-    private enum ConnectionTestState: Equatable {
-        case idle
-        case testing(RepositoryRemote)
-        case reachable(RepositoryRemote)
-    }
-
-    @Environment(\.dismiss) private var dismiss
-    let model: AppModel
-    let repositoryRootURL: URL
-    @State private var editedRemote: RepositoryRemote?
-    @State private var removalRemote: RepositoryRemote?
-    @State private var removalErrorMessage: String?
-    @State private var connectionTestState: ConnectionTestState = .idle
-    @State private var connectionTestTask: Task<Void, Never>?
-    @State private var connectionTestErrorMessage: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Remotes", systemImage: "network")
-                    .font(.title2.bold())
-                Text(repositoryRootURL.lastPathComponent)
-                    .foregroundStyle(.secondary)
-            }
-
-            remoteContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            HStack {
-                Spacer()
-                if isTestingConnection {
-                    Button("Cancel Test") {
-                        connectionTestTask?.cancel()
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityHint("Stop the current Remote connection test")
-                } else {
-                    Button("Close") {
-                        dismiss()
-                    }
-                    .keyboardShortcut(.cancelAction)
-                }
-            }
-        }
-        .padding(24)
-        .frame(minWidth: 600, idealWidth: 640, minHeight: 320, idealHeight: 400)
-        .task(id: repositoryRootURL) {
-            await model.loadRemotes(in: repositoryRootURL)
-        }
-        .sheet(item: $editedRemote) { remote in
-            EditRemoteSheet(
-                model: model,
-                repositoryRootURL: repositoryRootURL,
-                remote: remote
-            )
-        }
-        .confirmationDialog(
-            "Remove Remote?",
-            isPresented: Binding(
-                get: { removalRemote != nil },
-                set: { if !$0 { removalRemote = nil } }
-            ),
-            presenting: removalRemote
-        ) { remote in
-            Button("Remove “\(remote.name)”", role: .destructive) {
-                Task { await remove(remote) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { remote in
-            Text(
-                "This removes “\(remote.name)” and its local remote-tracking branches from this Repository. It doesn’t delete the remote Repository, local branches, commits, or working files."
-            )
-        }
-        .alert(
-            "Couldn’t Remove Remote",
-            isPresented: Binding(
-                get: { removalErrorMessage != nil },
-                set: { if !$0 { removalErrorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(removalErrorMessage ?? "Unknown error")
-        }
-        .alert(
-            "Couldn’t Reach Remote",
-            isPresented: Binding(
-                get: { connectionTestErrorMessage != nil },
-                set: { if !$0 { connectionTestErrorMessage = nil } }
-            )
-        ) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(connectionTestErrorMessage ?? "Unknown error")
-        }
-        .interactiveDismissDisabled(model.isLoading)
-        .onDisappear {
-            connectionTestTask?.cancel()
-        }
-    }
-
-    @ViewBuilder
-    private var remoteContent: some View {
-        switch model.remotesState {
-        case .notLoaded, .loading:
-            ProgressView("Reading Remotes…")
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn’t Read Remotes", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") {
-                    Task { await model.loadRemotes(in: repositoryRootURL) }
-                }
-            }
-        case .loaded(let remotes) where remotes.isEmpty:
-            ContentUnavailableView(
-                "No Remotes",
-                systemImage: "network.slash",
-                description: Text("This Repository has no configured Git remotes.")
-            )
-        case .loaded(let remotes):
-            List(remotes) { remote in
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(remote.name)
-                            .font(.headline)
-                        Spacer()
-                        if isTesting(remote) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .accessibilityLabel("Testing \(remote.name) Fetch Connection")
-                            Text("Testing…")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Button {
-                                testConnection(remote)
-                            } label: {
-                                if isReachable(remote) {
-                                    Label("Reachable", systemImage: "checkmark.circle")
-                                } else {
-                                    Text("Test Connection")
-                                }
-                            }
-                            .disabled(model.isLoading || connectionTestTask != nil)
-                            .accessibilityLabel("Test \(remote.name) Fetch Connection")
-                            .accessibilityHint(
-                                "Ask Git to read the configured Fetch URL without changing local Repository state"
-                            )
-                        }
-
-                        Button("Edit…") {
-                            editedRemote = remote
-                        }
-                        .disabled(model.isLoading)
-                        .accessibilityLabel("Edit \(remote.name) Remote")
-                        .accessibilityHint("Change this Remote’s Fetch and Push URLs")
-
-                        Button("Remove…", role: .destructive) {
-                            removalRemote = remote
-                        }
-                        .disabled(model.isLoading)
-                        .accessibilityLabel("Remove \(remote.name) Remote")
-                        .accessibilityHint(
-                            "Remove this configured Remote after confirmation without deleting local files or the remote Repository"
-                        )
-                    }
-
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
-                        GridRow {
-                            Text("Fetch URL")
-                                .foregroundStyle(.secondary)
-                            Text(remote.fetchURL)
-                                .font(.callout.monospaced())
-                                .textSelection(.enabled)
-                        }
-                        GridRow {
-                            Text("Push URL")
-                                .foregroundStyle(.secondary)
-                            Text(remote.pushURL)
-                                .font(.callout.monospaced())
-                                .textSelection(.enabled)
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-            }
-            .listStyle(.inset)
-            .accessibilityLabel("Configured Remotes, \(remotes.count)")
-        }
-    }
-
-    private func remove(_ remote: RepositoryRemote) async {
-        do {
-            try await model.removeRemote(named: remote.name, in: repositoryRootURL)
-        } catch is CancellationError {
-            return
-        } catch {
-            removalErrorMessage = (error as? LocalizedError)?.errorDescription
-                ?? error.localizedDescription
-        }
-    }
-
-    private var isTestingConnection: Bool {
-        if case .testing = connectionTestState {
-            true
-        } else {
-            false
-        }
-    }
-
-    private func isTesting(_ remote: RepositoryRemote) -> Bool {
-        connectionTestState == .testing(remote)
-    }
-
-    private func isReachable(_ remote: RepositoryRemote) -> Bool {
-        connectionTestState == .reachable(remote)
-    }
-
-    private func testConnection(_ remote: RepositoryRemote) {
-        guard connectionTestTask == nil else { return }
-        connectionTestState = .testing(remote)
-        connectionTestErrorMessage = nil
-        connectionTestTask = Task {
-            defer { connectionTestTask = nil }
-            do {
-                try await model.testRemoteConnection(
-                    named: remote.name,
-                    in: repositoryRootURL
-                )
-                try Task.checkCancellation()
-                connectionTestState = .reachable(remote)
-            } catch is CancellationError {
-                connectionTestState = .idle
-            } catch {
-                connectionTestState = .idle
-                connectionTestErrorMessage = (error as? LocalizedError)?.errorDescription
-                    ?? error.localizedDescription
-            }
-        }
-    }
-}
-
-private struct EditRemoteSheet: View {
+struct EditRemoteSheet: View {
     private enum Field: Hashable {
         case name
         case fetchURL
@@ -1614,22 +1371,19 @@ extension RepositoryRemoteOperation {
 }
 
 enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
-    case remotes(repositoryRootURL: URL)
     case addRemote(repositoryRootURL: URL)
     case createStash(repositoryRootURL: URL)
-    case integrateBranch(repositoryRootURL: URL)
+    case integrateBranch(repositoryRootURL: URL, branch: String?)
     case chooseFetchRemote(repositoryRootURL: URL, remotes: [String], pruning: Bool)
     case choosePublishRemote(repositoryRootURL: URL, remotes: [String])
 
     var id: String {
         switch self {
-        case .remotes(let repositoryRootURL):
-            "remotes:\(repositoryRootURL.path)"
         case .addRemote(let repositoryRootURL):
             "add:\(repositoryRootURL.path)"
         case .createStash(let repositoryRootURL):
             "create-stash:\(repositoryRootURL.path)"
-        case .integrateBranch(let repositoryRootURL):
+        case .integrateBranch(let repositoryRootURL, _):
             "integrate-branch:\(repositoryRootURL.path)"
         case .chooseFetchRemote(let repositoryRootURL, _, let pruning):
             "choose-fetch:\(repositoryRootURL.path):\(pruning)"
@@ -1660,6 +1414,8 @@ enum RepositoryDiffLoadState: Equatable, Sendable {
 struct RepositoryHistoryRequest: Equatable, Hashable, Sendable {
     let rootURL: URL
     let revision: Int
+    /// Fully qualified ref that narrows History to one branch or tag; nil reads every ref.
+    var reference: String? = nil
 }
 
 struct RepositoryCommitPatchRequest: Equatable, Hashable, Sendable {
@@ -1710,6 +1466,13 @@ enum RepositoryRemotesLoadState: Equatable, Sendable {
     case failed(String)
 }
 
+enum RepositoryTagsLoadState: Equatable, Sendable {
+    case notLoaded
+    case loading
+    case loaded([String])
+    case failed(String)
+}
+
 enum RepositoryCommitPatchLoadState: Equatable, Sendable {
     case noSelection
     case loading
@@ -1733,6 +1496,14 @@ final class AppModel {
     var diffState: RepositoryDiffLoadState = .noSelection
     var selectedHistoryCommitID: String?
     var historyState: RepositoryHistoryLoadState = .notLoaded
+    /// Fully qualified ref the Navigator selected (`refs/heads/…`, `refs/tags/…`); nil shows every ref in History.
+    var historyReference: String? {
+        didSet {
+            // Selecting another branch or tag starts at its tip instead of keeping an unrelated commit.
+            if historyReference != oldValue { selectedHistoryCommitID = nil }
+        }
+    }
+    var tagsState: RepositoryTagsLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
     private(set) var localBranchWorktreeURLs: [String: URL] = [:]
     var remotesState: RepositoryRemotesLoadState = .notLoaded
@@ -1850,7 +1621,7 @@ final class AppModel {
 
     var historyRequest: RepositoryHistoryRequest? {
         guard let repository else { return nil }
-        return .init(rootURL: repository.rootURL, revision: repositoryRevision)
+        return .init(rootURL: repository.rootURL, revision: repositoryRevision, reference: historyReference)
     }
 
     var selectedHistoryCommit: RepositoryHistory.Commit? {
@@ -1899,11 +1670,12 @@ final class AppModel {
     }
 
     var stashesRequest: RepositoryHistoryRequest? {
-        historyRequest
+        guard let repository else { return nil }
+        return .init(rootURL: repository.rootURL, revision: repositoryRevision)
     }
 
     var reflogRequest: RepositoryHistoryRequest? {
-        historyRequest
+        stashesRequest
     }
 
     var selectedReflogEntry: RepositoryReflogEntry? {
@@ -2289,17 +2061,47 @@ final class AppModel {
         startRemoteOperation(repository?.upstream == nil ? .publish : .push)
     }
 
-    func showRemotes() {
-        guard let repository else { return }
-        remotesState = .notLoaded
-        repositorySheetRequest = .remotes(repositoryRootURL: repository.rootURL)
-    }
-
-    func showIntegrateBranch() {
+    func showIntegrateBranch(preselecting branch: String? = nil) {
         guard canIntegrateBranch, let repository else { return }
         localBranchesState = .notLoaded
         localBranchWorktreeURLs = [:]
-        repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL)
+        repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL, branch: branch)
+    }
+
+    func loadTags() async {
+        guard let repository else {
+            tagsState = .notLoaded
+            return
+        }
+        let rootURL = repository.rootURL
+        let revision = repositoryRevision
+        tagsState = .loading
+
+        do {
+            let tags = try await inspector.tags(in: repository)
+            guard
+                revision == repositoryRevision,
+                self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
+            else {
+                return
+            }
+            tagsState = .loaded(tags)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard
+                revision == repositoryRevision,
+                self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
+            else {
+                return
+            }
+            tagsState = .failed(Self.message(for: error))
+        }
+    }
+
+    func remoteBranches(of remote: String) async throws -> [String] {
+        guard let repository else { return [] }
+        return try await inspector.remoteBranches(of: remote, in: repository)
     }
 
     func showCreateStash() {
@@ -3872,12 +3674,16 @@ final class AppModel {
         historyState = .loading
 
         do {
-            let history = try await inspector.history(in: repository)
+            let history = try await inspector.history(in: repository, reference: request.reference)
             guard generation == historyGeneration, request == historyRequest else { return }
             historyState = .loaded(history)
+            // A branch or tag scope may not contain HEAD; its tip comes first in topo order.
+            let headID = history.headCommitID.flatMap { headID in
+                history.commits.contains(where: { $0.id == headID }) ? headID : nil
+            }
             selectedHistoryCommitID = selectedHistoryCommitID.flatMap { selectedID in
                 history.commits.contains(where: { $0.id == selectedID }) ? selectedID : nil
-            } ?? history.headCommitID ?? history.commits.first?.id
+            } ?? headID ?? history.commits.first?.id
             selectedHistoryFileID = nil
             commitFilesState = selectedHistoryCommitID == nil ? .noSelection : .loading
             commitPatchState = .noSelection
@@ -4310,6 +4116,7 @@ final class AppModel {
         localBranchesState = .notLoaded
         localBranchWorktreeURLs = [:]
         remotesState = .notLoaded
+        tagsState = .notLoaded
         selectedHistoryFileID = nil
         commitFilesState = .noSelection
         commitPatchState = .noSelection

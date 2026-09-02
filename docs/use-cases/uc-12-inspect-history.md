@@ -6,14 +6,14 @@
 | --- | --- |
 | 사용자 목표 | 현재 작업선과 다른 branch·tag의 최근 변경 맥락, 선택한 commit의 내용을 읽는다. |
 | 시작 조건 | commit이 하나 이상 있는 Repository Workspace가 열려 있다. |
-| 진입점 | Repository 헤더의 `History` |
+| 진입점 | Navigator의 `History`(⌘2), 또는 Navigator에서 branch·tag 선택 |
 | 완료 상태 | 선택한 commit의 메시지·작성자·revision·parent, 변경 파일과 선택 파일 patch가 같은 Workspace에 표시된다. |
 
 ## 정상 흐름
 
-1. 사용자가 Repository 헤더에서 `History`를 선택한다.
-2. Gallae가 현재 HEAD, local·remote-tracking branch와 tag에서 도달 가능한 최신 commit을 합쳐 최대 100개까지 topology 순서로 읽는다.
-3. Gallae가 정확한 현재 HEAD commit을 처음 선택하고, 사용자가 필요하면 목록에서 다른 commit을 선택한다.
+1. 사용자가 Navigator에서 `History`를 선택한다. branch나 tag를 선택하면 같은 화면이 그 ref 하나의 log로 좁혀지고, 헤더에 ref 이름과 종류(Local branch·HEAD·Worktree 위치·Tag)가 뜬다.
+2. Gallae가 현재 HEAD, local·remote-tracking branch와 tag에서 도달 가능한 최신 commit을 합쳐 최대 100개까지 topology 순서로 읽는다. ref 하나를 골랐으면 `refs/heads/…`·`refs/tags/…`로 정확히 그 ref만 읽는다.
+3. Gallae가 정확한 현재 HEAD commit을 처음 선택하고(ref 하나면 그 ref의 끝 commit), 사용자가 필요하면 목록에서 다른 commit을 선택한다.
 4. Gallae가 선택한 commit의 메타데이터와 first-parent 기준 변경 파일을 읽고 첫 파일을 선택한다.
 5. Gallae가 선택한 파일의 patch를 읽는다.
 6. 사용자는 방향키로 다른 commit이나 파일을 선택해 같은 화면에서 검토를 이어 간다.

@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 현재 local branch의 고유 commit을 다른 local branch 위에 다시 적용해 선형 history로 만든다. |
 | 시작 조건 | 변경이 없는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, 또는 Repository 메뉴의 `Integrate…` |
+| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, Repository 메뉴의 `Integrate…`, 또는 Navigator branch 행의 문맥 메뉴·branch 화면의 `Integrate…`(그 branch가 미리 선택됨) |
 | 완료 상태 | 현재 branch 이름은 유지되고 고유 commit이 선택한 branch tip 위의 새 commit으로 바뀌며 Workspace가 갱신된다. |
 
 ## 정상 흐름

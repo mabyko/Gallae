@@ -24,6 +24,27 @@ enum RepositoryWorkspaceSection: Int, CaseIterable {
     }
 }
 
+/// What the Navigator has selected: a destination screen or one Git object whose list and detail fill the body.
+enum RepositoryNavigatorSelection: Hashable {
+    case destination(RepositoryWorkspaceSection)
+    case branch(String)
+    case remote(String)
+    case tag(String)
+
+    var destination: RepositoryWorkspaceSection? {
+        if case .destination(let section) = self { section } else { nil }
+    }
+
+    /// Fully qualified so a tag and a branch sharing a name never resolve to each other.
+    var historyReference: String? {
+        switch self {
+        case .branch(let name): "refs/heads/\(name)"
+        case .tag(let name): "refs/tags/\(name)"
+        case .destination, .remote: nil
+        }
+    }
+}
+
 struct RepositoryWorkspaceView: View {
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
@@ -38,6 +59,8 @@ struct RepositoryWorkspaceView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var isNavigatorAutoCollapsed = false
     @State private var isCreatingBranch = false
+    /// The Navigator selection; `workspaceSection` keeps only the last destination for restore and ⌘1–⌘4.
+    @State private var selection = RepositoryNavigatorSelection.destination(.changes)
     /// Changes list plus diff minimum widths.
     private static let detailMinimumWidth: CGFloat = 320 + 400
     /// Navigator ideal width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
@@ -49,7 +72,7 @@ struct RepositoryWorkspaceView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            RepositoryNavigatorView(model: model, section: $workspaceSection)
+            RepositoryNavigatorView(model: model, selection: $selection)
                 .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
                 .toolbar(removing: .sidebarToggle)
         } detail: {
@@ -58,15 +81,17 @@ struct RepositoryWorkspaceView: View {
                 Divider()
 
                 if let repository = model.repository {
-                    switch workspaceSection {
-                    case .changes:
+                    switch selection {
+                    case .destination(.changes):
                         changesContent(repository)
-                    case .history:
-                        RepositoryHistoryView(model: model)
-                    case .stashes:
+                    case .destination(.history), .branch, .tag:
+                        RepositoryHistoryView(model: model, selection: selection)
+                    case .destination(.stashes):
                         RepositoryStashesView(model: model)
-                    case .reflog:
+                    case .destination(.reflog):
                         RepositoryReflogView(model: model)
+                    case .remote(let name):
+                        RepositoryRemoteView(model: model, remoteName: name)
                     }
                 }
             }
@@ -122,9 +147,15 @@ struct RepositoryWorkspaceView: View {
             amendPrefill = nil
             isConfirmingOperationAbort = false
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
-            if model.repository?.changes.isEmpty == true, workspaceSection == .changes {
-                workspaceSection = .history
+            // Objects belong to the previous Repository; come back to the remembered destination.
+            let cleanWorkingTree = model.repository?.changes.isEmpty == true
+            selection = .destination(cleanWorkingTree && workspaceSection == .changes ? .history : workspaceSection)
+        }
+        .onChange(of: selection, initial: true) { _, selection in
+            if let destination = selection.destination {
+                workspaceSection = destination
             }
+            model.historyReference = selection.historyReference
         }
         .onChange(of: model.repository?.changes) { _, changes in
             let availableIDs = Set((changes ?? []).map(\.id))
@@ -163,7 +194,13 @@ struct RepositoryWorkspaceView: View {
                 model.selectedChangeID = focusedID
             }
         }
-        .focusedSceneValue(\.workspaceSection, $workspaceSection)
+        .focusedSceneValue(
+            \.workspaceSection,
+            Binding(
+                get: { selection.destination },
+                set: { if let section = $0 { selection = .destination(section) } }
+            )
+        )
         .focusedSceneValue(\.navigatorVisibility, $columnVisibility)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
@@ -680,7 +717,7 @@ struct RepositoryWorkspaceView: View {
 
 private struct RepositoryNavigatorView: View {
     @Bindable var model: AppModel
-    @Binding var section: RepositoryWorkspaceSection
+    @Binding var selection: RepositoryNavigatorSelection
     @State private var filterText = ""
     @State private var branches: [String] = []
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
@@ -689,14 +726,14 @@ private struct RepositoryNavigatorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            List(selection: sectionSelection) {
+            List(selection: listSelection) {
                 Section("Workspace") {
                     destinationRow(.changes, systemImage: "list.bullet", badge: model.repository?.changes.count ?? 0)
                     destinationRow(.history, systemImage: "clock", badge: 0)
                 }
 
                 Section("Recovery") {
-                    destinationRow(.stashes, systemImage: "archivebox", badge: 0)
+                    destinationRow(.stashes, systemImage: "archivebox", badge: stashCount)
                     destinationRow(.reflog, systemImage: "arrow.uturn.backward", badge: 0)
                 }
 
@@ -719,23 +756,12 @@ private struct RepositoryNavigatorView: View {
                     }
                 }
 
-                Section {
+                Section("Remotes") {
                     remoteRows
-                } header: {
-                    HStack {
-                        Text("Remotes")
-                        Spacer()
-                        Button {
-                            model.showRemotes()
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Manage Remotes…")
-                        .accessibilityLabel("Manage Remotes")
-                        .disabled(model.isLoading || model.repository == nil)
-                    }
+                }
+
+                Section("Tags") {
+                    tagRows
                 }
             }
             .listStyle(.sidebar)
@@ -743,20 +769,36 @@ private struct RepositoryNavigatorView: View {
 
             Divider()
 
-            TextField("Filter Branches", text: $filterText)
+            TextField("Filter", text: $filterText)
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .padding(8)
-                .accessibilityLabel("Filter Branches")
+                .accessibilityLabel("Filter Branches, Remotes, and Tags")
         }
         .task(id: model.repositoryRevision) {
             guard let rootURL = model.repository?.rootURL else { return }
             await model.loadRemotes(in: rootURL)
+            await model.loadTags()
+            await model.loadStashes()
         }
         .onChange(of: model.localBranchesState, initial: true) { _, state in
             // ponytail: keep the last loaded list while a reload is in flight so the sidebar never blinks.
-            if case .loaded(let loaded) = state {
-                branches = loaded
+            guard case .loaded(let loaded) = state else { return }
+            branches = loaded
+            if case .branch(let branch) = selection, !loaded.contains(branch) {
+                selection = .destination(.history)
+            }
+        }
+        .onChange(of: model.remotesState) { _, state in
+            guard case .loaded(let remotes) = state, case .remote(let name) = selection else { return }
+            if !remotes.contains(where: { $0.name == name }) {
+                selection = .destination(.history)
+            }
+        }
+        .onChange(of: model.tagsState) { _, state in
+            guard case .loaded(let tags) = state, case .tag(let name) = selection else { return }
+            if !tags.contains(name) {
+                selection = .destination(.history)
             }
         }
         .onChange(of: model.repository?.rootURL) { _, _ in
@@ -822,11 +864,15 @@ private struct RepositoryNavigatorView: View {
         }
     }
 
-    private var sectionSelection: Binding<RepositoryWorkspaceSection?> {
+    private var listSelection: Binding<RepositoryNavigatorSelection?> {
         Binding(
-            get: { section },
-            set: { if let selected = $0 { section = selected } }
+            get: { selection },
+            set: { if let selected = $0 { selection = selected } }
         )
+    }
+
+    private var stashCount: Int {
+        if case .loaded(let stashes) = model.stashesState { stashes.count } else { 0 }
     }
 
     private func destinationRow(
@@ -836,8 +882,21 @@ private struct RepositoryNavigatorView: View {
     ) -> some View {
         Label(target.title, systemImage: systemImage)
             .badge(badge)
-            .tag(target)
+            .tag(RepositoryNavigatorSelection.destination(target))
             .help("\(target.title) (⌘\(target.rawValue + 1))")
+    }
+
+    private func placeholderRow(_ title: String, systemImage: String? = nil, help: String? = nil) -> some View {
+        Group {
+            if let systemImage {
+                Label(title, systemImage: systemImage)
+            } else {
+                Text(title)
+            }
+        }
+        .foregroundStyle(.secondary)
+        .help(help ?? "")
+        .selectionDisabled()
     }
 
     @ViewBuilder
@@ -845,23 +904,14 @@ private struct RepositoryNavigatorView: View {
         if branches.isEmpty {
             switch model.localBranchesState {
             case .failed(let message):
-                Label("Couldn’t Load Branches", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
-                    .help(message)
-                    .selectionDisabled()
+                placeholderRow("Couldn’t Load Branches", systemImage: "exclamationmark.triangle", help: message)
             case .loaded:
-                Text("No Local Branches")
-                    .foregroundStyle(.secondary)
-                    .selectionDisabled()
+                placeholderRow("No Local Branches")
             case .notLoaded, .loading:
-                Label("Loading Branches…", systemImage: "arrow.triangle.branch")
-                    .foregroundStyle(.secondary)
-                    .selectionDisabled()
+                placeholderRow("Loading Branches…", systemImage: "arrow.triangle.branch")
             }
         } else if filteredBranches.isEmpty {
-            Text("No Matching Branches")
-                .foregroundStyle(.secondary)
-                .selectionDisabled()
+            placeholderRow("No Matching Branches")
         } else {
             ForEach(filteredBranches, id: \.self) { branch in
                 branchRow(branch)
@@ -889,7 +939,7 @@ private struct RepositoryNavigatorView: View {
             }
         }
         .contentShape(.rect)
-        .selectionDisabled()
+        .tag(RepositoryNavigatorSelection.branch(branch))
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue(for: branch))
         .accessibilityHint(isCurrent ? "Current branch" : "Double-click to switch, or open the context menu")
@@ -903,7 +953,21 @@ private struct RepositoryNavigatorView: View {
                         performPrimaryAction(for: branch)
                     }
                     .disabled(model.isLoading || model.isSyncing)
+                } else {
+                    Button("Switch", systemImage: "arrow.triangle.branch") {
+                        performPrimaryAction(for: branch)
+                    }
+                    .disabled(model.isLoading || model.isSyncing)
+                }
 
+                Button("Integrate…", systemImage: "arrow.triangle.merge") {
+                    model.showIntegrateBranch(preselecting: branch)
+                }
+                .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
+
+                Divider()
+
+                if let worktreeURL {
                     Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
                         Task {
                             let trackingRef = await model.trackingRemoteBranch(for: branch)
@@ -916,11 +980,6 @@ private struct RepositoryNavigatorView: View {
                     }
                     .disabled(model.isLoading)
                 } else {
-                    Button("Switch", systemImage: "arrow.triangle.branch") {
-                        performPrimaryAction(for: branch)
-                    }
-                    .disabled(model.isLoading || model.isSyncing)
-
                     Button("Remove Branch…", systemImage: "minus.circle", role: .destructive) {
                         pendingBranchDeletion = branch
                     }
@@ -934,50 +993,81 @@ private struct RepositoryNavigatorView: View {
     private var remoteRows: some View {
         switch model.remotesState {
         case .notLoaded, .loading:
-            Label("Loading Remotes…", systemImage: "network")
-                .foregroundStyle(.secondary)
-                .selectionDisabled()
+            placeholderRow("Loading Remotes…", systemImage: "network")
         case .failed(let message):
-            Label("Couldn’t Load Remotes", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.secondary)
-                .help(message)
-                .selectionDisabled()
+            placeholderRow("Couldn’t Load Remotes", systemImage: "exclamationmark.triangle", help: message)
         case .loaded(let remotes) where remotes.isEmpty:
-            Text("No Remotes")
-                .foregroundStyle(.secondary)
-                .selectionDisabled()
+            placeholderRow("No Remotes")
         case .loaded(let remotes):
-            ForEach(remotes) { remote in
-                Label(remote.name, systemImage: "network")
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(remote.fetchURL)
-                    .contentShape(.rect)
-                    .selectionDisabled()
-                    .accessibilityHint("Double-click to manage Remotes")
-                    .onTapGesture(count: 2) {
-                        model.showRemotes()
-                    }
-                    .contextMenu {
-                        Button("Manage Remotes…", systemImage: "network") {
-                            model.showRemotes()
+            let visibleRemotes = filtered(remotes.map(\.name))
+            if visibleRemotes.isEmpty {
+                placeholderRow("No Matching Remotes")
+            } else {
+                ForEach(visibleRemotes, id: \.self) { name in
+                    Label(name, systemImage: "network")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(remotes.first { $0.name == name }?.fetchURL ?? "")
+                        .contentShape(.rect)
+                        .tag(RepositoryNavigatorSelection.remote(name))
+                        .contextMenu {
+                            Button("Fetch", systemImage: "arrow.down.circle") {
+                                fetch(from: name, pruning: false)
+                            }
+                            .disabled(model.isLoading || model.isSyncing)
+                            Button("Fetch & Prune", systemImage: "arrow.down.circle.dotted") {
+                                fetch(from: name, pruning: true)
+                            }
+                            .disabled(model.isLoading || model.isSyncing)
                         }
-                        .disabled(model.isLoading)
-                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tagRows: some View {
+        switch model.tagsState {
+        case .notLoaded, .loading:
+            placeholderRow("Loading Tags…", systemImage: "tag")
+        case .failed(let message):
+            placeholderRow("Couldn’t Load Tags", systemImage: "exclamationmark.triangle", help: message)
+        case .loaded(let tags) where tags.isEmpty:
+            placeholderRow("No Tags")
+        case .loaded(let tags):
+            let visibleTags = filtered(tags)
+            if visibleTags.isEmpty {
+                placeholderRow("No Matching Tags")
+            } else {
+                ForEach(visibleTags, id: \.self) { tag in
+                    Label(tag, systemImage: "tag")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .tag(RepositoryNavigatorSelection.tag(tag))
+                }
             }
         }
     }
 
     private var filteredBranches: [String] {
+        filtered(branches)
+    }
+
+    private func filtered(_ names: [String]) -> [String] {
         let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return branches }
-        return branches.filter { $0.localizedCaseInsensitiveContains(query) }
+        guard !query.isEmpty else { return names }
+        return names.filter { $0.localizedCaseInsensitiveContains(query) }
     }
 
     private var currentBranch: String? {
         guard let repository = model.repository else { return nil }
         guard case .branch(let branch) = repository.head else { return nil }
         return branch
+    }
+
+    private func fetch(from remote: String, pruning: Bool) {
+        guard let rootURL = model.repository?.rootURL, !model.isLoading, !model.isSyncing else { return }
+        model.fetch(from: remote, pruning: pruning, in: rootURL)
     }
 
     private func performPrimaryAction(for branch: String) {
@@ -1000,6 +1090,9 @@ private struct RepositoryNavigatorView: View {
 
 private struct CreateBranchSheet: View {
     @Bindable var model: AppModel
+    /// Git start point for the branch; nil starts at HEAD. `startPointLabel` is what the sheet calls it.
+    var startPoint: String? = nil
+    var startPointLabel: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @FocusState private var isNameFocused: Bool
@@ -1008,7 +1101,7 @@ private struct CreateBranchSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New Branch")
                 .font(.headline)
-            Text("Creates a local branch from \(model.repository?.head.label ?? "the current HEAD") and switches to it.")
+            Text("Creates a local branch from \(startPointLabel ?? model.repository?.head.label ?? "the current HEAD") and switches to it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -1048,7 +1141,7 @@ private struct CreateBranchSheet: View {
     private func createBranch() {
         guard canCreate else { return }
         Task {
-            if await model.createBranch(named: name) {
+            if await model.createBranch(named: name, at: startPoint) {
                 dismiss()
             }
         }
@@ -1281,8 +1374,11 @@ private struct WorktreeRemovalRequest {
 
 private struct RepositoryHistoryView: View {
     @Bindable var model: AppModel
+    /// History of every ref, or the log of one branch or tag chosen in the Navigator.
+    var selection: RepositoryNavigatorSelection = .destination(.history)
     @Environment(\.gallaeTheme) private var theme
     @State private var searchText = ""
+    @State private var isCreatingBranch = false
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
     @State private var pendingRemoteBranchDeletion: String?
@@ -1294,13 +1390,18 @@ private struct RepositoryHistoryView: View {
                 VStack(spacing: 7) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("History")
+                            Text(headerTitle)
                                 .font(.headline)
-                            Text("Branches & Tags · latest 100")
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(headerSubtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                         Spacer()
+                        headerTools
                         if case .loaded(let history) = model.historyState {
                             Text(history.commits.count, format: .number)
                                 .font(.caption.weight(.medium))
@@ -1408,41 +1509,74 @@ private struct RepositoryHistoryView: View {
                 "This deletes the \(branch) branch reference with a safe delete. Branches not merged into the current branch are kept, and commits stay reachable from other references."
             )
         }
-        .confirmationDialog(
-            "Delete Remote Branch?",
-            isPresented: Binding(
-                get: { pendingRemoteBranchDeletion != nil },
-                set: { if !$0 { pendingRemoteBranchDeletion = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingRemoteBranchDeletion
-        ) { trackingRef in
-            Button("Delete \(trackingRef)", role: .destructive) {
-                model.deleteRemoteBranch(trackingRef)
+        .remoteBranchDialogs(
+            model: model,
+            deletion: $pendingRemoteBranchDeletion,
+            trackingRemoval: $pendingTrackingReferenceRemoval
+        )
+        .sheet(isPresented: $isCreatingBranch) {
+            if case .tag(let tag) = selection {
+                CreateBranchSheet(model: model, startPoint: "refs/tags/\(tag)", startPointLabel: tag)
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { trackingRef in
-            Text(
-                "This deletes \(trackingRef) on its remote for everyone using that remote. Local branches and commits stay, and the server may reject deleting a protected branch."
-            )
         }
-        .confirmationDialog(
-            "Remove Tracking Reference?",
-            isPresented: Binding(
-                get: { pendingTrackingReferenceRemoval != nil },
-                set: { if !$0 { pendingTrackingReferenceRemoval = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: pendingTrackingReferenceRemoval
-        ) { trackingRef in
-            Button("Remove \(trackingRef)", role: .destructive) {
-                Task { await model.removeTrackingReference(trackingRef) }
+    }
+
+    private var headerTitle: String {
+        switch selection {
+        case .branch(let name), .tag(let name): name
+        case .destination, .remote: "History"
+        }
+    }
+
+    private var headerSubtitle: String {
+        switch selection {
+        case .branch(let name):
+            if name == currentBranchName {
+                "Local branch · HEAD"
+            } else if let worktreeURL = model.localBranchWorktreeURLs[name] {
+                "Local branch · Worktree at \(worktreeURL.path)"
+            } else {
+                "Local branch"
             }
-            Button("Cancel", role: .cancel) {}
-        } message: { trackingRef in
-            Text(
-                "This removes only the local tracking reference \(trackingRef). The branch on the remote is not changed, and Fetch can restore the reference."
-            )
+        case .tag:
+            "Tag"
+        case .destination, .remote:
+            "Branches & Tags · latest 100"
+        }
+    }
+
+    /// Switch, Open Worktree, and Integrate live on the branch screen; a tag offers a branch starting there.
+    @ViewBuilder
+    private var headerTools: some View {
+        let isBusy = model.isLoading || model.isSyncing
+        switch selection {
+        case .branch(let name) where name != currentBranchName:
+            if let worktreeURL = model.localBranchWorktreeURLs[name] {
+                Button("Open Worktree") {
+                    Task { _ = await model.openRepository(at: worktreeURL) }
+                }
+                .help("Open the Worktree at \(worktreeURL.path)")
+                .disabled(isBusy)
+            } else {
+                Button("Switch") {
+                    Task { _ = await model.switchBranch(to: name) }
+                }
+                .help("Switch the working tree to \(name)")
+                .disabled(isBusy)
+            }
+            Button("Integrate…") {
+                model.showIntegrateBranch(preselecting: name)
+            }
+            .help("Merge, rebase, or fast-forward between \(name) and the current branch")
+            .disabled(!model.canIntegrateBranch || isBusy)
+        case .tag(let name):
+            Button("New Branch…") {
+                isCreatingBranch = true
+            }
+            .help("Create a local branch at \(name) and switch to it")
+            .disabled(isBusy || model.repository == nil)
+        case .branch, .destination, .remote:
+            EmptyView()
         }
     }
 
@@ -1602,6 +1736,391 @@ private extension RepositoryHistory {
             stack.append(contentsOf: childrenByID[id] ?? [])
         }
         return visited
+    }
+}
+
+/// Confirmations for the two destructive remote-branch actions, shared by History rows and the remote screen.
+private struct RemoteBranchDialogs: ViewModifier {
+    let model: AppModel
+    @Binding var deletion: String?
+    @Binding var trackingRemoval: String?
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Delete Remote Branch?",
+                isPresented: Binding(
+                    get: { deletion != nil },
+                    set: { if !$0 { deletion = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: deletion
+            ) { trackingRef in
+                Button("Delete \(trackingRef)", role: .destructive) {
+                    model.deleteRemoteBranch(trackingRef)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { trackingRef in
+                Text(
+                    "This deletes \(trackingRef) on its remote for everyone using that remote. Local branches and commits stay, and the server may reject deleting a protected branch."
+                )
+            }
+            .confirmationDialog(
+                "Remove Tracking Reference?",
+                isPresented: Binding(
+                    get: { trackingRemoval != nil },
+                    set: { if !$0 { trackingRemoval = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: trackingRemoval
+            ) { trackingRef in
+                Button("Remove \(trackingRef)", role: .destructive) {
+                    Task { await model.removeTrackingReference(trackingRef) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { trackingRef in
+                Text(
+                    "This removes only the local tracking reference \(trackingRef). The branch on the remote is not changed, and Fetch can restore the reference."
+                )
+            }
+    }
+}
+
+private extension View {
+    func remoteBranchDialogs(
+        model: AppModel,
+        deletion: Binding<String?>,
+        trackingRemoval: Binding<String?>
+    ) -> some View {
+        modifier(RemoteBranchDialogs(model: model, deletion: deletion, trackingRemoval: trackingRemoval))
+    }
+}
+
+/// One remote chosen in the Navigator: its tracking branches on the left, URLs and actions on the right.
+private struct RepositoryRemoteView: View {
+    private enum ConnectionTestState: Equatable {
+        case idle
+        case testing
+        case reachable
+    }
+
+    @Bindable var model: AppModel
+    let remoteName: String
+    @Environment(\.gallaeTheme) private var theme
+    @State private var branches: [String] = []
+    @State private var branchesError: String?
+    @State private var editedRemote: RepositoryRemote?
+    @State private var isConfirmingRemoval = false
+    @State private var removalErrorMessage: String?
+    @State private var connectionTestState: ConnectionTestState = .idle
+    @State private var connectionTestTask: Task<Void, Never>?
+    @State private var connectionTestErrorMessage: String?
+    @State private var pendingRemoteBranchDeletion: String?
+    @State private var pendingTrackingReferenceRemoval: String?
+
+    private var remote: RepositoryRemote? {
+        guard case .loaded(let remotes) = model.remotesState else { return nil }
+        return remotes.first { $0.name == remoteName }
+    }
+
+    private var isBusy: Bool {
+        model.isLoading || model.isSyncing
+    }
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(remoteName)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text("Remote branches")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(branches.count, format: .number)
+                        .font(.caption.weight(.medium))
+                        .monospacedDigit()
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(theme.colors.badgeBackground, in: .capsule)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+
+                Divider()
+
+                branchList
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(
+                minWidth: theme.metrics.changeListMinimumWidth,
+                idealWidth: theme.metrics.changeListIdealWidth,
+                maxHeight: .infinity
+            )
+
+            detail
+                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+        }
+        .task(id: "\(model.repositoryRevision):\(remoteName)") {
+            do {
+                let loaded = try await model.remoteBranches(of: remoteName)
+                guard !Task.isCancelled else { return }
+                branches = loaded
+                branchesError = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                branches = []
+                branchesError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+        .onChange(of: remoteName) { _, _ in
+            connectionTestTask?.cancel()
+            connectionTestState = .idle
+        }
+        .onDisappear {
+            connectionTestTask?.cancel()
+        }
+        .sheet(item: $editedRemote) { remote in
+            if let rootURL = model.repository?.rootURL {
+                EditRemoteSheet(model: model, repositoryRootURL: rootURL, remote: remote)
+            }
+        }
+        .confirmationDialog(
+            "Remove Remote?",
+            isPresented: $isConfirmingRemoval,
+            titleVisibility: .visible
+        ) {
+            Button("Remove “\(remoteName)”", role: .destructive) {
+                Task { await removeRemote() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This removes “\(remoteName)” and its local remote-tracking branches from this Repository. It doesn’t delete the remote Repository, local branches, commits, or working files."
+            )
+        }
+        .alert(
+            "Couldn’t Remove Remote",
+            isPresented: Binding(
+                get: { removalErrorMessage != nil },
+                set: { if !$0 { removalErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(removalErrorMessage ?? "Unknown error")
+        }
+        .alert(
+            "Couldn’t Reach Remote",
+            isPresented: Binding(
+                get: { connectionTestErrorMessage != nil },
+                set: { if !$0 { connectionTestErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(connectionTestErrorMessage ?? "Unknown error")
+        }
+        .remoteBranchDialogs(
+            model: model,
+            deletion: $pendingRemoteBranchDeletion,
+            trackingRemoval: $pendingTrackingReferenceRemoval
+        )
+    }
+
+    @ViewBuilder
+    private var branchList: some View {
+        if let branchesError {
+            ContentUnavailableView {
+                Label("Couldn’t Read Remote Branches", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(branchesError)
+            }
+        } else if branches.isEmpty {
+            ContentUnavailableView(
+                "No Remote Branches",
+                systemImage: "arrow.triangle.branch",
+                description: Text("Fetch reads the branches \(remoteName) publishes.")
+            )
+        } else {
+            List(branches, id: \.self) { branch in
+                Label(branch.hasPrefix("\(remoteName)/") ? String(branch.dropFirst(remoteName.count + 1)) : branch,
+                      systemImage: "arrow.triangle.branch")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(branch)
+                    .contentShape(.rect)
+                    .accessibilityLabel("Remote branch \(branch)")
+                    .contextMenu {
+                        Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
+                            pendingRemoteBranchDeletion = branch
+                        }
+                        .disabled(isBusy)
+                        Button("Remove Tracking Reference…", systemImage: "minus.circle", role: .destructive) {
+                            pendingTrackingReferenceRemoval = branch
+                        }
+                        .disabled(model.isLoading)
+                    }
+            }
+            .listStyle(.inset)
+            .accessibilityLabel("Remote branches of \(remoteName), \(branches.count)")
+        }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let remote {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(remote.name, systemImage: "network")
+                            .font(.title2.bold())
+                        Text(remote.fetchURL)
+                            .font(.callout.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button("Fetch") {
+                            fetch(pruning: false)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isBusy)
+                        .help("Fetch from \(remote.name)")
+
+                        Button("Fetch & Prune") {
+                            fetch(pruning: true)
+                        }
+                        .disabled(isBusy)
+                        .help("Fetch from \(remote.name) and remove tracking references it no longer publishes")
+
+                        switch connectionTestState {
+                        case .testing:
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Testing \(remote.name) Fetch Connection")
+                            Text("Testing…")
+                                .foregroundStyle(.secondary)
+                            Button("Cancel Test") {
+                                connectionTestTask?.cancel()
+                            }
+                            .keyboardShortcut(.cancelAction)
+                        case .reachable:
+                            Button {
+                                testConnection()
+                            } label: {
+                                Label("Reachable", systemImage: "checkmark.circle")
+                            }
+                            .disabled(model.isLoading)
+                            .accessibilityLabel("Test \(remote.name) Fetch Connection")
+                        case .idle:
+                            Button("Test Connection") {
+                                testConnection()
+                            }
+                            .disabled(model.isLoading)
+                            .accessibilityLabel("Test \(remote.name) Fetch Connection")
+                            .help("Ask Git to read the Fetch URL without changing local Repository state")
+                        }
+                    }
+
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+                        GridRow {
+                            Text("Fetch URL")
+                                .foregroundStyle(.secondary)
+                            Text(remote.fetchURL)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                        }
+                        GridRow {
+                            Text("Push URL")
+                                .foregroundStyle(.secondary)
+                            Text(remote.pushURL)
+                                .font(.callout.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button("Edit…") {
+                            editedRemote = remote
+                        }
+                        .disabled(model.isLoading)
+                        .accessibilityLabel("Edit \(remote.name) Remote")
+                        .help("Rename this Remote or change its Fetch and Push URLs")
+
+                        Button("Remove…", role: .destructive) {
+                            isConfirmingRemoval = true
+                        }
+                        .disabled(model.isLoading)
+                        .accessibilityLabel("Remove \(remote.name) Remote")
+                    }
+
+                    Text(
+                        "Removing a remote deletes only its remote-tracking branches. Local branches, commits, and working files stay, and adding the remote again restores the references with Fetch."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            switch model.remotesState {
+            case .failed(let message):
+                ContentUnavailableView {
+                    Label("Couldn’t Read Remotes", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(message)
+                }
+            default:
+                ProgressView("Reading Remote…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func fetch(pruning: Bool) {
+        guard let rootURL = model.repository?.rootURL, !isBusy else { return }
+        model.fetch(from: remoteName, pruning: pruning, in: rootURL)
+    }
+
+    private func removeRemote() async {
+        guard let rootURL = model.repository?.rootURL else { return }
+        do {
+            try await model.removeRemote(named: remoteName, in: rootURL)
+        } catch is CancellationError {
+            return
+        } catch {
+            removalErrorMessage = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func testConnection() {
+        guard connectionTestTask == nil, let rootURL = model.repository?.rootURL else { return }
+        connectionTestState = .testing
+        connectionTestErrorMessage = nil
+        connectionTestTask = Task {
+            defer { connectionTestTask = nil }
+            do {
+                try await model.testRemoteConnection(named: remoteName, in: rootURL)
+                try Task.checkCancellation()
+                connectionTestState = .reachable
+            } catch is CancellationError {
+                connectionTestState = .idle
+            } catch {
+                connectionTestState = .idle
+                connectionTestErrorMessage = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+        }
     }
 }
 

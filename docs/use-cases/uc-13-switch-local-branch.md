@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 기존 local branch를 찾아 안전하게 전환하거나, 이미 연결된 Worktree에서 연다. |
 | 시작 조건 | Repository Workspace가 열려 있다. |
-| 진입점 | Navigator의 Branches 목록, 또는 문맥 바의 현재 branch 메뉴 |
+| 진입점 | Navigator의 Branches 목록(이중 클릭·문맥 메뉴), branch 화면의 `Switch`, 또는 문맥 바의 현재 branch 메뉴 |
 | 완료 상태 | 선택한 branch 또는 연결된 Worktree의 HEAD, Changes와 History가 같은 Workspace에 표시된다. |
 
 ## 정상 흐름
