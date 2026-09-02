@@ -1,11 +1,18 @@
 import SwiftUI
 
+/// What the View menu's Navigator item does right now; the Workspace decides by window width and setting.
+struct NavigatorToggleCommand {
+    let title: String
+    let isEnabled: Bool
+    let perform: () -> Void
+}
+
 extension FocusedValues {
     @Entry var openRepository: (() -> Void)?
     @Entry var appModel: AppModel?
     /// nil inside the Workspace while a branch, remote, or tag is selected in the Navigator.
     @Entry var workspaceSection: Binding<RepositoryWorkspaceSection?>?
-    @Entry var navigatorVisibility: Binding<NavigationSplitViewVisibility>?
+    @Entry var navigatorToggle: NavigatorToggleCommand?
 }
 
 extension EnvironmentValues {
@@ -18,7 +25,7 @@ private struct GallaeCommands: Commands {
     @FocusedValue(\.openRepository) private var openRepository
     @FocusedValue(\.appModel) private var model
     @FocusedValue(\.workspaceSection) private var workspaceSection
-    @FocusedValue(\.navigatorVisibility) private var navigatorVisibility
+    @FocusedValue(\.navigatorToggle) private var navigatorToggle
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -30,13 +37,11 @@ private struct GallaeCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
-            Button(navigatorVisibility?.wrappedValue == .detailOnly ? "Show Navigator" : "Hide Navigator") {
-                guard let navigatorVisibility else { return }
-                navigatorVisibility.wrappedValue =
-                    navigatorVisibility.wrappedValue == .detailOnly ? .all : .detailOnly
+            Button(navigatorToggle?.title ?? "Show Navigator") {
+                navigatorToggle?.perform()
             }
             .keyboardShortcut("s", modifiers: [.control, .command])
-            .disabled(navigatorVisibility == nil)
+            .disabled(navigatorToggle?.isEnabled != true)
 
             Divider()
             ForEach(
@@ -347,6 +352,33 @@ enum GallaeAppearanceSettings {
     static let appearanceKey = "appearance"
     static let translucentChromeKey = "translucentSidebarAndToolbar"
     static let compactRowsKey = "compactRows"
+    static let narrowNavigatorKey = "narrowNavigatorStyle"
+
+    /// How the folded Navigator is reached when the window is narrower than the fold width. One case, one view;
+    /// every case must open from the toolbar button, close on selection and Escape, and never resize the window.
+    enum NarrowNavigator: String, CaseIterable, Identifiable {
+        case floatingPanel
+        case toolbarMenu
+        case locationMenu
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .floatingPanel: "Floating Navigator"
+            case .toolbarMenu: "Toolbar Menu"
+            case .locationMenu: "Location Menu"
+            }
+        }
+
+        var summary: String {
+            switch self {
+            case .floatingPanel: "The Navigator button shows the Navigator over the content until you choose an item."
+            case .toolbarMenu: "The Navigator button becomes a menu of destinations, branches, remotes, and tags."
+            case .locationMenu: "The context bar shows where you are, and that label opens a menu of destinations, remotes, and tags."
+            }
+        }
+    }
 
     enum Appearance: String, CaseIterable, Identifiable {
         case system
@@ -388,6 +420,7 @@ private struct GallaeSettingsView: View {
     @AppStorage(GallaeAppearanceSettings.appearanceKey) private var appearance = GallaeAppearanceSettings.Appearance.system
     @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
     @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
+    @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigator = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
     @State private var installedURL: URL?
     @State private var errorMessage: String?
     @State private var signingState: CommitSigningState = .loading
@@ -520,6 +553,18 @@ private struct GallaeSettingsView: View {
                 Toggle("Compact Rows", isOn: $compactRows)
                     .accessibilityHint("Shorter rows in Changes, History, Stashes, and Reflog")
                 Text("Shorter rows in Changes, History, Stashes, and Reflog.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Navigator in Narrow Windows", selection: $narrowNavigator) {
+                    ForEach(GallaeAppearanceSettings.NarrowNavigator.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .accessibilityHint("Choose how to reach the Navigator when the window is too narrow to show it")
+                Text("Windows narrower than 948 points fold the Navigator instead of growing. \(narrowNavigator.summary)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

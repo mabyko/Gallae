@@ -2488,6 +2488,18 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
     }
 
+    func testDescribesNavigatorLocationForDestinationsAndObjects() {
+        XCTAssertEqual(RepositoryNavigatorSelection.destination(.history).locationTitle, "History")
+        XCTAssertEqual(RepositoryNavigatorSelection.destination(.stashes).locationSystemImage, RepositoryWorkspaceSection.stashes.systemImage)
+        XCTAssertEqual(RepositoryNavigatorSelection.branch("feature").locationTitle, "feature · Local branch")
+        XCTAssertEqual(RepositoryNavigatorSelection.remote("origin").locationTitle, "origin · Remote")
+        XCTAssertEqual(RepositoryNavigatorSelection.tag("v0.1").locationTitle, "v0.1 · Tag")
+        XCTAssertEqual(RepositoryNavigatorSelection.tag("v0.1").historyReference, "refs/tags/v0.1")
+        // Unknown stored values fall back to the default style instead of crashing the setting.
+        XCTAssertNil(GallaeAppearanceSettings.NarrowNavigator(rawValue: "bogus"))
+        XCTAssertEqual(GallaeAppearanceSettings.NarrowNavigator.allCases.first, .floatingPanel)
+    }
+
     func testResolvesMaterialResponseFromSystemAndAppSettings() {
         XCTAssertEqual(
             GallaeMaterialResponse.resolve(reduceTransparency: false, increasedContrast: false, translucentChrome: true),

@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 현재 작업선과 다른 branch·tag의 최근 변경 맥락, 선택한 commit의 내용을 읽는다. |
 | 시작 조건 | commit이 하나 이상 있는 Repository Workspace가 열려 있다. |
-| 진입점 | Navigator의 `History`(⌘2), 또는 Navigator에서 branch·tag 선택 |
+| 진입점 | Navigator의 `History`(⌘2), Navigator에서 branch·tag 선택, 또는 문맥 바 branch 메뉴의 `Show History ▸` |
 | 완료 상태 | 선택한 commit의 메시지·작성자·revision·parent, 변경 파일과 선택 파일 patch가 같은 Workspace에 표시된다. |
 
 ## 정상 흐름

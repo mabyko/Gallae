@@ -22,6 +22,15 @@ enum RepositoryWorkspaceSection: Int, CaseIterable {
         case .reflog: "Reflog"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .changes: "list.bullet"
+        case .history: "clock"
+        case .stashes: "archivebox"
+        case .reflog: "arrow.uturn.backward"
+        }
+    }
 }
 
 /// What the Navigator has selected: a destination screen or one Git object whose list and detail fill the body.
@@ -33,6 +42,25 @@ enum RepositoryNavigatorSelection: Hashable {
 
     var destination: RepositoryWorkspaceSection? {
         if case .destination(let section) = self { section } else { nil }
+    }
+
+    /// Title and symbol for the context bar's location label when the Navigator is folded.
+    var locationTitle: String {
+        switch self {
+        case .destination(let section): section.title
+        case .branch(let name): "\(name) · Local branch"
+        case .remote(let name): "\(name) · Remote"
+        case .tag(let name): "\(name) · Tag"
+        }
+    }
+
+    var locationSystemImage: String {
+        switch self {
+        case .destination(let section): section.systemImage
+        case .branch: "arrow.triangle.branch"
+        case .remote: "network"
+        case .tag: "tag"
+        }
     }
 
     /// Fully qualified so a tag and a branch sharing a name never resolve to each other.
@@ -61,6 +89,9 @@ struct RepositoryWorkspaceView: View {
     @State private var isCreatingBranch = false
     /// The Navigator selection; `workspaceSection` keeps only the last destination for restore and ⌘1–⌘4.
     @State private var selection = RepositoryNavigatorSelection.destination(.changes)
+    @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigatorStyle = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
+    /// The floating Navigator over the detail column in narrow windows.
+    @State private var isNavigatorPanelPresented = false
     /// Changes list plus diff minimum widths.
     private static let detailMinimumWidth: CGFloat = 320 + 400
     /// Navigator ideal width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
@@ -98,6 +129,11 @@ struct RepositoryWorkspaceView: View {
             // ponytail: without an explicit ideal width the split view sizes the detail column to the
             // diff panel's natural width and overflows the window; the list + diff minimums are the ideal.
             .frame(minWidth: Self.detailMinimumWidth, idealWidth: Self.detailMinimumWidth, maxWidth: .infinity)
+            .overlay(alignment: .topLeading) {
+                if isNavigatorPanelPresented {
+                    navigatorPanel
+                }
+            }
         }
         .onChange(of: windowWidth, initial: true) { _, width in
             // ponytail: the split view never shrinks the detail column below the list + diff minimums, so the
@@ -111,6 +147,12 @@ struct RepositoryWorkspaceView: View {
                 columnVisibility = .all
             }
         }
+        .onChange(of: isWindowNarrow) { _, isNarrow in
+            if !isNarrow { isNavigatorPanelPresented = false }
+        }
+        .onChange(of: narrowNavigatorStyle) { _, _ in
+            isNavigatorPanelPresented = false
+        }
         .task(id: model.diffRequest) {
             await model.loadSelectedDiff()
         }
@@ -120,14 +162,7 @@ struct RepositoryWorkspaceView: View {
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    isNavigatorAutoCollapsed = false
-                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
-                } label: {
-                    Label("Navigator", systemImage: "sidebar.leading")
-                }
-                .help("Show or hide the Navigator (⌃⌘S)")
-                .accessibilityLabel(columnVisibility == .detailOnly ? "Show Navigator" : "Hide Navigator")
+                navigatorToolbarItem
 
                 Button {
                     model.showLibrary()
@@ -156,6 +191,7 @@ struct RepositoryWorkspaceView: View {
                 workspaceSection = destination
             }
             model.historyReference = selection.historyReference
+            isNavigatorPanelPresented = false
         }
         .onChange(of: model.repository?.changes) { _, changes in
             let availableIDs = Set((changes ?? []).map(\.id))
@@ -201,7 +237,7 @@ struct RepositoryWorkspaceView: View {
                 set: { if let section = $0 { selection = .destination(section) } }
             )
         )
-        .focusedSceneValue(\.navigatorVisibility, $columnVisibility)
+        .focusedSceneValue(\.navigatorToggle, navigatorToggleCommand)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
         .confirmationDialog(
@@ -257,6 +293,26 @@ struct RepositoryWorkspaceView: View {
                     .help("Switch, create, or integrate local branches")
                     .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
                     .disabled(model.isLoading || model.isSyncing)
+
+                    if isWindowNarrow, narrowNavigatorStyle == .locationMenu {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, -6)
+                            .accessibilityHidden(true)
+                        Menu {
+                            navigatorMenuItems(includeBranches: false)
+                        } label: {
+                            Label(selection.locationTitle, systemImage: selection.locationSystemImage)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .font(.callout.weight(.medium))
+                        .help("Where you are. Choose a destination, remote, or tag")
+                        .accessibilityLabel("Location, \(selection.locationTitle). Go to")
+                    }
 
                     if let upstream = repository.upstream {
                         Label(
@@ -364,6 +420,14 @@ struct RepositoryWorkspaceView: View {
             }
         }
 
+        if case .loaded(let branches) = model.localBranchesState, !branches.isEmpty {
+            Menu("Show History", systemImage: "clock") {
+                ForEach(branches, id: \.self) { branch in
+                    selectionMenuItem(.branch(branch), title: branch, systemImage: "arrow.triangle.branch")
+                }
+            }
+        }
+
         Button("New Branch…", systemImage: "plus") {
             isCreatingBranch = true
         }
@@ -375,6 +439,146 @@ struct RepositoryWorkspaceView: View {
             model.showIntegrateBranch()
         }
         .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
+    }
+
+    // MARK: - Narrow window Navigator
+
+    /// Below the fold width the sidebar column never opens, so the window never grows; the setting decides the way in.
+    private var isWindowNarrow: Bool {
+        windowWidth > 0 && windowWidth < Self.navigatorFoldWidth
+    }
+
+    /// What the toolbar button and the View menu item do right now.
+    private var navigatorToggleCommand: NavigatorToggleCommand {
+        guard isWindowNarrow else {
+            let isFolded = columnVisibility == .detailOnly
+            return .init(title: isFolded ? "Show Navigator" : "Hide Navigator", isEnabled: true) {
+                isNavigatorAutoCollapsed = false
+                columnVisibility = isFolded ? .all : .detailOnly
+            }
+        }
+        switch narrowNavigatorStyle {
+        case .floatingPanel:
+            return .init(title: isNavigatorPanelPresented ? "Hide Navigator" : "Show Navigator", isEnabled: true) {
+                isNavigatorPanelPresented.toggle()
+            }
+        case .toolbarMenu, .locationMenu:
+            return .init(title: "Show Navigator", isEnabled: false) {}
+        }
+    }
+
+    private var navigatorToggleHelp: String {
+        guard isWindowNarrow else { return "Show or hide the Navigator (⌃⌘S)" }
+        return switch narrowNavigatorStyle {
+        case .floatingPanel: "Show the Navigator over the content (⌃⌘S)"
+        case .toolbarMenu: "Choose a destination, branch, remote, or tag"
+        case .locationMenu: "Widen the window past \(Int(Self.navigatorFoldWidth)) points to show the Navigator, or use the location menu in the context bar"
+        }
+    }
+
+    @ViewBuilder
+    private var navigatorToolbarItem: some View {
+        if isWindowNarrow, narrowNavigatorStyle == .toolbarMenu {
+            Menu {
+                navigatorMenuItems(includeBranches: true)
+            } label: {
+                Label("Navigator", systemImage: "sidebar.leading")
+            }
+            .help(navigatorToggleHelp)
+            .accessibilityLabel("Navigator Menu")
+        } else {
+            let command = navigatorToggleCommand
+            Button(action: command.perform) {
+                Label("Navigator", systemImage: "sidebar.leading")
+            }
+            .disabled(!command.isEnabled)
+            .help(navigatorToggleHelp)
+            .accessibilityLabel(command.title)
+        }
+    }
+
+    /// The Navigator floating over the detail column; tap outside or Escape dismisses, choosing an item closes it.
+    private var navigatorPanel: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+                .contentShape(.rect)
+                .onTapGesture { isNavigatorPanelPresented = false }
+                .accessibilityHidden(true)
+
+            RepositoryNavigatorView(model: model, selection: $selection, isFloating: true)
+                .frame(width: 220)
+                .background(
+                    theme.materials.translucentChrome
+                        ? AnyShapeStyle(.regularMaterial)
+                        : AnyShapeStyle(theme.colors.opaqueChrome)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+                .padding(8)
+
+            // ponytail: an invisible button is the simplest way to give the panel an Escape key.
+            Button("Hide Navigator") { isNavigatorPanelPresented = false }
+                .keyboardShortcut(.cancelAction)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Destinations, remotes, and tags as menu items with the current one checked; branches only for the toolbar
+    /// menu, because the context bar's branch menu already owns them.
+    @ViewBuilder
+    private func navigatorMenuItems(includeBranches: Bool) -> some View {
+        Section("Workspace") {
+            destinationMenuItem(.changes, count: model.repository?.changes.count ?? 0)
+            destinationMenuItem(.history, count: 0)
+        }
+        Section("Recovery") {
+            destinationMenuItem(.stashes, count: stashCount)
+            destinationMenuItem(.reflog, count: 0)
+        }
+        if includeBranches, case .loaded(let branches) = model.localBranchesState, !branches.isEmpty {
+            Section {
+                Menu("Branches", systemImage: "arrow.triangle.branch") {
+                    ForEach(branches, id: \.self) { branch in
+                        selectionMenuItem(.branch(branch), title: branch, systemImage: "arrow.triangle.branch")
+                    }
+                }
+            }
+        }
+        if case .loaded(let remotes) = model.remotesState, !remotes.isEmpty {
+            Section("Remotes") {
+                ForEach(remotes) { remote in
+                    selectionMenuItem(.remote(remote.name), title: remote.name, systemImage: "network")
+                }
+            }
+        }
+        if case .loaded(let tags) = model.tagsState, !tags.isEmpty {
+            Section("Tags") {
+                ForEach(tags, id: \.self) { tag in
+                    selectionMenuItem(.tag(tag), title: tag, systemImage: "tag")
+                }
+            }
+        }
+    }
+
+    private func destinationMenuItem(_ section: RepositoryWorkspaceSection, count: Int) -> some View {
+        selectionMenuItem(
+            .destination(section),
+            title: count > 0 ? "\(section.title) (\(count))" : section.title,
+            systemImage: section.systemImage
+        )
+    }
+
+    private func selectionMenuItem(_ target: RepositoryNavigatorSelection, title: String, systemImage: String) -> some View {
+        Toggle(isOn: Binding(get: { selection == target }, set: { if $0 { selection = target } })) {
+            Label(title, systemImage: systemImage)
+        }
+    }
+
+    private var stashCount: Int {
+        if case .loaded(let stashes) = model.stashesState { stashes.count } else { 0 }
     }
 
     @ViewBuilder
@@ -718,6 +922,8 @@ struct RepositoryWorkspaceView: View {
 private struct RepositoryNavigatorView: View {
     @Bindable var model: AppModel
     @Binding var selection: RepositoryNavigatorSelection
+    /// Inside the floating panel the panel paints the background, so the list stays transparent.
+    var isFloating = false
     @Environment(\.gallaeTheme) private var theme
     @State private var filterText = ""
     @State private var branches: [String] = []
@@ -729,13 +935,13 @@ private struct RepositoryNavigatorView: View {
         VStack(spacing: 0) {
             List(selection: listSelection) {
                 Section("Workspace") {
-                    destinationRow(.changes, systemImage: "list.bullet", badge: model.repository?.changes.count ?? 0)
-                    destinationRow(.history, systemImage: "clock", badge: 0)
+                    destinationRow(.changes, badge: model.repository?.changes.count ?? 0)
+                    destinationRow(.history, badge: 0)
                 }
 
                 Section("Recovery") {
-                    destinationRow(.stashes, systemImage: "archivebox", badge: stashCount)
-                    destinationRow(.reflog, systemImage: "arrow.uturn.backward", badge: 0)
+                    destinationRow(.stashes, badge: stashCount)
+                    destinationRow(.reflog, badge: 0)
                 }
 
                 Section {
@@ -766,7 +972,7 @@ private struct RepositoryNavigatorView: View {
                 }
             }
             .listStyle(.sidebar)
-            .scrollContentBackground(theme.materials.translucentChrome ? .automatic : .hidden)
+            .scrollContentBackground(theme.materials.translucentChrome && !isFloating ? .automatic : .hidden)
             .accessibilityLabel("Navigator")
 
             Divider()
@@ -778,7 +984,7 @@ private struct RepositoryNavigatorView: View {
                 .accessibilityLabel("Filter Branches, Remotes, and Tags")
         }
         // Reduced Transparency and Increased Contrast paint the sidebar opaque instead of the system material.
-        .background(theme.materials.translucentChrome ? Color.clear : theme.colors.opaqueChrome)
+        .background(theme.materials.translucentChrome || isFloating ? Color.clear : theme.colors.opaqueChrome)
         .task(id: model.repositoryRevision) {
             guard let rootURL = model.repository?.rootURL else { return }
             await model.loadRemotes(in: rootURL)
@@ -881,10 +1087,9 @@ private struct RepositoryNavigatorView: View {
 
     private func destinationRow(
         _ target: RepositoryWorkspaceSection,
-        systemImage: String,
         badge: Int
     ) -> some View {
-        Label(target.title, systemImage: systemImage)
+        Label(target.title, systemImage: target.systemImage)
             .badge(badge)
             .tag(RepositoryNavigatorSelection.destination(target))
             .help("\(target.title) (⌘\(target.rawValue + 1))")

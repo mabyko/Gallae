@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-4 재질·접근성 응답, Appearance 설정, Split diff 완료 · 시안 3·4·5 슬라이스 종료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
+> 현재 범위: 7A-5 좁은 창의 Navigator(시안 6) 완료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
 
 ## 사용자 결과
 
@@ -711,6 +711,15 @@ GallaeApp
 - 설정에 Appearance 탭을 추가했다. Appearance(System·Light·Dark)는 `NSApp.appearance`로 모든 창에 적용되고 실행 시 저장값을 복원한다. Translucent Sidebar and Toolbar(기본 켬)는 시스템 투명도 줄이기가 켜져 있으면 비활성이며 설명이 그 이유를 말한다. Compact Rows(기본 끔)는 Changes·History·Stashes·Reflog 행의 세로 여백을 7에서 3으로 줄인다. 테마 선택 UI는 없고, 설정 하단 문구가 대비 증가는 시스템 설정을 따른다고 알린다.
 - diff 헤더(작업 트리 diff, commit·stash patch)에 Unified·Split segmented 토글을 두고 마지막 선택을 `@AppStorage`로 기억한다. Split은 `RepositoryDiffSplitRow.rows`가 문맥 행을 양쪽에, 삭제 묶음과 뒤따르는 추가 묶음을 순서대로 짝지어 old·new 두 열로 그리고, 짝이 없는 쪽은 빈 셀이다. metadata·hunk 행과 Stage/Unstage Hunk 버튼은 전체 폭이다. Split은 세로 스크롤만 쓰고 긴 줄을 줄바꿈하며, Unified는 종전처럼 가로 스크롤을 유지한다. 두 렌더러는 `RepositoryDiffLinesView` 하나를 공유한다.
 - 접근성 API로 diff 헤더의 Unified·Split 라디오, Split에서 추가 행이 오른쪽 열(패널 폭의 절반 위치)에 놓이고 hunk 헤더가 전체 폭인 것, 설정 Appearance 탭의 세 라디오와 두 토글, Compact Rows 켜고 끌 때 History 행 높이 63→55→63, Translucent 토글 끄고 켠 뒤 Navigator 유지, Dark→System 전환을 확인했다. 시스템 재질과 불투명 전환의 실제 모습은 화면 캡처 권한이 없어 눈으로 확인하지 못했다. 단위 테스트가 응답 해석과 Split 짝짓기(삭제 2·추가 1, 추가 뒤 삭제, 고유 id)를 검증한다.
+
+### 7A-5 · 좁은 창의 Navigator — 완료
+
+- 창이 948pt보다 좁으면 사이드바 열은 열리지 않고 창도 커지지 않는다. 대신 `GallaeAppearanceSettings.NarrowNavigator`(floatingPanel·toolbarMenu·locationMenu)가 접힌 Navigator에 닿는 길을 정하며, Workspace의 세 지점(툴바 버튼, 문맥 바, detail 오버레이)만 이 값으로 switch 한다. 새 안은 case 하나와 뷰 하나로 추가한다.
+- Floating Navigator(기본)는 툴바 버튼과 ⌃⌘S가 같은 `RepositoryNavigatorView`를 detail 위에 220pt 패널로 띄운다. 재질 응답을 따르고(시스템 재질 또는 불투명 창 배경), 항목 선택·바깥 클릭·Escape·창이 948pt 이상으로 넓어질 때·설정 변경·저장소 변경에 닫힌다.
+- Toolbar Menu는 툴바 버튼이 메뉴가 된다. Workspace·Recovery 목적지(개수는 제목에 괄호로), Branches 하위 메뉴, Remotes, Tags를 `Toggle`로 두어 현재 위치에 체크가 붙는다.
+- Location Menu는 문맥 바의 branch 메뉴 뒤에 `›`와 위치 칸을 둔다. 위치 칸은 `RepositoryNavigatorSelection.locationTitle`(History, feature · Local branch, origin · Remote, v0.1 · Tag)을 읽어 주고, 같은 메뉴에서 branch만 뺀 항목을 연다. 툴바 버튼은 비활성이고 도움말이 이유를 말한다.
+- branch 메뉴에 Show History ▸를 추가해 어느 폭에서든 다른 branch의 History 화면으로 갈 수 있다. View 메뉴의 Navigator 항목은 `NavigatorToggleCommand`(제목·활성·동작)를 Workspace가 FocusedValue로 내려보내 폭과 설정에 맞게 바뀐다.
+- 임시 Repository로 900pt 창에서 접근성 API로 확인했다. 세 방식 모두 창 폭이 900으로 유지되고, 오버레이는 열림·Reflog 선택 뒤 자동 닫힘·버튼 재클릭 닫힘, 툴바 메뉴와 위치 메뉴는 항목(Workspace·Changes (1)·History ✓·Recovery·Stashes·Reflog·(Branches)·Remotes·origin·Tags·v0.2·v0.1)과 Reflog 선택 뒤 헤더 전환, 위치 라벨이 History → Reflog → v0.1 · Tag로 바뀌는 것을 확인했다. Location Menu에서 툴바 버튼이 비활성인 것도 확인했다. branch 메뉴의 Show History ▸는 접근성 API가 borderless 메뉴를 열지 못해 눈으로 확인해야 한다. 테스트가 위치 라벨과 설정값 폴백을 검증한다.
 
 ## 각 단계의 검증
 

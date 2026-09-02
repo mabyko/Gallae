@@ -61,7 +61,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 - 화면마다 필요한 역할만 둔다. Repository Library는 **Library Folder 탐색 · Repository 목록 · 선택 요약**의 세 역할로 나눈다.
 - 작업 트리가 깨끗한 Repository를 열면 빈 Changes 대신 History를 먼저 보여 준다.
-- Repository Workspace는 **Navigator · 목록 · 내용**의 3열이다. Navigator에는 목적지(Changes·History·Stashes·Reflog)와 Git 객체(Branches·Remotes·Tags)만 두고, 아직 구현하지 않은 객체의 빈 섹션은 만들지 않는다. 좁은 창에서는 Navigator부터 접는다. 이 구조는 [디자인 시안 3·4·5](#디자인-시안-345)에서 결정했고, 구현은 그 절의 슬라이스 순서를 따른다.
+- Repository Workspace는 **Navigator · 목록 · 내용**의 3열이다. Navigator에는 목적지(Changes·History·Stashes·Reflog)와 Git 객체(Branches·Remotes·Tags)만 두고, 아직 구현하지 않은 객체의 빈 섹션은 만들지 않는다. 좁은 창에서는 Navigator부터 접고, 접힌 뒤에는 창을 키우지 않는다. 접힌 Navigator에 닿는 길은 설정에 따라 떠 있는 Navigator(기본), 툴바 메뉴, 문맥 바의 위치 메뉴 중 하나이며 [디자인 시안 6](#디자인-시안-6)에서 정했다. 이 구조는 [디자인 시안 3·4·5](#디자인-시안-345)에서 결정했고, 구현은 그 절의 슬라이스 순서를 따른다.
 - 현재 브랜치와 추적 대상 remote branch 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
 - 메인 윈도우 제목은 Active Repository 이름을 표시하고, macOS 제목 표시줄의 프록시 아이콘으로 Repository 경로를 노출한다.
 - Git의 branch upstream 관계는 사용자 화면에서 `Tracking`으로 표시한다. `upstream`은 내부 Git 용어 또는 실제 remote 이름일 때만 그대로 쓴다. Tracking 표기는 remote branch 이름이 현재 branch와 같으면 remote 이름만 보여 줘 긴 이름의 중복 잘림을 줄이고, 전체 이름은 도움말과 VoiceOver로 유지한다.
@@ -589,7 +589,7 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 - **작업공간 구조.** Navigator · 목록 · 내용의 3열. Navigator 맨 위에 목적지(Workspace: Changes·History, Recovery: Stashes·Reflog), 아래에 접을 수 있는 객체(Branches·Remotes·Tags). Stashes는 개수만 표시하고 항목은 본문에 둔다. Navigator에서 branch·remote·tag를 고르면 본문이 그 객체의 목록·상세로 바뀌고, branch 화면에 Switch와 Integrate가, remote 화면에 URL·Fetch·Prune·Test Connection·편집이 산다. 헤더는 한 줄 문맥 바(branch 메뉴 · Tracking · ahead/behind · 마지막 Fetch)다.
 - **진행 표시.** 6번. 누른 버튼 스피너, 창 제목 subtitle, 우하단 캡슐과 Cancel. 잠금은 동기화 묶음과 branch 전환뿐. 완료는 캡슐 결과, 실패는 alert.
 - **시각 언어.** 시스템 재질(B)이 기본이다. A(불투명 뉴트럴)는 투명도 줄이기에, C(고대비)는 대비 증가에 대한 같은 테마의 응답이며 테마 선택 UI는 없다. 콘텐츠 패널은 항상 불투명이다.
-- **설정.** Appearance(System·Light·Dark), Translucent Sidebar and Toolbar(기본 켬, 시스템 투명도 줄이기가 켜지면 강제로 꺼짐), Compact Rows(기본 끔). 그 외 시각 옵션은 두지 않는다.
+- **설정.** Appearance(System·Light·Dark), Translucent Sidebar and Toolbar(기본 켬, 시스템 투명도 줄이기가 켜지면 강제로 꺼짐), Compact Rows(기본 끔). 그 외 시각 옵션은 두지 않는다. 예외는 [시안 6](#디자인-시안-6)의 Navigator in Narrow Windows 하나다.
 - **diff 배치.** Unified·Split은 diff 헤더 토글, 마지막 선택 기억.
 - **줄 단위 staging.** 거터 체크박스는 줄 단위 staging 기능이 들어올 때의 UI다. 그전까지는 hunk 버튼을 유지하고 둘을 설정으로 고르게 하지 않는다.
 - **커밋 작성.** staged가 없으면 한 줄 바(Commit …)로 접히고 생기면 펼쳐진다.
@@ -605,6 +605,28 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 4. 재질·접근성 응답과 설정(Appearance, Translucent, Compact Rows), diff Split 보기.
 
 네 슬라이스는 구현 계획의 7A-1~7A-4로 끝났다. 남은 것은 보류한 Working Tree 행을 정하는 다섯 과업 판정이다.
+
+## 디자인 시안 6
+
+좁은 창에서 접힌 Navigator에 닿는 방법을 정한 기록이다. 시안 6은 720pt 창을 고정한 일회용 HTML이며 시안 3~5처럼 로컬에만 둔다.
+
+**문제.** 창이 948pt(Navigator 220 + 본문 최소 720 + 분할선)보다 좁으면 Navigator가 접히는데, 그 상태에서 Navigator 버튼을 누르면 분할 뷰가 창을 키웠다. 사용자가 정한 창 크기를 앱이 바꾸는 것이 가장 나쁜 결과라 이를 먼저 막고, 대신 접힌 Navigator에 닿는 길을 골랐다.
+
+| 안 | 정의 | 결과 |
+| --- | --- | --- |
+| A 오버레이 | Navigator 버튼이 같은 Navigator를 본문 위에 띄운다. 항목 선택·바깥 클릭·Escape·창 넓힘으로 닫힌다 | 기본값 |
+| B 메뉴 | Navigator 버튼이 목적지·Branches·Remotes·Tags 메뉴가 된다 | 옵션 |
+| C 문맥 바로 접기 | 문맥 바에 목적지 segmented, 객체는 branch 메뉴 | 제외. 문맥 바에서 객체가 안 보인다 |
+| CA | C + 오버레이 | 제외. 좁은 창의 어휘가 둘 |
+| D 위치 메뉴 | 문맥 바가 `main › History` 경로가 되고, 둘째 칸이 현재 위치를 읽어 주며 목적지·Remotes·Tags 메뉴를 연다 | 옵션 |
+
+**결정.**
+
+- 창은 어떤 경우에도 스스로 커지지 않는다. 좁은 창에서 사이드바 열은 열리지 않는다.
+- 설정 Appearance 탭의 Navigator in Narrow Windows로 Floating Navigator(기본)·Toolbar Menu·Location Menu를 고른다. 제품 오너의 결정으로 설정을 두되, 구현은 enum 하나에 case당 뷰 하나로 두어 안을 넣고 빼는 비용을 낮춘다.
+- 새 안을 추가하는 기준: 툴바 버튼과 ⌃⌘S에서 열리고, 목적지 넷과 branch·remote·tag를 개수와 현재 위치 표시와 함께 보이며, 선택·Escape·바깥 클릭·창 넓힘에 닫히고, 접근성 라벨을 갖추고, 기존 안이 못 푸는 사용자 문제를 하나 이상 풀 때만 넣는다.
+- 첫 칸은 branch의 동사, 둘째 칸은 장소. branch 메뉴에 Show History ▸를 넣어 어느 폭에서든 다른 branch의 History로 가는 길을 두고, 위치 메뉴에는 branch를 두지 않아 같은 이름이 두 메뉴에 나오지 않게 한다. 위치 칸은 Navigator가 접혔을 때만 나온다.
+- 툴바 Navigator 버튼은 A에서 오버레이를 열고, B에서 메뉴가 되며, D에서는 비활성이고 도움말이 창을 넓히거나 위치 메뉴를 쓰라고 말한다. ⌃⌘S는 A에서만 동작하고 B·D에서는 비활성이다. 시스템 메뉴를 코드로 열 수 없기 때문이다.
 
 ## 구현 기준
 
