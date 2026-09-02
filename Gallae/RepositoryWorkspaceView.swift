@@ -5193,6 +5193,9 @@ private struct RepositoryDiffSectionView: View {
     let updateHunk: (RepositoryDiff.Hunk) -> Void
     let loadExpanded: () -> Void
     @Environment(\.gallaeTheme) private var theme
+    /// Addition and deletion lines ticked in the gutter; the hunk button then stages or unstages only those.
+    @State private var chosenLineIDs: Set<Int> = []
+    @State private var lastToggledLineID: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -5207,15 +5210,15 @@ private struct RepositoryDiffSectionView: View {
 
             switch section.content {
             case .text(let lines):
-                RepositoryDiffLinesView(lines: lines, layout: layout, isBusy: isBusy) { line in
-                    guard
-                        let hunk = section.hunks.first(where: { $0.id == line.id }),
-                        let actionLabel = hunkActionLabel
-                    else {
-                        return nil
-                    }
-                    return (actionLabel, { updateHunk(hunk) })
-                }
+                RepositoryDiffLinesView(
+                    lines: lines,
+                    layout: layout,
+                    isBusy: isBusy,
+                    hunkAction: { line in hunkAction(for: line, in: lines) },
+                    lineChoice: { line in lineChoice(for: line) },
+                    hunkChoice: { line in hunkChoice(for: line, in: lines) },
+                    reservesChoiceColumn: choosesLines
+                )
             case .binary:
                 RepositoryDiffNotice(
                     title: "Binary File",
@@ -5247,14 +5250,77 @@ private struct RepositoryDiffSectionView: View {
                 RepositoryDiffNotice(title: "Diff Unavailable", message: message, fileURL: fileURL)
             }
         }
+        .onChange(of: section) { _, _ in
+            chosenLineIDs = []
+            lastToggledLineID = nil
+        }
     }
 
-    private var hunkActionLabel: String? {
+    private var hunkVerb: String? {
         switch section.scope {
-        case .staged where canUnstageHunks: "Unstage Hunk"
-        case .unstaged where canStageHunks: "Stage Hunk"
+        case .staged where canUnstageHunks: "Unstage"
+        case .unstaged where canStageHunks: "Stage"
         default: nil
         }
+    }
+
+    /// Gutter checkboxes belong to the unified layout of a stageable section; the split layout keeps whole hunks.
+    private var choosesLines: Bool {
+        hunkVerb != nil && layout == .unified
+    }
+
+    /// The hunk button: the whole hunk while nothing is ticked, otherwise only the ticked lines of that hunk.
+    private func hunkAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+        guard let hunkVerb, let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
+        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+        guard choosesLines, !chosen.isEmpty else {
+            return ("\(hunkVerb) Hunk", { updateHunk(hunk) })
+        }
+        let label = chosen.count == 1 ? "\(hunkVerb) 1 Line" : "\(hunkVerb) \(chosen.count) Lines"
+        return (label, {
+            let direction: RepositoryDiff.Section.PartialDirection = section.scope == .staged ? .revert : .apply
+            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: direction) {
+                updateHunk(partial)
+            }
+        })
+    }
+
+    private func lineChoice(for line: RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? {
+        guard choosesLines, line.kind == .addition || line.kind == .deletion else { return nil }
+        return (chosenLineIDs.contains(line.id), { toggle(line.id) })
+    }
+
+    private func hunkChoice(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (isOn: Bool, toggle: () -> Void)? {
+        guard choosesLines, line.kind == .hunk else { return nil }
+        let ids = changeLineIDs(ofHunkStartingAt: line.id, in: lines)
+        guard !ids.isEmpty else { return nil }
+        let allChosen = ids.isSubset(of: chosenLineIDs)
+        return (allChosen, {
+            if allChosen { chosenLineIDs.subtract(ids) } else { chosenLineIDs.formUnion(ids) }
+            lastToggledLineID = nil
+        })
+    }
+
+    /// Shift-click ticks or unticks every change line between the last toggled line and this one.
+    private func toggle(_ lineID: Int) {
+        let turningOn = !chosenLineIDs.contains(lineID)
+        let isRange = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+        if isRange, let lastToggledLineID, case .text(let lines) = section.content {
+            let range = min(lastToggledLineID, lineID)...max(lastToggledLineID, lineID)
+            let ids = lines.filter { range.contains($0.id) && ($0.kind == .addition || $0.kind == .deletion) }.map(\.id)
+            if turningOn { chosenLineIDs.formUnion(ids) } else { chosenLineIDs.subtract(ids) }
+        } else if turningOn {
+            chosenLineIDs.insert(lineID)
+        } else {
+            chosenLineIDs.remove(lineID)
+        }
+        lastToggledLineID = lineID
+    }
+
+    private func changeLineIDs(ofHunkStartingAt hunkID: Int, in lines: [RepositoryDiff.Line]) -> Set<Int> {
+        guard let start = lines.firstIndex(where: { $0.id == hunkID }) else { return [] }
+        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
+        return Set(lines[(start + 1)..<end].filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
     }
 }
 
@@ -5264,6 +5330,11 @@ private struct RepositoryDiffLinesView: View {
     let layout: RepositoryDiffLayout
     var isBusy = false
     var hunkAction: (RepositoryDiff.Line) -> (label: String, perform: () -> Void)? = { _ in nil }
+    /// A gutter checkbox for an addition or deletion line, and one on the hunk header for all of its lines.
+    var lineChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
+    var hunkChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
+    /// Keeps the checkbox column on every unified line so numbers line up whether or not a line has one.
+    var reservesChoiceColumn = false
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -5291,18 +5362,31 @@ private struct RepositoryDiffLinesView: View {
     private func fullWidthLine(_ line: RepositoryDiff.Line) -> some View {
         if let action = hunkAction(line) {
             HStack(spacing: 8) {
-                RepositoryDiffLineView(line: line, fillsWidth: false)
+                RepositoryDiffLineView(
+                    line: line,
+                    fillsWidth: false,
+                    choice: hunkChoice(line),
+                    reservesChoiceColumn: reservesChoiceColumn,
+                    choiceLabel: "Choose every line in this hunk"
+                )
                 Button(action.label, action: action.perform)
                     .controlSize(.small)
                     .disabled(isBusy)
                     .help("\(action.label) without changing the working tree file")
-                    .accessibilityHint("Update only this hunk in the Git index")
+                    .accessibilityHint("Update only these lines in the Git index")
                 Spacer(minLength: 8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.colors.diffHunkBackground)
         } else {
-            RepositoryDiffLineView(line: line)
+            RepositoryDiffLineView(
+                line: line,
+                choice: lineChoice(line),
+                reservesChoiceColumn: reservesChoiceColumn,
+                choiceLabel: line.kind == .deletion
+                    ? "Choose deleted line \(line.oldLineNumber ?? 0)"
+                    : "Choose added line \(line.newLineNumber ?? 0)"
+            )
         }
     }
 }
@@ -5318,10 +5402,30 @@ private struct RepositoryDiffLineView: View {
     /// nil is the unified layout with both line numbers; a side shows only its own number and wraps long lines.
     var side: Side? = nil
     var fillsWidth = true
+    /// A gutter checkbox that picks this line for a partial stage or unstage.
+    var choice: (isOn: Bool, toggle: () -> Void)? = nil
+    var reservesChoiceColumn = false
+    var choiceLabel = ""
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
+            if reservesChoiceColumn {
+                Group {
+                    if let choice {
+                        Toggle(choiceLabel, isOn: Binding(get: { choice.isOn }, set: { _ in choice.toggle() }))
+                            .toggleStyle(.checkbox)
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .accessibilityLabel(choiceLabel)
+                            .help("Tick lines, then use the hunk button. Shift-click ticks a range")
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(width: 18, height: 14)
+                .padding(.leading, 2)
+            }
             if side != .new {
                 Text(line?.oldLineNumber.map(String.init) ?? "")
                     .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
@@ -5350,7 +5454,7 @@ private struct RepositoryDiffLineView: View {
                 changeBarColor.frame(width: theme.metrics.diffChangeBarWidth)
             }
         }
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: choice == nil ? .ignore : .contain)
         .accessibilityLabel(line?.accessibilityLabel ?? "")
         .accessibilityHidden(line == nil)
     }

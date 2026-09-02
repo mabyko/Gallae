@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7C-1 줄 단위 staging의 부분 패치 완료. 다음은 7C-2 Unified diff의 거터 체크박스
+> 현재 범위: 7C-2 Unified diff의 거터 체크박스 완료. 다음은 줄 단위 discard와 Split 보기 검토
 
 ## 사용자 결과
 
@@ -754,6 +754,13 @@ GallaeApp
 - `RepositoryDiff.Section.partialHunk(id:keeping:direction:)`이 hunk 하나를 고른 추가·삭제 줄만 남긴 `Hunk`로 줄인다. `.apply`(stage, index는 아직 old 쪽)는 안 고른 삭제를 문맥으로 바꾸고 안 고른 추가를 뺀다. `.revert`(unstage·discard, new 쪽에 거꾸로 적용)는 반대다. 문맥은 그대로, 헤더의 줄 수는 다시 세고 시작 줄은 유지하며, `\ No newline at end of file` 표식은 바로 앞 줄과 운명을 같이한다. 고른 줄이 없으면 nil.
 - 기존 `inspector.stage/unstage(hunk…)`(`git apply --cached [--reverse]`)가 그대로 부분 패치를 받는다. 새 git 경로는 없다.
 - 테스트 둘. 손으로 만든 hunk로 두 방향의 패치 문자열(문맥 전환·드롭·표식·헤더 수)을 검증하고, 임시 저장소에서 한 hunk의 두 수정 중 하나만 stage 했다가 되돌리는 왕복을 git으로 검증한다.
+
+### 7C-2 · Unified diff의 거터 체크박스 — 완료
+
+- Changes 화면의 Working Tree·Staged 섹션이 Unified 배치일 때 추가·삭제 줄마다 거터 체크박스가 붙는다. hunk 헤더의 체크박스는 그 hunk의 줄 전부를 켜고 끈다. Shift 클릭은 마지막으로 만진 줄과의 사이를 한꺼번에 켜거나 끈다. 문맥 줄은 자리만 지켜 줄 번호가 흔들리지 않는다.
+- hunk 버튼이 체크박스를 흡수한다. 아무것도 안 골랐으면 지금처럼 "Stage Hunk"·"Unstage Hunk"로 hunk 전체, 골랐으면 "Stage 2 Lines"처럼 고른 줄만 `partialHunk`로 만든 패치를 기존 `updateHunk` 경로로 적용한다. Split 배치는 체크박스 없이 hunk 전체를 유지한다. diff가 바뀌면 고른 줄은 비워진다.
+- 접근성 이름은 "Choose deleted line 2"·"Choose added line 2"·"Choose every line in this hunk". 시험 저장소에서 한 hunk의 두 수정 중 line 2의 삭제·추가만 골라 "Stage 2 Lines"를 눌러 index에 그 둘만, working tree에 나머지가 남는 것을 git으로 확인했다.
+- 남은 것: 줄 단위 discard(working tree에 `--reverse`, 확인 대화상자), Split 배치의 체크박스, untracked 파일(intent-to-add).
 
 ## 각 단계의 검증
 
