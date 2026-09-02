@@ -164,15 +164,13 @@ struct RepositoryWorkspaceView: View {
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar {
-            // Two items, not one group: the sidebar toggle stands alone next to the window controls, and
-            // Library is a separate back button, so they never read as one control.
-            ToolbarItem(placement: .navigation) {
+            // One capsule, two controls: a divider between the sidebar toggle and Library keeps them from
+            // reading as one button.
+            ToolbarItemGroup(placement: .navigation) {
                 navigatorToolbarItem
-            }
-            if #available(macOS 26, *) {
-                ToolbarSpacer(.fixed, placement: .navigation)
-            }
-            ToolbarItem(placement: .navigation) {
+
+                Divider()
+
                 Button {
                     model.showLibrary()
                 } label: {

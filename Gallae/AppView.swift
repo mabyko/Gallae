@@ -135,6 +135,8 @@ struct AppView: View {
                         "Fast-forward the current branch from its tracking branch without merging or rebasing"
                     )
 
+                    Divider()
+
                     Button {
                         model.pushRepository()
                     } label: {
@@ -156,9 +158,9 @@ struct AppView: View {
                             ? "Publish the current local branch to its only remote and start tracking it without force"
                             : "Push the current branch to its configured destination without force"
                     )
-                }
 
-                ToolbarItemGroup {
+                    Divider()
+
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
                     }
