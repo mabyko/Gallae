@@ -726,7 +726,7 @@ GallaeApp
 - 원인은 macOS `NavigationSplitView`가 detail 열의 최소폭에 사이드바 폭을 두 번 세는 것이다. detail에 최소폭만 주면 사이드바를 열 때 창이 커지고, 최소·ideal 폭을 함께 주면 사이드바가 (창 폭 − detail 최소폭)의 절반을 넘는 만큼 오른쪽이 빈다. Gallae 코드가 없는 40줄 앱에서 그대로 재현했다(1456pt 창, 최소폭 721: 사이드바 400→33pt, 500→133pt 빈 띠. 최소폭 201: 600까지 0).
 - detail 열에서 최소·ideal 폭을 없앴다. 여섯 곳의 `HSplitView`(Changes, History, Remote, Stashes, Reflog, commit 파일 목록)는 `ResizableHSplit`로 바꿨다. `GeometryReader` 기반이라 최소폭이 없고, 좁아지면 앞 pane이 자기 최소폭까지 먼저 양보하고 그 아래서는 둘이 최소폭 비율로 줄어든다. 구분선 드래그 폭은 `@SceneStorage`에 남는다.
 - Navigator 접힘은 창 폭 변화에서만 일어난다. 구분선 드래그 중 열을 뒤집던 `foldOverwideNavigator`는 뺐다. 드래그 중 AppKit 분할 뷰와 상태가 어긋나 사이드바 내용이 왼쪽으로 밀리고 detail이 오른쪽으로 넘치던 원인이었다. 저장된 사이드바 폭을 ideal로 쓸 때는 320으로 캡한다.
-- 사이드바 최대폭 320은 `navigationSplitViewColumnWidth(max:)`가 마우스 드래그와 AppKit이 복원한 프레임에는 적용하지 않아, `SidebarWidthClamp`(사이드바 배경의 NSView)가 창에 붙을 때와 드래그가 멈춘 뒤 300ms에 구분선을 320으로 되돌린다. 복원 폭 600에서 시작해도 320으로, 400pt 더 끌어도 놓으면 320으로 돌아오고 100pt 줄이는 드래그는 그대로 220이 되는 것을 확인했다. 그 결과 900pt 창에서 사이드바가 접히고 툴바 여섯 버튼이 모두 보인다.
+- 사이드바 최대폭 320은 `navigationSplitViewColumnWidth(max:)`가 마우스 드래그와 AppKit이 복원한 프레임에는 적용하지 않는다. SwiftUI는 NSSplitViewItem의 maximumThickness를 비워 두고 갱신 때마다 비운다. 그래서 `SidebarWidthClamp`(사이드바 배경의 NSView)가 그 값을 KVO로 지켜보다 비워질 때마다 320으로 되돌려 두고(AppKit 분할 뷰 컨트롤러가 드래그를 거기서 멈춘다), 시작 시 복원된 넓은 프레임은 붙는 순간 320으로 되돌린다. 분할 뷰의 delegate를 바꾸는 길은 NSSplitViewController가 assertion으로 막는다. 복원 폭 600 → 320, 드래그 +500은 드래그 중에도 320, −100은 220, 900pt 창에서 접힘과 1456 복귀를 확인했다.
 - 접근성 API로 확인했다. 1456pt 창에서 사이드바 300·500·554 모두 diff 오른쪽 끝이 창 끝과 같고, 1000·800·720으로 줄이면 창이 그 폭을 지키며 사이드바가 접히고 1456에서 돌아온다. 테스트 112개가 통과하고 분할 폭 규칙 테스트를 더했다. 안쪽 구분선 드래그는 합성 드래그가 먹지 않아 눈으로 확인한다.
 
 ### 7A-7 · 다섯 과업 판정과 Fetch 진행 제목 — 완료

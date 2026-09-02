@@ -115,8 +115,9 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
     }
 }
 
-/// Moves the sidebar divider back to `maximum` when asked. `navigationSplitViewColumnWidth(max:)` binds
-/// programmatic positions but not mouse drags or AppKit's restored frames, so the sidebar could swallow the window.
+/// Keeps the sidebar within `maximum`. `navigationSplitViewColumnWidth(max:)` binds programmatic positions only:
+/// the split view item's maximum thickness is kept set so drags stop there, and a wider frame AppKit restores at
+/// launch is moved back once the view attaches.
 private struct SidebarWidthClamp: NSViewRepresentable {
     let maximum: CGFloat
     let generation: Int
@@ -141,6 +142,7 @@ private struct SidebarWidthClamp: NSViewRepresentable {
     /// Clamps once attached, for the frame AppKit restores at launch, and whenever asked after a drag.
     final class ClampView: NSView {
         var maximum: CGFloat = .infinity
+        private var thicknessObservation: NSKeyValueObservation?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -154,8 +156,22 @@ private struct SidebarWidthClamp: NSViewRepresentable {
         private func clampIfNeeded() {
             var candidate = superview
             while let current = candidate, !(current is NSSplitView) { candidate = current.superview }
-            guard let splitView = candidate as? NSSplitView, let sidebar = splitView.arrangedSubviews.first,
-                  sidebar.frame.width > maximum else { return }
+            guard let splitView = candidate as? NSSplitView, let sidebar = splitView.arrangedSubviews.first else { return }
+            // SwiftUI leaves the item's maximum thickness unset and clears it again on its updates, so the value
+            // is put back whenever it changes; the controller then stops drags at the maximum.
+            if thicknessObservation == nil, let controller = splitView.delegate as? NSSplitViewController,
+               let item = controller.splitViewItems.first {
+                let maximum = self.maximum
+                // AppKit changes the item on the main thread; the guard ends the re-entrant notification.
+                nonisolated(unsafe) let boundItem = item
+                thicknessObservation = item.observe(\.maximumThickness, options: [.initial, .new]) { _, _ in
+                    MainActor.assumeIsolated {
+                        guard boundItem.maximumThickness != maximum else { return }
+                        boundItem.maximumThickness = maximum
+                    }
+                }
+            }
+            guard sidebar.frame.width > maximum else { return }
             splitView.setPosition(maximum, ofDividerAt: 0)
         }
     }
