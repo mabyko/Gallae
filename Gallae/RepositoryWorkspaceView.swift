@@ -1152,9 +1152,18 @@ private struct RepositoryNavigatorView: View {
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue(for: branch))
         .accessibilityHint(isCurrent ? "Current branch" : "Double-click to switch, or open the context menu")
-        .onTapGesture(count: 2) {
-            performPrimaryAction(for: branch)
-        }
+        // ponytail: `onTapGesture` on a macOS List row takes the click away from row selection, so branch
+        // rows never selected on a single click. Simultaneous gestures select by hand and still get the double.
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                selection = .branch(branch)
+            }
+        )
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                performPrimaryAction(for: branch)
+            }
+        )
         .contextMenu {
             if !isCurrent {
                 if let worktreeURL {
