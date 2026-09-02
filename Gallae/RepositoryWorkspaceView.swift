@@ -161,6 +161,65 @@ private struct SidebarWidthClamp: NSViewRepresentable {
     }
 }
 
+/// With the system's always-visible scroll bars a list's rows end a scroller's width before the pane edge. Headers
+/// above a list take the same inset, and the list keeps its scroller shown so the two never drift apart.
+private enum LegacyScrollerStyle {
+    static var isLegacy: Bool { NSScroller.preferredScrollerStyle == .legacy }
+    static var width: CGFloat { isLegacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0 }
+}
+
+private struct ListHeaderInset: ViewModifier {
+    @State private var inset = LegacyScrollerStyle.width
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.trailing, inset)
+            .onReceive(NotificationCenter.default.publisher(for: NSScroller.preferredScrollerStyleDidChangeNotification)) { _ in
+                inset = LegacyScrollerStyle.width
+            }
+    }
+}
+
+private struct ListScrollerPolicy: NSViewRepresentable {
+    func makeNSView(context: Context) -> PolicyView { PolicyView(frame: .zero) }
+    func updateNSView(_ view: PolicyView, context: Context) {}
+
+    final class PolicyView: NSView {
+        private var observer: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard window != nil else { return }
+            apply()
+            observer = observer ?? NotificationCenter.default.addObserver(
+                forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
+            ) { [weak self] _ in self?.apply() }
+        }
+
+        /// The list's scroll view is the smallest one under the window that contains this view's center.
+        private func apply() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let root = self.window?.contentView else { return }
+                let center = self.convert(CGPoint(x: self.bounds.midX, y: self.bounds.midY), to: nil)
+                let candidates = Self.scrollViews(in: root).filter { $0.convert($0.bounds, to: nil).contains(center) }
+                guard let scrollView = candidates.min(by: { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }) else { return }
+                scrollView.autohidesScrollers = !LegacyScrollerStyle.isLegacy
+            }
+        }
+
+        private static func scrollViews(in view: NSView) -> [NSScrollView] {
+            view.subviews.flatMap { ($0 as? NSScrollView).map { [$0] } ?? scrollViews(in: $0) }
+        }
+    }
+}
+
+extension View {
+    /// For a header above a list, so its trailing content lines up with the rows beside a legacy scroller.
+    func listHeaderInset() -> some View { modifier(ListHeaderInset()) }
+    /// For a list with a header above it; see `ListHeaderInset`.
+    func legacyScrollerAware() -> some View { background(ListScrollerPolicy()) }
+}
+
 enum ResizableHSplitLayout {
     static let dividerWidth: CGFloat = 1
 
@@ -234,6 +293,8 @@ struct RepositoryWorkspaceView: View {
     @State private var commitSubject = ""
     @State private var commitBody = ""
     @State private var isAmending = false
+    /// The commit fields open by themselves when something is staged; this opens them by hand before that.
+    @State private var isComposerExpanded = false
     @State private var amendPrefill: RepositoryCommitMessage?
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var isNavigatorAutoCollapsed = false
@@ -495,6 +556,19 @@ struct RepositoryWorkspaceView: View {
                             .help("Tracks \(upstream.label)")
                             .accessibilityLabel("Tracking branch, \(upstream.label)")
                     }
+                    if !repository.changes.isEmpty {
+                        Button {
+                            selection = .destination(.changes)
+                        } label: {
+                            Label(workingTreeSummary(repository), systemImage: "pencil.line")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(.plain)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .help("Show Changes")
+                        .accessibilityLabel("Working tree, \(workingTreeSummary(repository)). Show Changes")
+                    }
                     if repository.isUnborn {
                         Label("No commits yet", systemImage: "circle.dashed")
                             .font(.callout)
@@ -513,6 +587,16 @@ struct RepositoryWorkspaceView: View {
                     }
 
                     Spacer(minLength: 0)
+
+                    if let fetched = model.lastFetchDate {
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(lastFetchText(fetched, now: context.date))
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help("Last fetch \(fetched.formatted(date: .abbreviated, time: .shortened))")
+                    }
                 }
             }
             .padding(.horizontal, 16)
@@ -869,6 +953,7 @@ struct RepositoryWorkspaceView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .listHeaderInset()
 
             Divider()
 
@@ -880,8 +965,43 @@ struct RepositoryWorkspaceView: View {
             }
 
             Divider()
-            commitComposer(repository)
+            if repository.changes.contains(where: { $0.staged != nil }) || isComposerExpanded {
+                commitComposer(repository)
+            } else {
+                collapsedCommitBar(repository)
+            }
         }
+    }
+
+    /// One line while nothing is staged: the commit fields would only take room from the list.
+    private func collapsedCommitBar(_ repository: RepositorySummary) -> some View {
+        HStack {
+            Button {
+                isComposerExpanded = true
+            } label: {
+                Label("Commit …", systemImage: "square.and.pencil")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Open the commit message fields. Staging a change opens them too")
+            .accessibilityLabel("Commit, nothing staged. Open message fields")
+
+            Spacer()
+
+            stageAllButton(repository)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private func stageAllButton(_ repository: RepositorySummary) -> some View {
+        Button("Stage All") {
+            Task { await model.stageAllChanges() }
+        }
+        .controlSize(.small)
+        .disabled(model.isLoading || !repository.changes.contains { $0.unstaged != nil && !$0.isConflicted })
+        .help("Stage every unstaged change, untracked files included")
+        .accessibilityHint("Stage every unstaged change, untracked files included")
     }
 
     private func commitComposer(_ repository: RepositorySummary) -> some View {
@@ -908,6 +1028,8 @@ struct RepositoryWorkspaceView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
 
+                stageAllButton(repository)
+
                 Spacer()
 
                 Button(isAmending ? "Amend" : "Commit") {
@@ -919,6 +1041,7 @@ struct RepositoryWorkspaceView: View {
                             commitSubject = ""
                             commitBody = ""
                             isAmending = false
+                            isComposerExpanded = false
                         }
                     }
                 }
@@ -972,6 +1095,7 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .listStyle(.plain)
+                .legacyScrollerAware()
         .focused($isChangeListFocused)
         .accessibilityLabel("Changes by folder, \(repository.changes.count) files")
     }
@@ -1018,6 +1142,7 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .listStyle(.plain)
+                .legacyScrollerAware()
         .focused($isChangeListFocused)
         .accessibilityLabel("Changes by status, \(repository.changes.count) files")
     }
@@ -1102,6 +1227,19 @@ struct RepositoryWorkspaceView: View {
     }
 
     // remote branch 이름이 현재 branch와 같으면 remote 이름만 남겨 긴 이름의 중복 잘림을 줄인다.
+    private func workingTreeSummary(_ repository: RepositorySummary) -> String {
+        let total = repository.changes.count
+        let staged = repository.changes.filter { $0.staged != nil }.count
+        let changes = total == 1 ? "1 change" : "\(total) changes"
+        return staged > 0 ? "\(changes) · \(staged) staged" : changes
+    }
+
+    private func lastFetchText(_ fetched: Date, now: Date) -> String {
+        let age = now.timeIntervalSince(fetched)
+        let when = age < 60 ? "just now" : fetched.formatted(.relative(presentation: .numeric, unitsStyle: .abbreviated))
+        return "Last fetch \(when)" + (model.automaticFetchEnabled ? " · Auto" : "")
+    }
+
     private func upstreamDisplayLabel(
         _ upstream: RepositorySummary.Upstream,
         head: RepositorySummary.Head
@@ -1846,6 +1984,7 @@ private struct RepositoryHistoryView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+                .listHeaderInset()
 
                 Divider()
 
@@ -2099,6 +2238,7 @@ private struct RepositoryHistoryView: View {
                         .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
                     }
                     .listStyle(.plain)
+                .legacyScrollerAware()
                     .accessibilityLabel("Commit History, \(commits.count) commits")
 
                     if history.commits.count == RepositoryInspector.maximumHistoryCommits {
@@ -2273,6 +2413,7 @@ private struct RepositoryRemoteView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+                .listHeaderInset()
 
                 Divider()
 
@@ -2385,6 +2526,7 @@ private struct RepositoryRemoteView: View {
                     }
             }
             .listStyle(.inset)
+                .legacyScrollerAware()
             .accessibilityLabel("Remote branches of \(remoteName), \(branches.count)")
         }
     }
@@ -2577,6 +2719,7 @@ private struct RepositoryStashesView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+                .listHeaderInset()
 
                 Divider()
 
@@ -2627,6 +2770,7 @@ private struct RepositoryStashesView: View {
                     .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
             }
             .listStyle(.plain)
+                .legacyScrollerAware()
             .accessibilityLabel("Stashes, \(stashes.count) items")
         }
     }
@@ -2665,6 +2809,7 @@ private struct RepositoryReflogView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
+                .listHeaderInset()
 
                 Divider()
 
@@ -2715,6 +2860,7 @@ private struct RepositoryReflogView: View {
                     .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
             }
             .listStyle(.plain)
+                .legacyScrollerAware()
             .accessibilityLabel("Reflog, \(entries.count) recovery points")
         }
     }
@@ -3875,6 +4021,7 @@ private struct InteractiveRebasePlanSheet: View {
                 .onMove(perform: move)
             }
             .listStyle(.inset)
+                .legacyScrollerAware()
 
             if let validationMessage {
                 Label(validationMessage, systemImage: "exclamationmark.triangle")
@@ -3924,6 +4071,7 @@ private struct InteractiveRebasePlanSheet: View {
                 }
             }
             .listStyle(.inset)
+                .legacyScrollerAware()
 
             if let message = executionError ?? executionValidationMessage {
                 Label(message, systemImage: "exclamationmark.triangle")
@@ -4436,6 +4584,7 @@ private struct RepositoryRevisionChangesView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .listHeaderInset()
 
                 Divider()
 
@@ -4445,6 +4594,7 @@ private struct RepositoryRevisionChangesView: View {
                         .listRowInsets(.init(top: 7, leading: 10, bottom: 7, trailing: 10))
                 }
                 .listStyle(.plain)
+                .legacyScrollerAware()
                 .accessibilityLabel("Changed Files, \(files.count) files")
             }
         } trailing: {

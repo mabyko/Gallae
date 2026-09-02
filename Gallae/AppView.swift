@@ -1327,6 +1327,14 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
     case publishTo(remote: String)
     case deleteRemoteBranch(trackingRef: String)
 
+    /// Fetch, automatic Fetch, and Pull all bring remote refs down.
+    var fetchesRemote: Bool {
+        switch self {
+        case .fetch, .automaticFetch, .pull: true
+        default: false
+        }
+    }
+
     var progressTitle: String {
         switch self {
         case .fetch(let remote, let pruning):
@@ -1577,6 +1585,11 @@ final class AppModel {
     var remoteOperation: RepositoryRemoteOperation?
     /// Short result of the last remote operation, shown briefly in the activity capsule.
     var remoteOperationResult: String?
+    /// When each Repository last fetched in this session, for the context bar. Not persisted.
+    var lastFetchDates: [URL: Date] = [:]
+    var lastFetchDate: Date? {
+        repository.flatMap { lastFetchDates[$0.rootURL] }
+    }
     /// A user-started remote operation is running: sync commands and branch changes wait, Stage,
     /// Commit, and reading keep working. Automatic Fetch never locks anything.
     var isSyncing: Bool {
@@ -2390,6 +2403,7 @@ final class AppModel {
                     )
                 }
                 showRemoteOperationResult(operation.successTitle(before: repository))
+                if operation.fetchesRemote { lastFetchDates[updatedRepository.rootURL] = .now }
                 let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
                 libraryRepositoryActivities[cacheID] = nil
                 libraryRepositoryActivityErrors[cacheID] = nil
@@ -3194,6 +3208,12 @@ final class AppModel {
     func stageSelectedChange() async {
         guard let selectedChangeID else { return }
         await stageChanges(ids: [selectedChangeID])
+    }
+
+    /// Every unstaged and untracked change that isn't a conflict.
+    func stageAllChanges() async {
+        guard let repository else { return }
+        await stageChanges(ids: Set(repository.changes.filter { $0.unstaged != nil && !$0.isConflicted }.map(\.id)))
     }
 
     func stageChanges(ids: Set<RepositorySummary.Change.ID>) async {

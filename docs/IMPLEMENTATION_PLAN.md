@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-7 다섯 과업 판정(Working Tree 행 없음)과 Fetch 진행 제목 완료. 다음 슬라이스는 미정
+> 현재 범위: 7A-8 시안 마무리(커밋 칸 접기·Stage All·마지막 Fetch·dirty 표시·스크롤바 정렬) 완료. 다음은 줄 단위 staging 검토
 
 ## 사용자 결과
 
@@ -734,6 +734,13 @@ GallaeApp
 - PRODUCT.md의 판정 방법대로 다섯 과업을 1180pt와 720pt에서 접근성 트리로 확인하고 표를 남겼다. History 맨 위의 Working Tree 행은 두지 않는다. 720pt에서 dirty 개수 하나가 가려지는 것은 Floating Navigator가 화면을 옮기지 않고 보여 주고, 행은 History 화면에서만 그것을 돕는 대신 HEAD commit을 둘째 행으로 밀어 잘못 고를 위험을 더한다.
 - 720pt 툴바는 제목이 짧은 저장소에서 Navigator·Library·Fetch·Pull·Publish·↻가 모두 보이고 오버플로가 없었다.
 - remote를 정하지 않은 Fetch의 진행 제목을 "Reading Fetch Remotes…"에서 "Fetching Remote Changes…"로, Prune은 "Fetching & Pruning…"으로 바꿨다. Pull의 "Pulling Remote Changes…"와 같은 꼴이다.
+
+### 7A-8 · 시안 마무리와 문맥 바 — 완료
+
+- 커밋 칸은 staged가 없으면 한 줄 바(Commit … · Stage All)로 접히고, staged가 생기거나 Commit …을 누르면 펼쳐진다. 커밋이 끝나면 다시 접힌다. Stage All은 conflict가 아닌 unstaged·untracked 전부를 올리며 펼친 상태의 "N staged" 옆에도 있다.
+- 문맥 바에 둘을 더했다. Tracking 뒤의 working tree 표시("4 changes · 1 staged", 깨끗하면 숨김)는 누르면 Changes로 가고, 오른쪽 끝의 "Last fetch just now · Auto"는 이 세션에서 Fetch·자동 Fetch·Pull이 성공한 시각을 1분 단위로 갱신한다. 시각은 저장하지 않는다.
+- 시스템의 항상 보이는 스크롤바(마우스 연결 시 자동)에서 목록 헤더의 오른쪽 내용이 행보다 스크롤바 폭만큼 바깥에 있던 것을 맞췄다. 여섯 목록 헤더가 `listHeaderInset`으로 그 폭만큼 들어가고, 목록은 `legacyScrollerAware`로 스크롤바를 항상 보여 짧은 목록에서도 같은 자리를 지킨다. 오버레이 스크롤바에서는 둘 다 0이다.
+- 접근성 트리로 확인했다. staged 0에서 "Commit, nothing staged"와 Stage All, Stage All 뒤 "4 staged"와 펼쳐진 칸, 문맥 바 "4 changes" → "4 changes · 4 staged", Fetch 뒤 "Last fetch just now".
 
 ## 각 단계의 검증
 

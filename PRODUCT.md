@@ -592,7 +592,8 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 - **설정.** Appearance(System·Light·Dark), Translucent Sidebar and Toolbar(기본 켬, 시스템 투명도 줄이기가 켜지면 강제로 꺼짐), Compact Rows(기본 끔). 그 외 시각 옵션은 두지 않는다. 예외는 [시안 6](#디자인-시안-6)의 Navigator in Narrow Windows 하나다.
 - **diff 배치.** Unified·Split은 diff 헤더 토글, 마지막 선택 기억.
 - **줄 단위 staging.** 거터 체크박스는 줄 단위 staging 기능이 들어올 때의 UI다. 그전까지는 hunk 버튼을 유지하고 둘을 설정으로 고르게 하지 않는다.
-- **커밋 작성.** staged가 없으면 한 줄 바(Commit …)로 접히고 생기면 펼쳐진다.
+- **커밋 작성.** staged가 없으면 한 줄 바(Commit … · Stage All)로 접히고 생기면 펼쳐진다.
+- **문맥 바의 working tree 표시.** branch 메뉴와 Tracking 뒤에 "4 changes · 1 staged"를 두고 누르면 Changes로 간다. 깨끗하면 숨긴다. 다섯 과업 판정에서 720pt의 가려진 dirty 상태를 메우려고 더했다.
 - **Working Tree 행 없음.** History 맨 위에 Working Tree 행을 두지 않는다. 아래 다섯 과업 판정의 결과다. 좁은 창에서 dirty 상태를 History 화면 안에서 보여 주는 이득 하나에, 맨 위 행이 commit이 아니게 되어 HEAD commit을 잘못 고를 위험과 1180pt에서 Navigator의 Changes 개수와 중복되는 비용이 붙는다.
 
 판정 방법은 Codex 제안을 따른다. 같은 데이터로 다섯 과업(현재 branch와 dirty 상태 말하기, hunk 하나 stage와 commit, commit의 branch 관계와 파일 찾기, stash 적용, reflog에서 복구 branch 만들기)을 1180pt와 720pt에서 수행하고, 클릭 수 대신 문맥을 잃은 횟수·가려진 핵심 명령·잘못 고를 수 있는 위험 동작·키보드 포커스 이동을 센다.
