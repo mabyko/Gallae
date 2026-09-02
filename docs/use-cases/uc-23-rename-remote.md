@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | configured Remote의 이름을 local Tracking 관계를 잃지 않고 바꾼다. |
 | 시작 조건 | 하나 이상의 configured Remote가 있는 Repository Workspace가 열려 있다. |
-| 진입점 | Navigator Remotes 섹션에서 remote 선택 → remote 화면의 `Edit…` |
+| 진입점 | Navigator 범위 목록에서 remote 선택 → History 헤더의 `Edit…`, 또는 remote 행 우클릭 메뉴의 `Edit…` |
 | 완료 상태 | Remote와 관련 Tracking 정보가 새 이름으로 표시되고 local 작업은 유지된다. |
 
 ## 정상 흐름
 
-1. 사용자가 Navigator에서 remote를 선택하고 remote 화면의 `Edit…`을 누른다.
+1. 사용자가 Navigator에서 remote를 선택하고 History 헤더의 `Edit…`을 누른다.
 2. Name을 바꾸고 필요하면 Fetch·Push URL도 함께 편집한 뒤 Save를 누른다.
 3. Gallae가 Remote 설정과 local remote-tracking branch를 새 이름으로 옮긴다.
 4. Repository snapshot과 Remotes를 갱신해 새 Tracking 이름을 표시하고, Navigator 선택은 History로 돌아간다.

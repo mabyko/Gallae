@@ -12,7 +12,7 @@
 ## 정상 흐름
 
 1. 사용자가 Navigator의 Remotes 섹션에서 remote 이름을 보고 하나를 선택한다.
-2. Gallae가 본문을 remote 화면으로 바꾼다. 왼쪽 목록은 그 remote의 remote-tracking branch(`origin/` 접두어 없이, 전체 이름은 도움말)이고, 오른쪽은 이름·Fetch URL·Push URL과 `Fetch`·`Fetch & Prune`·`Test Connection`·`Edit…`·`Remove…`다.
+2. Gallae가 History를 그 remote 범위로 바꾼다. 헤더는 이름과 Fetch URL, 도구는 `Fetch`·`Fetch & Prune`·`Edit…`다. Navigator의 remote 행이 열려 remote-tracking branch(`origin/` 접두어 없이, 전체 이름은 도움말)를 보여 주고, 하나를 고르면 History가 그 branch 범위가 된다.
 3. 사용자가 URL을 선택해 복사한다.
 4. Navigator에서 `History`(⌘2) 같은 목적지나 다른 객체를 고르면 본문이 그쪽으로 바뀐다.
 
@@ -27,6 +27,6 @@
 
 - 로딩, 없음과 실패를 구분한다.
 - 조회 전후 HEAD·index·working tree와 ref가 바뀌지 않는다.
-- Remote 이름·URL 편집, 제거, Fetch 연결 시험과 그 remote만의 Fetch는 같은 remote 화면에서 제공한다.
+- Remote 이름·URL 편집·제거·Fetch 연결 시험은 `Edit…` 시트에서, 그 remote만의 Fetch는 History 헤더와 remote 행의 우클릭 메뉴에서 제공한다. 별도 Remote 화면은 없다(시안 7).
 
 [사용자 흐름 문서로 돌아가기](../README.md)

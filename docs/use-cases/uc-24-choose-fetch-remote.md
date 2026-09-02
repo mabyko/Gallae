@@ -6,7 +6,7 @@
 | --- | --- |
 | 사용자 목표 | 여러 Remote 중 가져올 대상을 직접 고른다. |
 | 시작 조건 | Remote가 둘 이상 설정된 Repository Workspace가 열려 있다. |
-| 진입점 | Repository Workspace 상단의 Fetch, 또는 Navigator remote 행의 문맥 메뉴·remote 화면의 `Fetch`(선택 없이 그 remote에서 바로) |
+| 진입점 | Repository Workspace 상단의 Fetch, 또는 Navigator remote 행의 문맥 메뉴·remote 범위 History 헤더의 `Fetch`(선택 없이 그 remote에서 바로) |
 | 완료 상태 | 선택한 Remote의 최신 remote-tracking ref와 Repository 상태가 같은 Workspace에 표시된다. |
 
 ## 정상 흐름
