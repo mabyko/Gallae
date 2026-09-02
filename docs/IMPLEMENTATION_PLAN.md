@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-8 시안 마무리(커밋 칸 접기·Stage All·마지막 Fetch·dirty 표시·스크롤바 정렬) 완료. 다음은 줄 단위 staging 검토
+> 현재 범위: 7B Navigator의 두 축(시안 7, A1) 완료. 다음은 줄 단위 staging 검토
 
 ## 사용자 결과
 
@@ -741,6 +741,13 @@ GallaeApp
 - 문맥 바에 둘을 더했다. Tracking 뒤의 working tree 표시("4 changes · 1 staged", 깨끗하면 숨김)는 누르면 Changes로 가고, 오른쪽 끝의 "Last fetch just now · Auto"는 이 세션에서 Fetch·자동 Fetch·Pull이 성공한 시각을 1분 단위로 갱신한다. 시각은 저장하지 않는다.
 - 시스템의 항상 보이는 스크롤바(마우스 연결 시 자동)에서 목록 헤더의 오른쪽 내용이 행보다 스크롤바 폭만큼 바깥에 있던 것을 맞췄다. 여섯 목록 헤더가 `listHeaderInset`으로 그 폭만큼 들어가고, 목록은 `legacyScrollerAware`로 스크롤바를 항상 보여 짧은 목록에서도 같은 자리를 지킨다. 오버레이 스크롤바에서는 둘 다 0이다.
 - 접근성 트리로 확인했다. staged 0에서 "Commit, nothing staged"와 Stage All, Stage All 뒤 "4 staged"와 펼쳐진 칸, 문맥 바 "4 changes" → "4 changes · 4 staged", Fetch 뒤 "Last fetch just now".
+
+### 7B · Navigator의 두 축 — 완료
+
+- 선택 모델을 둘로 나눴다. 화면 축은 `RepositoryWorkspaceSection`(`@SceneStorage`, ⌘1~⌘4와 같은 값), 범위 축은 `RepositoryHistoryScope`(branch·remote·remoteBranch·tag). 범위를 고르면 화면이 History가 되고 `AppModel.historyReference`가 그 범위의 ref가 된다. remote 범위는 `--remotes=<name>/`로 그 remote의 branch 전부를 읽는다. 좁은 창의 위치 라벨은 `RepositoryNavigatorLocation(screen:scope:)`이 만든다.
+- Navigator는 위의 화면 목록(네 행짜리 스택, 포커스를 스스로 받아 강조색·회색을 가른다)과 아래의 범위 목록(`List(selection:)`)으로 나뉜다. remote 행은 DisclosureGroup으로 열려 remote branch가 범위가 되고, 우클릭 메뉴에 Fetch·Fetch & Prune·Edit…·Remove…가, remote branch 행에는 Delete on Remote…·Remove Tracking Reference…가 있다. HEAD branch는 굵은 글씨다. 두 번 클릭 전환은 화면을 바꾸지 않는다.
+- Remote 화면(`RepositoryRemoteView`)은 없앴다. History 헤더가 remote 범위에서 Fetch·Fetch & Prune·Edit…를, remote branch·tag 범위에서 New Branch…를 보여 준다. `EditRemoteSheet`가 Test Connection(아래 왼쪽)과 Remove…(오른쪽 위, 확인 대화상자)를 품는다.
+- 테스트는 위치 라벨과 범위 ref를 검증한다.
 
 ## 각 단계의 검증
 

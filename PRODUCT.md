@@ -586,7 +586,7 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 
 ### 결정
 
-- **작업공간 구조.** Navigator · 목록 · 내용의 3열. Navigator 맨 위에 목적지(Workspace: Changes·History, Recovery: Stashes·Reflog), 아래에 접을 수 있는 객체(Branches·Remotes·Tags). Stashes는 개수만 표시하고 항목은 본문에 둔다. Navigator에서 branch·remote·tag를 고르면 본문이 그 객체의 목록·상세로 바뀌고, branch 화면에 Switch와 Integrate가, remote 화면에 URL·Fetch·Prune·Test Connection·편집이 산다. 헤더는 한 줄 문맥 바(branch 메뉴 · Tracking · ahead/behind · 마지막 Fetch)다.
+- **작업공간 구조.** Navigator · 목록 · 내용의 3열. Navigator는 목록 둘이다(시안 7, A1). 위는 화면 목록(Workspace: Changes·History, Recovery: Stashes·Reflog)으로 항상 하나가 선택돼 있고, 아래는 범위 목록(Branches·Remotes와 그 아래 remote branch·Tags)으로 선택이 있어도 없어도 된다. 범위를 고르면 History가 그 범위로 바뀌고 Changes·Stashes·Reflog는 범위를 무시하되 선택은 남는다. 목록이 둘이라 두 선택이 동시에 보이고, 포커스 없는 쪽은 macOS가 회색으로 그린다. branch 한 번 클릭은 보기, 두 번 클릭은 전환이며 전환해도 화면은 그대로다. HEAD는 굵은 글씨와 표시로 선택과 따로 보인다. remote는 화면이 아니라 범위라 별도 Remote 화면이 없다. Fetch·Fetch & Prune·Edit…는 History 헤더의 도구이고, URL·Test Connection·Remove는 Edit… 시트 안이며(Remove는 시트 오른쪽 위), remote 행의 우클릭 메뉴에도 같은 동사가 있다. Stashes는 개수만 표시하고 항목은 본문에 둔다. 헤더는 한 줄 문맥 바(branch 메뉴 · Tracking · ahead/behind · working tree · 마지막 Fetch)다.
 - **진행 표시.** 6번. 누른 버튼 스피너, 창 제목 subtitle, 우하단 캡슐과 Cancel. 잠금은 동기화 묶음과 branch 전환뿐. 완료는 캡슐 결과, 실패는 alert.
 - **시각 언어.** 시스템 재질(B)이 기본이다. A(불투명 뉴트럴)는 투명도 줄이기에, C(고대비)는 대비 증가에 대한 같은 테마의 응답이며 테마 선택 UI는 없다. 콘텐츠 패널은 항상 불투명이다.
 - **설정.** Appearance(System·Light·Dark), Translucent Sidebar and Toolbar(기본 켬, 시스템 투명도 줄이기가 켜지면 강제로 꺼짐), Compact Rows(기본 끔). 그 외 시각 옵션은 두지 않는다. 예외는 [시안 6](#디자인-시안-6)의 Navigator in Narrow Windows 하나다.
@@ -618,6 +618,14 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 4. 재질·접근성 응답과 설정(Appearance, Translucent, Compact Rows), diff Split 보기.
 
 네 슬라이스는 구현 계획의 7A-1~7A-4로 끝났고, 다섯 과업 판정으로 Working Tree 행은 두지 않기로 했다.
+
+## 디자인 시안 7
+
+Navigator가 "어느 화면을 보는가"와 "어느 branch·remote·tag를 보는가"를 동시에 보여 주는 방법을 정한 기록이다. 시안 7은 1180pt 창의 일회용 HTML이며 시안 3~6처럼 로컬에만 둔다.
+
+계기는 List 하나로 된 Navigator에서 branch를 고르면 Changes·History 행의 선택이 사라져 두 상태 중 하나만 보이던 것이다. 검토한 안은 셋이다. A1은 목록 둘(화면·범위)에 remote를 범위로 두고 관리 기능을 History 헤더와 Edit… 시트로 옮긴다. A2는 같은 두 목록이되 remote를 고르면 Remote 화면이 떠 화면 목록의 선택이 비는 예외가 있다. B는 List 하나에 다른 축의 현재 항목을 회색 띠로 직접 그린다.
+
+A1로 정했다. 두 축이 끝까지 깨지지 않고, 회색·강조색 구분을 시스템 List 둘에 맡길 수 있다. branch 한 번 클릭이 checkout이 되는 안은 처음부터 제외했다. working tree를 바꾸는 부작용을 사이드바 클릭에 붙일 수 없고, 한 번 클릭은 보기·두 번 클릭은 전환이라는 관습이 있다. Remove의 자리는 Fetch 옆 헤더가 아니라 remote 행의 우클릭 메뉴와 Edit… 시트의 오른쪽 위다. 시트 아래 줄은 Test Connection · Cancel · Save.
 
 ## 디자인 시안 6
 

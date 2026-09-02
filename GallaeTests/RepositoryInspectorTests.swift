@@ -2509,12 +2509,18 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     func testDescribesNavigatorLocationForDestinationsAndObjects() {
-        XCTAssertEqual(RepositoryNavigatorSelection.destination(.history).locationTitle, "History")
-        XCTAssertEqual(RepositoryNavigatorSelection.destination(.stashes).locationSystemImage, RepositoryWorkspaceSection.stashes.systemImage)
-        XCTAssertEqual(RepositoryNavigatorSelection.branch("feature").locationTitle, "feature · Local branch")
-        XCTAssertEqual(RepositoryNavigatorSelection.remote("origin").locationTitle, "origin · Remote")
-        XCTAssertEqual(RepositoryNavigatorSelection.tag("v0.1").locationTitle, "v0.1 · Tag")
-        XCTAssertEqual(RepositoryNavigatorSelection.tag("v0.1").historyReference, "refs/tags/v0.1")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .history, scope: nil).title, "History")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .stashes, scope: .branch("feature")).title, "Stashes", "only History reads the scope")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .stashes, scope: nil).systemImage, RepositoryWorkspaceSection.stashes.systemImage)
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .history, scope: .branch("feature")).title, "feature · Local branch")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .history, scope: .remote("origin")).title, "origin · Remote")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .history, scope: .remoteBranch("origin/main")).title, "origin/main · Remote branch")
+        XCTAssertEqual(RepositoryNavigatorLocation(screen: .history, scope: .tag("v0.1")).title, "v0.1 · Tag")
+        XCTAssertEqual(RepositoryHistoryScope.tag("v0.1").historyReference, "refs/tags/v0.1")
+        XCTAssertEqual(RepositoryHistoryScope.remoteBranch("origin/main").historyReference, "refs/remotes/origin/main")
+        XCTAssertEqual(RepositoryHistoryScope.remote("origin").historyReference, "--remotes=origin/")
+        XCTAssertEqual(RepositoryHistoryScope.remoteBranch("origin/feature/x").remoteName, "origin")
+        XCTAssertNil(RepositoryHistoryScope.branch("main").remoteName)
         // Unknown stored values fall back to the default style instead of crashing the setting.
         XCTAssertNil(GallaeAppearanceSettings.NarrowNavigator(rawValue: "bogus"))
         XCTAssertEqual(GallaeAppearanceSettings.NarrowNavigator.allCases.first, .floatingPanel)

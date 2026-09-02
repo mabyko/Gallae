@@ -853,6 +853,17 @@ struct EditRemoteSheet: View {
     @State private var pushURL: String
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var connectionTestState: ConnectionTestState = .idle
+    @State private var connectionTestTask: Task<Void, Never>?
+    @State private var connectionTestErrorMessage: String?
+    @State private var isConfirmingRemoval = false
+    @State private var removalErrorMessage: String?
+
+    private enum ConnectionTestState: Equatable {
+        case idle
+        case testing
+        case reachable
+    }
 
     init(model: AppModel, repositoryRootURL: URL, remote: RepositoryRemote) {
         self.model = model
@@ -888,11 +899,21 @@ struct EditRemoteSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Edit Remote", systemImage: "pencil")
-                    .font(.title2.bold())
-                Text(remote.name)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Edit Remote", systemImage: "pencil")
+                        .font(.title2.bold())
+                    Text(remote.name)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                // The one destructive action sits apart from Save, top right, and asks first.
+                Button("Remove…", role: .destructive) {
+                    isConfirmingRemoval = true
+                }
+                .disabled(isSaving || model.isLoading)
+                .accessibilityLabel("Remove \(remote.name) Remote")
+                .help("Remove this Remote and its remote-tracking branches from the Repository")
             }
 
             Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 12) {
@@ -926,6 +947,33 @@ struct EditRemoteSheet: View {
                 .foregroundStyle(.secondary)
 
             HStack {
+                switch connectionTestState {
+                case .testing:
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Testing \(remote.name) Fetch Connection")
+                    Text("Testing…")
+                        .foregroundStyle(.secondary)
+                    Button("Cancel Test") {
+                        connectionTestTask?.cancel()
+                    }
+                case .reachable:
+                    Button {
+                        testConnection()
+                    } label: {
+                        Label("Reachable", systemImage: "checkmark.circle")
+                    }
+                    .disabled(model.isLoading)
+                    .accessibilityLabel("Test \(remote.name) Fetch Connection")
+                case .idle:
+                    Button("Test Connection") {
+                        testConnection()
+                    }
+                    .disabled(model.isLoading)
+                    .accessibilityLabel("Test \(remote.name) Fetch Connection")
+                    .help("Ask Git to read the saved Fetch URL without changing local Repository state")
+                }
+
                 Spacer()
                 Button("Cancel") {
                     dismiss()
@@ -944,6 +992,43 @@ struct EditRemoteSheet: View {
         .frame(width: 560)
         .interactiveDismissDisabled(isSaving)
         .onAppear { focusedField = .name }
+        .onDisappear { connectionTestTask?.cancel() }
+        .confirmationDialog(
+            "Remove Remote?",
+            isPresented: $isConfirmingRemoval,
+            titleVisibility: .visible
+        ) {
+            Button("Remove “\(remote.name)”", role: .destructive) {
+                Task { await removeRemote() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This removes “\(remote.name)” and its local remote-tracking branches from this Repository. It doesn’t delete the remote Repository, local branches, commits, or working files."
+            )
+        }
+        .alert(
+            "Couldn’t Remove Remote",
+            isPresented: Binding(
+                get: { removalErrorMessage != nil },
+                set: { if !$0 { removalErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(removalErrorMessage ?? "Unknown error")
+        }
+        .alert(
+            "Couldn’t Reach Remote",
+            isPresented: Binding(
+                get: { connectionTestErrorMessage != nil },
+                set: { if !$0 { connectionTestErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(connectionTestErrorMessage ?? "Unknown error")
+        }
         .alert(
             "Couldn’t Update Remote",
             isPresented: Binding(
@@ -954,6 +1039,36 @@ struct EditRemoteSheet: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "Unknown error")
+        }
+    }
+
+    private func removeRemote() async {
+        do {
+            try await model.removeRemote(named: remote.name, in: repositoryRootURL)
+            dismiss()
+        } catch is CancellationError {
+            return
+        } catch {
+            removalErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func testConnection() {
+        guard connectionTestTask == nil else { return }
+        connectionTestState = .testing
+        connectionTestErrorMessage = nil
+        connectionTestTask = Task {
+            defer { connectionTestTask = nil }
+            do {
+                try await model.testRemoteConnection(named: remote.name, in: repositoryRootURL)
+                try Task.checkCancellation()
+                connectionTestState = .reachable
+            } catch is CancellationError {
+                connectionTestState = .idle
+            } catch {
+                connectionTestState = .idle
+                connectionTestErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
         }
     }
 
