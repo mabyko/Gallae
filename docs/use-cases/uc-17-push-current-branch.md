@@ -13,7 +13,7 @@
 
 1. 사용자가 Push를 누른다.
 2. Gallae가 기존 `push.default`와 remote 설정이 고르는 목적지에 현재 branch를 보낸다.
-3. Push가 끝나면 Repository, Changes와 History를 다시 읽는다.
+3. Push가 끝나면 Repository, Changes와 History를 다시 읽고, 캡슐이 보낸 commit 수(`Pushed N commits`)를 잠깐 보인다. 실행 중에는 툴바 Push 아이콘·창 제목 subtitle·캡슐이 진행을 보이고 Fetch·Pull과 branch 전환만 기다린다. Stage·Commit·조회는 계속 쓸 수 있다.
 4. 현재 HEAD·index·working tree와 local 수정은 그대로 유지된다.
 
 ## 대안 흐름

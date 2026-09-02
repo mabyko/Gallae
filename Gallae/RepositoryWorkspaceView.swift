@@ -27,6 +27,7 @@ enum RepositoryWorkspaceSection: Int, CaseIterable {
 struct RepositoryWorkspaceView: View {
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.windowWidth) private var windowWidth
     @State private var selectedChangeIDs = Set<RepositorySummary.Change.ID>()
     @State private var selectAllEventMonitor: Any?
     @State private var expandedStatusGroups = Set(RepositoryChangeStatusGroup.ID.allCases)
@@ -34,32 +35,85 @@ struct RepositoryWorkspaceView: View {
     @State private var commitBody = ""
     @State private var isAmending = false
     @State private var amendPrefill: RepositoryCommitMessage?
-    @State private var isBranchPickerPresented = false
+    @State private var columnVisibility = NavigationSplitViewVisibility.all
+    @State private var isNavigatorAutoCollapsed = false
+    @State private var isCreatingBranch = false
+    /// Changes list plus diff minimum widths.
+    private static let detailMinimumWidth: CGFloat = 320 + 400
+    /// Navigator ideal width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
+    private static let navigatorFoldWidth: CGFloat = 220 + detailMinimumWidth + 8
     @State private var isConfirmingOperationAbort = false
     @FocusState private var isChangeListFocused: Bool
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
 
     var body: some View {
-        VStack(spacing: 0) {
-            repositoryHeader
-            Divider()
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            RepositoryNavigatorView(model: model, section: $workspaceSection)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+                .toolbar(removing: .sidebarToggle)
+        } detail: {
+            VStack(spacing: 0) {
+                repositoryHeader
+                Divider()
 
-            if let repository = model.repository {
-                switch workspaceSection {
-                case .changes:
-                    changesContent(repository)
-                case .history:
-                    RepositoryHistoryView(model: model)
-                case .stashes:
-                    RepositoryStashesView(model: model)
-                case .reflog:
-                    RepositoryReflogView(model: model)
+                if let repository = model.repository {
+                    switch workspaceSection {
+                    case .changes:
+                        changesContent(repository)
+                    case .history:
+                        RepositoryHistoryView(model: model)
+                    case .stashes:
+                        RepositoryStashesView(model: model)
+                    case .reflog:
+                        RepositoryReflogView(model: model)
+                    }
                 }
+            }
+            // ponytail: without an explicit ideal width the split view sizes the detail column to the
+            // diff panel's natural width and overflows the window; the list + diff minimums are the ideal.
+            .frame(minWidth: Self.detailMinimumWidth, idealWidth: Self.detailMinimumWidth, maxWidth: .infinity)
+        }
+        .onChange(of: windowWidth, initial: true) { _, width in
+            // ponytail: the split view never shrinks the detail column below the list + diff minimums, so the
+            // window width decides. The Navigator folds first and comes back only once both fit again.
+            guard width > 0 else { return }
+            if width < Self.navigatorFoldWidth, columnVisibility != .detailOnly {
+                isNavigatorAutoCollapsed = true
+                columnVisibility = .detailOnly
+            } else if isNavigatorAutoCollapsed, width >= Self.navigatorFoldWidth {
+                isNavigatorAutoCollapsed = false
+                columnVisibility = .all
             }
         }
         .task(id: model.diffRequest) {
             await model.loadSelectedDiff()
+        }
+        .task(id: model.repositoryRevision) {
+            await model.loadLocalBranches()
+        }
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    isNavigatorAutoCollapsed = false
+                    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+                } label: {
+                    Label("Navigator", systemImage: "sidebar.leading")
+                }
+                .help("Show or hide the Navigator (⌃⌘S)")
+                .accessibilityLabel(columnVisibility == .detailOnly ? "Show Navigator" : "Hide Navigator")
+
+                Button {
+                    model.showLibrary()
+                } label: {
+                    Label("Library", systemImage: "chevron.backward")
+                        .labelStyle(.titleAndIcon)
+                }
+                .help("Return to the Repository Library in this window (⇧⌘L)")
+                .accessibilityHint("Return to the Repository Library in this window")
+                .disabled(model.isLoading)
+            }
         }
         .onChange(of: model.repository?.rootURL, initial: true) {
             commitSubject = ""
@@ -110,6 +164,7 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .focusedSceneValue(\.workspaceSection, $workspaceSection)
+        .focusedSceneValue(\.navigatorVisibility, $columnVisibility)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
         .confirmationDialog(
@@ -150,96 +205,59 @@ struct RepositoryWorkspaceView: View {
 
     private var repositoryHeader: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 16) {
+            HStack(alignment: .center, spacing: 14) {
                 if let repository = model.repository {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(repository.name)
-                            .font(.title2.weight(.semibold))
+                    Menu {
+                        branchMenuItems(for: repository)
+                    } label: {
+                        Label(repository.head.label, systemImage: repository.head.systemImage)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .help(repository.name)
-                            .accessibilityLabel("Repository, \(repository.name)")
-                        Text(repository.rootURL.path)
-                            .font(.caption.monospaced())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .font(.callout.weight(.medium))
+                    .help("Switch, create, or integrate local branches")
+                    .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
+                    .disabled(model.isLoading || model.isSyncing)
+
+                    if let upstream = repository.upstream {
+                        Label(
+                            upstreamDisplayLabel(upstream, head: repository.head),
+                            systemImage: "arrow.up.arrow.down"
+                        )
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .textSelection(.enabled)
-                            .help(repository.rootURL.path)
-                            .accessibilityLabel("Repository path, \(repository.rootURL.path)")
+                            .help("Tracks \(upstream.label)")
+                            .accessibilityLabel("Tracking branch, \(upstream.label)")
+                    }
+                    if repository.isUnborn {
+                        Label("No commits yet", systemImage: "circle.dashed")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    if model.isRepositoryStale {
+                        Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                            .font(.callout)
+                            .foregroundStyle(theme.colors.statusConflict)
+                    }
+                    if model.isCurrentWorkspaceTemporaryWorktree {
+                        Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
                     }
 
-                    Spacer()
-
-                    Picker("Workspace", selection: $workspaceSection) {
-                        ForEach(RepositoryWorkspaceSection.allCases, id: \.self) { section in
-                            Text(section.title).tag(section)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .help("Switch between working tree changes, commit history, Stashes, and Reflog")
-                    .accessibilityLabel("Repository View")
-
-                    VStack(alignment: .trailing, spacing: 5) {
-                        Button {
-                            isBranchPickerPresented = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Label(repository.head.label, systemImage: repository.head.systemImage)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Image(systemName: "chevron.down")
-                                    .font(.caption2.weight(.semibold))
-                                    .accessibilityHidden(true)
-                            }
-                            .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                        .font(.callout.weight(.medium))
-                        .help("Choose a local branch")
-                        .accessibilityLabel("HEAD, \(repository.head.label). Choose Local Branch")
-                        .disabled(model.isLoading)
-                        .popover(isPresented: $isBranchPickerPresented) {
-                            RepositoryBranchPicker(
-                                model: model,
-                                isPresented: $isBranchPickerPresented
-                            )
-                        }
-                        if let upstream = repository.upstream {
-                            Label(
-                                upstreamDisplayLabel(upstream, head: repository.head),
-                                systemImage: "arrow.up.arrow.down"
-                            )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .help("Tracks \(upstream.label)")
-                                .accessibilityLabel("Tracking branch, \(upstream.label)")
-                        }
-                        if repository.isUnborn {
-                            Label("No commits yet", systemImage: "circle.dashed")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if model.isRepositoryStale {
-                            Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                                .font(.caption)
-                                .foregroundStyle(theme.colors.statusConflict)
-                        }
-                        if model.isCurrentWorkspaceTemporaryWorktree {
-                            Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
-                        }
-                    }
+                    Spacer(minLength: 0)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 6)
+            .sheet(isPresented: $isCreatingBranch) {
+                CreateBranchSheet(model: model)
+            }
 
             if let operation = model.repository?.operation {
                 Divider()
@@ -285,6 +303,41 @@ struct RepositoryWorkspaceView: View {
                 .background(theme.colors.badgeBackground)
             }
         }
+    }
+
+    @ViewBuilder
+    private func branchMenuItems(for repository: RepositorySummary) -> some View {
+        let currentBranch: String? = if case .branch(let branch) = repository.head { branch } else { nil }
+        if case .loaded(let branches) = model.localBranchesState {
+            let otherBranches = branches.filter { $0 != currentBranch }
+            if !otherBranches.isEmpty {
+                Section("Switch To") {
+                    ForEach(otherBranches, id: \.self) { branch in
+                        if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                            Button(branch, systemImage: "folder") {
+                                Task { _ = await model.openRepository(at: worktreeURL) }
+                            }
+                        } else {
+                            Button(branch, systemImage: "arrow.triangle.branch") {
+                                Task { _ = await model.switchBranch(to: branch) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Button("New Branch…", systemImage: "plus") {
+            isCreatingBranch = true
+        }
+        .disabled(model.isLoading || model.isSyncing)
+
+        Divider()
+
+        Button("Integrate…", systemImage: "arrow.triangle.merge") {
+            model.showIntegrateBranch()
+        }
+        .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
     }
 
     @ViewBuilder
@@ -625,44 +678,93 @@ struct RepositoryWorkspaceView: View {
     }
 }
 
-private struct RepositoryBranchPicker: View {
+private struct RepositoryNavigatorView: View {
     @Bindable var model: AppModel
-    @Binding var isPresented: Bool
-    @State private var searchText = ""
-    @State private var selectedBranch: String?
-    @State private var newBranchName = ""
-    @State private var isCreatingBranch = false
+    @Binding var section: RepositoryWorkspaceSection
+    @State private var filterText = ""
+    @State private var branches: [String] = []
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
-    @FocusState private var isSearchFocused: Bool
-    @FocusState private var isNewBranchFocused: Bool
+    @State private var isCreatingBranch = false
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Search Local Branches", text: $searchText)
+            List(selection: sectionSelection) {
+                Section("Workspace") {
+                    destinationRow(.changes, systemImage: "list.bullet", badge: model.repository?.changes.count ?? 0)
+                    destinationRow(.history, systemImage: "clock", badge: 0)
+                }
+
+                Section("Recovery") {
+                    destinationRow(.stashes, systemImage: "archivebox", badge: 0)
+                    destinationRow(.reflog, systemImage: "arrow.uturn.backward", badge: 0)
+                }
+
+                Section {
+                    branchRows
+                } header: {
+                    HStack {
+                        Text("Branches")
+                        Spacer()
+                        Button {
+                            isCreatingBranch = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("New Branch…")
+                        .accessibilityLabel("New Branch")
+                        .disabled(model.isLoading || model.isSyncing || model.repository == nil)
+                    }
+                }
+
+                Section {
+                    remoteRows
+                } header: {
+                    HStack {
+                        Text("Remotes")
+                        Spacer()
+                        Button {
+                            model.showRemotes()
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Manage Remotes…")
+                        .accessibilityLabel("Manage Remotes")
+                        .disabled(model.isLoading || model.repository == nil)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .accessibilityLabel("Navigator")
+
+            Divider()
+
+            TextField("Filter Branches", text: $filterText)
                 .textFieldStyle(.roundedBorder)
-                .focused($isSearchFocused)
-                .accessibilityLabel("Search Local Branches")
-                .padding(12)
-
-            Divider()
-
-            branchContent
-
-            Divider()
-
-            branchActions
+                .controlSize(.small)
+                .padding(8)
+                .accessibilityLabel("Filter Branches")
         }
-        .frame(width: 340, height: 360)
         .task(id: model.repositoryRevision) {
-            await model.loadLocalBranches()
-            isSearchFocused = true
+            guard let rootURL = model.repository?.rootURL else { return }
+            await model.loadRemotes(in: rootURL)
         }
-        .onChange(of: model.localBranchesState, initial: true) { _, _ in
-            reconcileSelection()
+        .onChange(of: model.localBranchesState, initial: true) { _, state in
+            // ponytail: keep the last loaded list while a reload is in flight so the sidebar never blinks.
+            if case .loaded(let loaded) = state {
+                branches = loaded
+            }
         }
-        .onChange(of: searchText) {
-            reconcileSelection()
+        .onChange(of: model.repository?.rootURL) { _, _ in
+            branches = []
+            filterText = ""
+        }
+        .sheet(isPresented: $isCreatingBranch) {
+            CreateBranchSheet(model: model)
         }
         .confirmationDialog(
             "Remove Worktree?",
@@ -720,192 +822,156 @@ private struct RepositoryBranchPicker: View {
         }
     }
 
+    private var sectionSelection: Binding<RepositoryWorkspaceSection?> {
+        Binding(
+            get: { section },
+            set: { if let selected = $0 { section = selected } }
+        )
+    }
+
+    private func destinationRow(
+        _ target: RepositoryWorkspaceSection,
+        systemImage: String,
+        badge: Int
+    ) -> some View {
+        Label(target.title, systemImage: systemImage)
+            .badge(badge)
+            .tag(target)
+            .help("\(target.title) (⌘\(target.rawValue + 1))")
+    }
+
     @ViewBuilder
-    private var branchActions: some View {
-        if isCreatingBranch {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Create from \(model.repository?.head.label ?? "current HEAD")")
-                    .font(.caption)
+    private var branchRows: some View {
+        if branches.isEmpty {
+            switch model.localBranchesState {
+            case .failed(let message):
+                Label("Couldn’t Load Branches", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.secondary)
-
-                HStack {
-                    TextField("New Branch Name", text: $newBranchName)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isNewBranchFocused)
-                        .accessibilityLabel("New Branch Name")
-
-                    Button("Cancel") {
-                        newBranchName = ""
-                        isCreatingBranch = false
-                        isSearchFocused = true
-                    }
-
-                    Button("Create") {
-                        createBranch()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canCreate)
-                    .accessibilityHint("Creates and switches to the new local branch")
-                }
+                    .help(message)
+                    .selectionDisabled()
+            case .loaded:
+                Text("No Local Branches")
+                    .foregroundStyle(.secondary)
+                    .selectionDisabled()
+            case .notLoaded, .loading:
+                Label("Loading Branches…", systemImage: "arrow.triangle.branch")
+                    .foregroundStyle(.secondary)
+                    .selectionDisabled()
             }
-            .padding(12)
+        } else if filteredBranches.isEmpty {
+            Text("No Matching Branches")
+                .foregroundStyle(.secondary)
+                .selectionDisabled()
         } else {
-            HStack {
-                Button("New Branch…", systemImage: "plus") {
-                    isCreatingBranch = true
-                    Task {
-                        await Task.yield()
-                        isNewBranchFocused = true
-                    }
-                }
-                .buttonStyle(.borderless)
-                .disabled(model.isLoading)
-                .accessibilityHint("Creates a local branch from the current HEAD")
-
-                Spacer()
-
-                if case .loaded(let branches) = model.localBranchesState {
-                    Text("\(branches.count) Local Branches")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-
-                Button(primaryActionTitle) {
-                    performPrimaryAction()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canPerformPrimaryAction)
-                .accessibilityHint(primaryActionHint)
+            ForEach(filteredBranches, id: \.self) { branch in
+                branchRow(branch)
             }
-            .padding(12)
+        }
+    }
+
+    private func branchRow(_ branch: String) -> some View {
+        let isCurrent = branch == currentBranch
+        let worktreeURL = isCurrent ? nil : model.localBranchWorktreeURLs[branch]
+        return HStack(spacing: 6) {
+            Label(branch, systemImage: "arrow.triangle.branch")
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
+            Spacer(minLength: 4)
+            if isCurrent {
+                Text("HEAD")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+            } else if let worktreeURL {
+                Image(systemName: "folder")
+                    .foregroundStyle(.secondary)
+                    .help(worktreeURL.path)
+            }
+        }
+        .contentShape(.rect)
+        .selectionDisabled()
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(accessibilityValue(for: branch))
+        .accessibilityHint(isCurrent ? "Current branch" : "Double-click to switch, or open the context menu")
+        .onTapGesture(count: 2) {
+            performPrimaryAction(for: branch)
+        }
+        .contextMenu {
+            if !isCurrent {
+                if let worktreeURL {
+                    Button("Open Worktree", systemImage: "folder") {
+                        performPrimaryAction(for: branch)
+                    }
+                    .disabled(model.isLoading || model.isSyncing)
+
+                    Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
+                        Task {
+                            let trackingRef = await model.trackingRemoteBranch(for: branch)
+                            pendingWorktreeRemoval = .init(
+                                branch: branch,
+                                worktreeURL: worktreeURL,
+                                trackingRef: trackingRef
+                            )
+                        }
+                    }
+                    .disabled(model.isLoading)
+                } else {
+                    Button("Switch", systemImage: "arrow.triangle.branch") {
+                        performPrimaryAction(for: branch)
+                    }
+                    .disabled(model.isLoading || model.isSyncing)
+
+                    Button("Remove Branch…", systemImage: "minus.circle", role: .destructive) {
+                        pendingBranchDeletion = branch
+                    }
+                    .disabled(model.isLoading)
+                }
+            }
         }
     }
 
     @ViewBuilder
-    private var branchContent: some View {
-        switch model.localBranchesState {
+    private var remoteRows: some View {
+        switch model.remotesState {
         case .notLoaded, .loading:
-            ProgressView("Loading Branches…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Label("Loading Remotes…", systemImage: "network")
+                .foregroundStyle(.secondary)
+                .selectionDisabled()
         case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn’t Load Branches", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") {
-                    Task { await model.loadLocalBranches() }
-                }
-            }
-        case .loaded(let branches) where branches.isEmpty:
-            ContentUnavailableView(
-                "No Local Branches",
-                systemImage: "arrow.triangle.branch",
-                description: Text("This Repository has no local branches to switch to.")
-            )
-        case .loaded:
-            if filteredBranches.isEmpty {
-                ContentUnavailableView {
-                    Label("No Matching Branches", systemImage: "magnifyingglass")
-                } description: {
-                    Text("Try a different branch name.")
-                } actions: {
-                    Button("Clear Search") { searchText = "" }
-                }
-            } else {
-                List(filteredBranches, id: \.self, selection: $selectedBranch) { branch in
-                    HStack(spacing: 8) {
-                        Label(branch, systemImage: "arrow.triangle.branch")
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .layoutPriority(1)
-                        Spacer()
-                        if branch == currentBranch {
-                            Label("Current", systemImage: "checkmark")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        } else if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                            Label(
-                                worktreeURL.lastPathComponent == branch
-                                    ? "Worktree"
-                                    : worktreeURL.lastPathComponent,
-                                systemImage: "folder"
-                            )
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .frame(maxWidth: 140)
-                                .layoutPriority(2)
-                                .help(worktreeURL.path)
-                        }
-                    }
-                    .tag(branch)
+            Label("Couldn’t Load Remotes", systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.secondary)
+                .help(message)
+                .selectionDisabled()
+        case .loaded(let remotes) where remotes.isEmpty:
+            Text("No Remotes")
+                .foregroundStyle(.secondary)
+                .selectionDisabled()
+        case .loaded(let remotes):
+            ForEach(remotes) { remote in
+                Label(remote.name, systemImage: "network")
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(remote.fetchURL)
                     .contentShape(.rect)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(accessibilityValue(for: branch))
-                }
-                .listStyle(.plain)
-                .contextMenu(forSelectionType: String.self) { branches in
-                    if let branch = branches.first, branch != currentBranch {
-                        if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                            Button("Open Worktree", systemImage: "folder") {
-                                performPrimaryAction(for: branch)
-                            }
-                            .disabled(model.isLoading)
-
-                            Button(
-                                "Remove Worktree…",
-                                systemImage: "folder.badge.minus",
-                                role: .destructive
-                            ) {
-                                Task {
-                                    let trackingRef = await model.trackingRemoteBranch(for: branch)
-                                    pendingWorktreeRemoval = .init(
-                                        branch: branch,
-                                        worktreeURL: worktreeURL,
-                                        trackingRef: trackingRef
-                                    )
-                                }
-                            }
-                            .disabled(model.isLoading)
-                        } else {
-                            Button("Switch", systemImage: "arrow.triangle.branch") {
-                                performPrimaryAction(for: branch)
-                            }
-                            .disabled(model.isLoading)
-
-                            Button(
-                                "Remove Branch…",
-                                systemImage: "minus.circle",
-                                role: .destructive
-                            ) {
-                                pendingBranchDeletion = branch
-                            }
-                            .disabled(model.isLoading)
-                        }
+                    .selectionDisabled()
+                    .accessibilityHint("Double-click to manage Remotes")
+                    .onTapGesture(count: 2) {
+                        model.showRemotes()
                     }
-                } primaryAction: { branches in
-                    guard let branch = branches.first else { return }
-                    performPrimaryAction(for: branch)
-                }
-                .accessibilityLabel("Local Branches")
+                    .contextMenu {
+                        Button("Manage Remotes…", systemImage: "network") {
+                            model.showRemotes()
+                        }
+                        .disabled(model.isLoading)
+                    }
             }
         }
     }
 
     private var filteredBranches: [String] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return loadedBranches }
-        return loadedBranches.filter { $0.localizedCaseInsensitiveContains(query) }
-    }
-
-    private var loadedBranches: [String] {
-        guard case .loaded(let branches) = model.localBranchesState else { return [] }
-        return branches
+        let query = filterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return branches }
+        return branches.filter { $0.localizedCaseInsensitiveContains(query) }
     }
 
     private var currentBranch: String? {
@@ -914,55 +980,13 @@ private struct RepositoryBranchPicker: View {
         return branch
     }
 
-    private var selectedWorktreeURL: URL? {
-        guard let selectedBranch, selectedBranch != currentBranch else { return nil }
-        return model.localBranchWorktreeURLs[selectedBranch]
-    }
-
-    private var primaryActionTitle: String {
-        selectedWorktreeURL == nil ? "Switch" : "Open Worktree"
-    }
-
-    private var primaryActionHint: String {
-        selectedWorktreeURL == nil
-            ? "Switches to the selected local branch"
-            : "Opens the selected branch’s existing Worktree folder"
-    }
-
-    private var canPerformPrimaryAction: Bool {
-        guard let selectedBranch else { return false }
-        return selectedBranch != currentBranch && !model.isLoading
-    }
-
-    private var canCreate: Bool {
-        !newBranchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !model.isLoading
-    }
-
-    private func reconcileSelection() {
-        if let selectedBranch, filteredBranches.contains(selectedBranch) {
-            return
-        }
-        selectedBranch = currentBranch.flatMap { branch in
-            filteredBranches.contains(branch) ? branch : nil
-        } ?? filteredBranches.first
-    }
-
-    private func performPrimaryAction() {
-        guard let selectedBranch else { return }
-        performPrimaryAction(for: selectedBranch)
-    }
-
     private func performPrimaryAction(for branch: String) {
-        guard branch != currentBranch, !model.isLoading else { return }
+        guard branch != currentBranch, !model.isLoading, !model.isSyncing else { return }
         Task {
-            let succeeded = if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                await model.openRepository(at: worktreeURL)
+            if let worktreeURL = model.localBranchWorktreeURLs[branch] {
+                _ = await model.openRepository(at: worktreeURL)
             } else {
-                await model.switchBranch(to: branch)
-            }
-            if succeeded {
-                isPresented = false
+                _ = await model.switchBranch(to: branch)
             }
         }
     }
@@ -972,12 +996,60 @@ private struct RepositoryBranchPicker: View {
         guard let worktreeURL = model.localBranchWorktreeURLs[branch] else { return "" }
         return "Existing Worktree at \(worktreeURL.path)"
     }
+}
+
+private struct CreateBranchSheet: View {
+    @Bindable var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @FocusState private var isNameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("New Branch")
+                .font(.headline)
+            Text("Creates a local branch from \(model.repository?.head.label ?? "the current HEAD") and switches to it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField("Branch Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($isNameFocused)
+                .onSubmit(createBranch)
+                .accessibilityLabel("New Branch Name")
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Create") {
+                    createBranch()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canCreate)
+                .accessibilityHint("Creates and switches to the new local branch")
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
+        .onAppear {
+            isNameFocused = true
+        }
+    }
+
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !model.isLoading
+    }
 
     private func createBranch() {
         guard canCreate else { return }
         Task {
-            if await model.createBranch(named: newBranchName) {
-                isPresented = false
+            if await model.createBranch(named: name) {
+                dismiss()
             }
         }
     }

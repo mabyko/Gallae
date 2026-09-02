@@ -14,7 +14,7 @@
 1. 사용자가 Pull을 누른다.
 2. Gallae가 configured upstream을 Fetch하고 fast-forward 가능 여부를 확인한다.
 3. fast-forward가 가능하면 현재 branch와 working tree를 upstream commit으로 갱신한다.
-4. Repository, Changes와 History를 다시 읽고 최신 ahead/behind를 표시한다.
+4. Repository, Changes와 History를 다시 읽고 최신 ahead/behind를 표시하며, 캡슐이 가져온 commit 수(`Pulled N commits`)를 잠깐 보인다. Pull은 working tree를 쓰므로 실행 중에는 Fetch·Push와 Stage·Commit도 기다린다.
 
 ## 대안 흐름
 

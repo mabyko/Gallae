@@ -10,17 +10,20 @@ struct AppView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.gallaeTheme) private var theme
     @State private var model = AppModel()
     @State private var folderSelection: FolderSelection?
     @State private var isFolderImporterPresented = false
     @State private var expandedLibraryHierarchyFolderIDs: Set<URL> = []
     @State private var showsDelayedLocalProgress = false
+    @State private var windowWidth: CGFloat = 0
 
     var body: some View {
         Group {
             if model.screen == .workspace, let repository = model.repository {
                 RepositoryWorkspaceView(model: model)
                     .navigationTitle(repository.name)
+                    .navigationSubtitle(workspaceSubtitle)
                     .navigationDocument(repository.rootURL)
             } else {
                 RepositoryLibraryView(
@@ -35,21 +38,14 @@ struct AppView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 480)
-        .overlay {
-            if let remoteOperation = model.remoteOperation, remoteOperation != .automaticFetch {
-                progressBox(remoteOperation.progressTitle, cancelling: remoteOperation)
-            } else if model.isLoading, model.remoteOperation == nil, showsDelayedLocalProgress {
-                progressBox(
-                    model.isWritingRepository
-                        ? "Updating Repository…"
-                        : "Reading Repository…"
-                )
-            }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            windowWidth = width
         }
+        .environment(\.windowWidth, windowWidth)
         .overlay(alignment: .bottomTrailing) {
-            if model.remoteOperation == .automaticFetch {
-                automaticFetchIndicator
-            }
+            activityCapsule
         }
         .task(id: model.isLoading) {
             showsDelayedLocalProgress = false
@@ -74,38 +70,6 @@ struct AppView: View {
                 }
             } else {
                 ToolbarItemGroup {
-                    Button {
-                        model.showLibrary()
-                    } label: {
-                        Label("Library", systemImage: "chevron.backward")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .help("Return to the Repository Library in this window (⇧⌘L)")
-                    .accessibilityHint("Return to the Repository Library in this window")
-                    .disabled(model.isLoading)
-                }
-
-                ToolbarItemGroup {
-                    Button("Remotes", systemImage: "network") {
-                        model.showRemotes()
-                    }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(model.repository == nil || model.isLoading)
-                    .help("Remotes · show the configured Git remote names and URLs")
-                    .accessibilityHint("Show the configured Git remote names and URLs")
-
-                    Button("Integrate", systemImage: "arrow.triangle.merge") {
-                        model.showIntegrateBranch()
-                    }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(!model.canIntegrateBranch || model.isLoading)
-                    .help("Integrate · fast-forward, merge, or rebase with another local branch")
-                    .accessibilityHint(
-                        "Fast-forward, merge, or rebase with another local branch"
-                    )
-                }
-
-                ToolbarItemGroup {
                     Menu {
                         Button("Fetch & Prune", systemImage: "scissors") {
                             model.fetchRepository(pruning: true)
@@ -127,22 +91,32 @@ struct AppView: View {
                             "Fetch Git’s configured default Remote every five minutes while this Workspace and Gallae are active"
                         )
                     } label: {
-                        Label("Fetch", systemImage: "arrow.down.circle")
-                            .labelStyle(.titleAndIcon)
+                        Label {
+                            Text("Fetch")
+                        } icon: {
+                            syncIcon("arrow.down.circle", running: model.remoteOperation?.isFetch == true)
+                        }
+                        .labelStyle(.titleAndIcon)
                     } primaryAction: {
                         model.fetchRepository()
                     }
-                    .disabled(model.repository == nil || model.isLoading)
+                    .disabled(model.repository == nil || model.isLoading || model.isSyncing)
                     .help("Fetch Remote changes (⌥⌘F) · the menu has Fetch & Prune and automatic Fetch")
                     .accessibilityHint(
                         "Fetch Remote changes, or open the menu to also prune stale tracking references"
                     )
 
-                    Button("Pull", systemImage: "arrow.down.to.line") {
+                    Button {
                         model.pullRepository()
+                    } label: {
+                        Label {
+                            Text("Pull")
+                        } icon: {
+                            syncIcon("arrow.down.to.line", running: model.remoteOperation == .pull)
+                        }
+                        .labelStyle(.titleAndIcon)
                     }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(!model.canPullRepository || model.isLoading)
+                    .disabled(!model.canPullRepository || model.isLoading || model.isSyncing)
                     .help(
                         model.canPullRepository
                             ? "Fast-forward the current branch from its tracking branch"
@@ -152,11 +126,17 @@ struct AppView: View {
                         "Fast-forward the current branch from its tracking branch without merging or rebasing"
                     )
 
-                    Button(model.pushTitle, systemImage: "arrow.up.to.line") {
+                    Button {
                         model.pushRepository()
+                    } label: {
+                        Label {
+                            Text(model.pushTitle)
+                        } icon: {
+                            syncIcon("arrow.up.to.line", running: model.remoteOperation?.isPush == true)
+                        }
+                        .labelStyle(.titleAndIcon)
                     }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(!model.canPushRepository || model.isLoading)
+                    .disabled(!model.canPushRepository || model.isLoading || model.isSyncing)
                     .help(
                         model.repository?.upstream == nil
                             ? "Publish the current branch to its remote and start tracking it"
@@ -280,45 +260,73 @@ struct AppView: View {
         }
     }
 
-    private func progressBox(
-        _ title: String,
-        cancelling operation: RepositoryRemoteOperation? = nil
-    ) -> some View {
-        VStack(spacing: 12) {
-            ProgressView(title)
-            if let operation {
-                Button(operation.cancelTitle) {
+    private var workspaceSubtitle: String {
+        if let operation = model.remoteOperation {
+            return operation.progressTitle
+        }
+        if model.isLoading, showsDelayedLocalProgress {
+            return model.isWritingRepository ? "Updating Repository…" : "Reading Repository…"
+        }
+        return ""
+    }
+
+    /// One corner capsule for every long operation: remote work with Cancel, slow local reads without,
+    /// and the last remote result for a moment. It never covers the toolbar or the selection.
+    @ViewBuilder
+    private var activityCapsule: some View {
+        if let operation = model.remoteOperation {
+            capsule {
+                ProgressView()
+                    .controlSize(.small)
+                Text(operation.progressTitle)
+                    .font(.callout)
+                Button("Cancel") {
                     model.cancelRemoteOperation()
                 }
+                .controlSize(.small)
                 .keyboardShortcut(.cancelAction)
                 .accessibilityLabel(operation.cancelTitle)
                 .accessibilityHint(operation.cancelAccessibilityHint)
             }
+            .accessibilityLabel(operation.progressTitle)
+        } else if model.isLoading, showsDelayedLocalProgress {
+            capsule {
+                ProgressView()
+                    .controlSize(.small)
+                Text(model.isWritingRepository ? "Updating Repository…" : "Reading Repository…")
+                    .font(.callout)
+            }
+        } else if let result = model.remoteOperationResult {
+            capsule {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(theme.colors.statusAdded)
+                    .accessibilityHidden(true)
+                Text(result)
+                    .font(.callout)
+            }
+            .accessibilityLabel(result)
         }
-        .padding(20)
-        .background(.regularMaterial, in: .rect(cornerRadius: 12))
     }
 
-    private var automaticFetchIndicator: some View {
-        HStack(spacing: 8) {
+    private func capsule<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 8, content: content)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.regularMaterial, in: .capsule)
+            .padding(12)
+            .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private func syncIcon(_ systemImage: String, running: Bool) -> some View {
+        if running {
             ProgressView()
                 .controlSize(.small)
-            Text("Fetching Automatically…")
-                .font(.callout)
-            Button("Cancel") {
-                model.cancelRemoteOperation()
-            }
-            .controlSize(.small)
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel(RepositoryRemoteOperation.automaticFetch.cancelTitle)
-            .accessibilityHint(RepositoryRemoteOperation.automaticFetch.cancelAccessibilityHint)
+                .frame(width: 18)
+        } else {
+            Image(systemName: systemImage)
+                .frame(width: 18)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: .capsule)
-        .padding(12)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Fetching Automatically")
     }
 
     private func chooseFolder() {
@@ -1565,6 +1573,46 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
     }
 }
 
+extension RepositoryRemoteOperation {
+    /// Result line for the activity capsule, computed from the Repository state before the operation.
+    func successTitle(before repository: RepositorySummary) -> String? {
+        switch self {
+        case .fetch(let remote, _): remote.map { "Fetched from \($0)" } ?? "Fetched"
+        case .automaticFetch: nil
+        case .pull:
+            if let behind = repository.upstream?.behind, behind > 0 {
+                "Pulled \(behind) commit\(behind == 1 ? "" : "s")"
+            } else {
+                "Pulled"
+            }
+        case .push:
+            if let ahead = repository.upstream?.ahead, ahead > 0 {
+                "Pushed \(ahead) commit\(ahead == 1 ? "" : "s")"
+            } else {
+                "Pushed"
+            }
+        case .publish: "Published"
+        case .addRemoteAndPublish(let name, _): "Published to \(name)"
+        case .publishTo(let remote): "Published to \(remote)"
+        case .deleteRemoteBranch(let trackingRef): "Deleted \(trackingRef) on remote"
+        }
+    }
+
+    var isFetch: Bool {
+        switch self {
+        case .fetch, .automaticFetch: true
+        default: false
+        }
+    }
+
+    var isPush: Bool {
+        switch self {
+        case .push, .publish, .addRemoteAndPublish, .publishTo: true
+        default: false
+        }
+    }
+}
+
 enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
     case remotes(repositoryRootURL: URL)
     case addRemote(repositoryRootURL: URL)
@@ -1702,6 +1750,15 @@ final class AppModel {
     var isLoading = false
     var isWritingRepository = false
     var remoteOperation: RepositoryRemoteOperation?
+    /// Short result of the last remote operation, shown briefly in the activity capsule.
+    var remoteOperationResult: String?
+    /// A user-started remote operation is running: sync commands and branch changes wait, Stage,
+    /// Commit, and reading keep working. Automatic Fetch never locks anything.
+    var isSyncing: Bool {
+        remoteOperation != nil && remoteOperation != .automaticFetch
+    }
+    @ObservationIgnored private var remoteOperationID: UUID?
+    @ObservationIgnored private var remoteResultTask: Task<Void, Never>?
     var automaticFetchEnabled: Bool
     var repositorySheetRequest: RepositorySheetRequest?
     var isRepositoryStale = false
@@ -2397,21 +2454,39 @@ final class AppModel {
     private func startRemoteOperation(
         _ operation: RepositoryRemoteOperation
     ) -> Task<Void, Never>? {
-        guard remoteTask == nil, !isLoading, let repository else { return nil }
+        guard !isLoading, let repository else { return nil }
+        if remoteTask != nil {
+            // A user-started operation takes over a running automatic Fetch; anything else waits.
+            guard remoteOperation == .automaticFetch, operation != .automaticFetch else { return nil }
+            remoteTask?.cancel()
+        }
 
-        inspectionGeneration += 1
+        // ponytail: only Pull writes the index and working tree, so only Pull takes the local lock.
+        // Fetch and Push leave Stage, Commit, and reading available while they run.
+        let writesWorkingTree = operation == .pull
+        let operationID = UUID()
+        let startGeneration = inspectionGeneration
+        if writesWorkingTree {
+            inspectionGeneration += 1
+            isLoading = true
+            isWritingRepository = true
+        }
         let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
+        remoteOperationID = operationID
         remoteOperation = operation
+        remoteOperationResult = nil
+        remoteResultTask?.cancel()
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
-                remoteTask = nil
-                if generation == inspectionGeneration {
-                    isLoading = false
-                    isWritingRepository = false
+                if remoteOperationID == operationID {
+                    remoteOperationID = nil
+                    remoteTask = nil
                     remoteOperation = nil
+                    if writesWorkingTree {
+                        isLoading = false
+                        isWritingRepository = false
+                    }
                 }
             }
 
@@ -2441,15 +2516,31 @@ final class AppModel {
                 case .deleteRemoteBranch(let trackingRef):
                     try await inspector.deleteRemoteBranch(trackingRef: trackingRef, in: repository)
                 }
-                guard generation == inspectionGeneration else { return }
-                apply(updatedRepository, showWorkspaceOnSuccess: false)
+                guard remoteOperationID == operationID else { return }
+                if writesWorkingTree {
+                    guard generation == inspectionGeneration else { return }
+                    apply(updatedRepository, showWorkspaceOnSuccess: false)
+                } else if inspectionGeneration == startGeneration {
+                    apply(updatedRepository, showWorkspaceOnSuccess: false)
+                } else if !isLoading {
+                    // Something else read the Repository while the remote operation ran; read once
+                    // more so both results show. A local operation still in flight reads by itself.
+                    _ = await inspect(
+                        updatedRepository.rootURL,
+                        rememberOnSuccess: false,
+                        markCurrentStaleOnFailure: true,
+                        showWorkspaceOnSuccess: false,
+                        presentFailure: false
+                    )
+                }
+                showRemoteOperationResult(operation.successTitle(before: repository))
                 let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
                 libraryRepositoryActivities[cacheID] = nil
                 libraryRepositoryActivityErrors[cacheID] = nil
             } catch is CancellationError {
                 return
             } catch let error as RepositoryFetchError {
-                guard generation == inspectionGeneration else { return }
+                guard remoteOperationID == operationID else { return }
                 if operation == .automaticFetch {
                     setAutomaticFetchEnabled(false)
                     present(error, title: operation.failureTitle)
@@ -2465,7 +2556,7 @@ final class AppModel {
                     present(error, title: operation.failureTitle)
                 }
             } catch let error as RepositoryPushError {
-                guard generation == inspectionGeneration else { return }
+                guard remoteOperationID == operationID else { return }
                 if operation == .publish {
                     switch error {
                     case .noRemote:
@@ -2484,12 +2575,13 @@ final class AppModel {
                     present(error, title: operation.failureTitle)
                 }
             } catch {
-                guard generation == inspectionGeneration else { return }
+                guard remoteOperationID == operationID else { return }
                 if operation == .automaticFetch {
                     setAutomaticFetchEnabled(false)
                 }
                 if operation == .pull,
                    let refreshedRepository = try? await inspector.inspect(at: repository.rootURL),
+                   remoteOperationID == operationID,
                    generation == inspectionGeneration
                 {
                     apply(refreshedRepository, showWorkspaceOnSuccess: false)
@@ -2499,6 +2591,17 @@ final class AppModel {
         }
         remoteTask = task
         return task
+    }
+
+    private func showRemoteOperationResult(_ title: String?) {
+        remoteResultTask?.cancel()
+        remoteOperationResult = title
+        guard title != nil else { return }
+        remoteResultTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard let self, !Task.isCancelled else { return }
+            remoteOperationResult = nil
+        }
     }
 
     func loadLocalBranches() async {

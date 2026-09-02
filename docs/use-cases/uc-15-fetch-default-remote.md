@@ -12,13 +12,14 @@
 ## 정상 흐름
 
 1. 사용자가 Fetch를 누른다.
-2. Gallae가 현재 Git 설정이 고르는 기본 remote에서 변경을 가져오며 진행 상태를 표시한다.
+2. Gallae가 현재 Git 설정이 고르는 기본 remote에서 변경을 가져온다. 진행 상태는 툴바 Fetch 아이콘, 창 제목 아래 subtitle, 우하단 캡슐(Cancel 포함)로 보이고, Fetch·Pull·Push와 branch 전환만 기다린다. Stage·Commit·조회·Refresh는 그동안 계속 쓸 수 있다.
 3. Fetch가 끝나면 Gallae가 Repository, Changes와 History를 다시 읽는다.
 4. 현재 HEAD·index·working tree와 local 수정은 그대로 유지된다.
 
 ## 대안 흐름
 
 - 사용자가 Cancel 또는 Escape를 누르면 실행 중인 Fetch를 중단하고 기존 Workspace를 유지한다.
+- 성공하면 캡슐이 `Fetched` 또는 `Fetched from <remote>`를 잠깐 보이고 사라진다.
 - remote가 없으면 설정되지 않았다는 오류를 표시한다.
 - 인증 또는 네트워크 오류가 발생하면 Git의 원인을 표시하고 같은 Workspace에서 다시 시도할 수 있다.
 - 터미널 입력은 기다리지 않으며 기존 credential helper와 SSH 환경은 그대로 사용한다.

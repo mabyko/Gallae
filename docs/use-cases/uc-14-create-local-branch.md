@@ -6,13 +6,13 @@
 | --- | --- |
 | 사용자 목표 | 현재 작업 지점에서 새 local branch를 만들고 바로 전환한다. |
 | 시작 조건 | Repository Workspace가 열려 있다. |
-| 진입점 | Repository 헤더의 현재 branch → `New Branch…` |
+| 진입점 | Navigator Branches 섹션의 `+`, 또는 문맥 바 branch 메뉴의 `New Branch…` |
 | 완료 상태 | 새 branch의 HEAD, Changes와 History가 같은 Workspace에 표시된다. |
 
 ## 정상 흐름
 
-1. 사용자가 Repository 헤더의 현재 branch를 누른다.
-2. 사용자가 `New Branch…`를 눌러 현재 HEAD를 시작점으로 확인한다.
+1. 사용자가 Navigator Branches 섹션의 `+` 또는 branch 메뉴의 `New Branch…`를 누른다.
+2. Gallae가 New Branch 시트를 열고 현재 HEAD를 시작점으로 보여 준다.
 3. 사용자가 새 branch 이름을 입력한다.
 4. 사용자가 Create 또는 Return으로 생성한다.
 5. Gallae가 branch를 만들고 전환한 뒤 Repository, Changes와 History를 다시 읽는다.

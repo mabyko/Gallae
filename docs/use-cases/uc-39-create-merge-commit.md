@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 서로 갈라진 다른 local branch의 commit을 현재 branch에 명시적인 merge commit으로 합친다. |
 | 시작 조건 | 변경이 없는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | Repository 상단의 `Integrate` |
+| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, 또는 Repository 메뉴의 `Integrate…` |
 | 완료 상태 | 현재 branch에 두 branch를 parent로 둔 merge commit이 생기고 Workspace가 갱신된다. |
 
 ## 정상 흐름
 
-1. 사용자가 `Integrate`를 누른다.
+1. 사용자가 branch 메뉴 또는 Repository 메뉴에서 `Integrate…`를 누른다.
 2. Gallae가 현재 branch를 제외한 local branch 목록을 읽고 사용자가 source branch를 고른다.
 3. 사용자가 `Create Merge Commit`을 누른다.
 4. Gallae가 두 branch의 history가 실제로 갈라졌는지 다시 확인한다.

@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 현재 local branch의 고유 commit을 다른 local branch 위에 다시 적용해 선형 history로 만든다. |
 | 시작 조건 | 변경이 없는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | Repository 상단의 `Integrate` |
+| 진입점 | 문맥 바 branch 메뉴의 `Integrate…`, 또는 Repository 메뉴의 `Integrate…` |
 | 완료 상태 | 현재 branch 이름은 유지되고 고유 commit이 선택한 branch tip 위의 새 commit으로 바뀌며 Workspace가 갱신된다. |
 
 ## 정상 흐름
 
-1. 사용자가 `Integrate`를 누른다.
+1. 사용자가 branch 메뉴 또는 Repository 메뉴에서 `Integrate…`를 누른다.
 2. Gallae가 현재 branch를 제외한 local branch 목록을 읽고 사용자가 기준 branch를 고른다.
 3. 사용자가 commit ID가 바뀌고 Gallae가 force-push하지 않는다는 설명을 확인한다.
 4. 사용자가 `Rebase Current Branch`를 누른다.

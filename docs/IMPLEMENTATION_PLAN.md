@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
-> 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 2026-09-01
-> 현재 범위: 6D checkout 없는 merge commit·충돌 예측·임시 Worktree 완료 · 다음 범위 결정 대기
+> 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
+> 현재 범위: 7A-2 진행 표시 모델 완료 · 다음 7A-3 Navigator 선택 문맥(branch·remote·tag 본문, Stashes·Reflog 목적지 화면, branch 우클릭 메뉴)
 
 ## 사용자 결과
 
@@ -674,6 +674,26 @@ GallaeApp
 - remote 이름은 configured remote 목록과 가장 긴 접두사 일치로 해석해 `/`가 든 branch 이름도 정확히 나눈다.
 - `Remove Worktree…` 확인은 정리 범위를 함께 고른다. Worktree만, branch 안전 삭제까지, Tracking remote branch가 있으면 원격 삭제까지. 각 단계는 기존 규칙과 안전장치를 재사용하고, 뒤 단계가 실패해도 완료된 앞 단계는 되돌리지 않으며 다시 읽은 화면이 실제 상태를 보여 준다.
 - 실제 bare remote 통합 테스트로 원격 branch 삭제와 tracking ref 동반 제거, tracking ref 단독 제거의 원격 불변, upstream 조회를 검증한다.
+
+### 7A-1 · Workspace Navigator와 한 줄 문맥 바 — 완료
+
+- Repository Workspace는 `NavigationSplitView`의 Navigator · 목록 · 내용 3열이다. Navigator는 Workspace(Changes·History)와 Recovery(Stashes·Reflog) 목적지, local branch 목록, configured Remote 목록을 보여 준다. 목적지 선택은 기존 ⌘1~⌘4·View 메뉴와 같은 상태를 쓰고, Changes 행에는 변경 파일 수가 붙는다.
+- Branches 행은 선택 대상이 아니라 동작 대상이다. 현재 branch에는 HEAD, 다른 Worktree에 체크아웃된 branch에는 폴더 표시가 붙고, 이중 클릭 또는 문맥 메뉴로 Switch·Open Worktree·Remove Worktree…·Remove Branch…를 실행한다. 섹션 헤더의 `+`가 New Branch 시트를 열고, Navigator 하단의 필터가 목록을 좁힌다. 목록은 다시 읽는 동안 마지막 결과를 유지한다.
+- Remotes 행은 이름과 Fetch URL(도움말)을 보이고, 이중 클릭·문맥 메뉴·섹션 헤더 버튼이 기존 Remotes 시트를 연다. Repository 메뉴에 `Remotes…`와 `Integrate…`를 추가했다.
+- 헤더는 저장소 이름·경로·segmented control 대신 한 줄 문맥 바다. 현재 branch가 메뉴 버튼이 되어 `Switch To`·`New Branch…`·`Integrate…`를 제공하고, Tracking·ahead/behind·unborn·새로고침 실패·임시 Worktree 표시는 같은 줄에 남는다. 진행 중인 Merge·Rebase 배너는 그대로다.
+- 툴바에서 Remotes·Integrate를 뺐다. 왼쪽은 Navigator 토글과 Library, 오른쪽은 Fetch·Pull·Push/Publish·Refresh다. 자동 사이드바 토글은 제거하고 View 메뉴의 `Hide/Show Navigator`(⌃⌘S)와 툴바 버튼이 같은 상태를 바꾼다.
+- 창 폭이 Navigator 이상 폭 220·Changes 목록 320·diff 400과 분할선을 합한 948pt보다 좁으면 Navigator를 먼저 접고, 다시 넓어지면 편다. 사용자가 좁은 창에서 직접 연 Navigator는 다음 크기 변경까지 유지한다. detail 열에 명시적 ideal 폭을 두어 분할 뷰가 diff의 자연 폭으로 창을 넘치지 않게 했다.
+- 접근성 API로 툴바 배치(960·720pt에서 동기화 세 동사 직접 노출, 960에서 오버플로 없음), Navigator 행과 선택, ⌘1·⌘2, ⌃⌘S, 자동 접힘·복원을 확인했고 `xcodebuild test` 107개가 통과했다.
+
+### 7A-2 · 진행 표시 모델과 동기화 잠금 분리 — 완료
+
+- 원격 작업은 화면 가운데 진행 박스 대신 세 곳에서 보인다. 누른 툴바 버튼(Fetch·Pull·Push/Publish)의 아이콘이 진행 표시로 바뀌고, 창 제목 아래 subtitle에 작업 이름이 뜨며, 우하단 캡슐이 같은 이름과 Cancel(Escape)을 보여 준다. 자동 Fetch도 같은 캡슐을 쓴다.
+- 잠금을 원격/로컬로 나눴다. Fetch·Push·Publish·remote branch 삭제는 index와 working tree를 건드리지 않으므로 `isLoading`을 올리지 않고, `isSyncing`으로 동기화 세 동사와 branch 전환·생성·Integrate만 막는다. Stage·Unstage·Commit·Discard·조회·Refresh는 계속된다. Pull만 working tree를 쓰므로 기존처럼 전역 잠금을 쓴다.
+- 동시 실행의 일관성은 inspection generation으로 지킨다. 원격 작업이 끝났을 때 그 사이 다른 읽기가 없었으면 결과 스냅샷을 그대로 적용하고, 있었으면 한 번 더 읽어 두 결과를 함께 반영한다. 로컬 작업이 아직 진행 중이면 그 작업의 읽기에 맡긴다. 작업 식별자로 정리 시점을 판단해 뒤늦게 끝난 작업이 새 작업의 상태를 지우지 않는다.
+- 사용자가 시작한 원격 작업은 실행 중인 자동 Fetch를 취소하고 이어받는다. 자동 Fetch는 어떤 버튼도 잠그지 않는다.
+- 성공하면 캡슐이 결과를 2.5초 보이고 사라진다. Fetch는 `Fetched (from <remote>)`, Pull은 작업 전 behind 수로 `Pulled N commits`, Push는 ahead 수로 `Pushed N commits`, Publish는 목적지, remote branch 삭제는 대상 ref다. 실패는 기존대로 작업 이름을 제목으로 한 alert다.
+- 짧은 로컬 작업은 300ms가 지나면 같은 subtitle과 캡슐(Cancel 없음)로 `Updating`·`Reading Repository…`를 보여 준다.
+- 응답 없는 원격 주소를 가진 임시 Repository로 실행 중 상태를 접근성 API로 확인했다. 제목 subtitle, Fetch 아이콘 교체와 Fetch·Pull·Push 비활성, Refresh·Stage·Discard 활성, 캡슐의 Cancel과 취소 뒤 복귀, 로컬 bare remote로 `Fetched` 결과 캡슐 표시와 소멸을 확인했고 `xcodebuild test`가 통과했다.
 
 ## 각 단계의 검증
 

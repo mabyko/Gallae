@@ -4,12 +4,20 @@ extension FocusedValues {
     @Entry var openRepository: (() -> Void)?
     @Entry var appModel: AppModel?
     @Entry var workspaceSection: Binding<RepositoryWorkspaceSection>?
+    @Entry var navigatorVisibility: Binding<NavigationSplitViewVisibility>?
+}
+
+extension EnvironmentValues {
+    /// Width of the main window's content; the Workspace folds its Navigator from this, because the
+    /// split view keeps its columns at their minimums and overflows instead of shrinking the detail.
+    @Entry var windowWidth: CGFloat = 0
 }
 
 private struct GallaeCommands: Commands {
     @FocusedValue(\.openRepository) private var openRepository
     @FocusedValue(\.appModel) private var model
     @FocusedValue(\.workspaceSection) private var workspaceSection
+    @FocusedValue(\.navigatorVisibility) private var navigatorVisibility
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -21,6 +29,14 @@ private struct GallaeCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            Button(navigatorVisibility?.wrappedValue == .detailOnly ? "Show Navigator" : "Hide Navigator") {
+                guard let navigatorVisibility else { return }
+                navigatorVisibility.wrappedValue =
+                    navigatorVisibility.wrappedValue == .detailOnly ? .all : .detailOnly
+            }
+            .keyboardShortcut("s", modifiers: [.control, .command])
+            .disabled(navigatorVisibility == nil)
+
             Divider()
             ForEach(
                 Array(RepositoryWorkspaceSection.allCases.enumerated()),
@@ -60,24 +76,36 @@ private struct GallaeCommands: Commands {
                 model?.fetchRepository()
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
-            .disabled(!isWorkspaceInteractive)
+            .disabled(!canSync)
 
             Button("Fetch & Prune") {
                 model?.fetchRepository(pruning: true)
             }
-            .disabled(!isWorkspaceInteractive)
+            .disabled(!canSync)
 
             Button("Pull") {
                 model?.pullRepository()
             }
             .keyboardShortcut(.downArrow, modifiers: [.command, .option])
-            .disabled(!isWorkspaceInteractive || model?.canPullRepository != true)
+            .disabled(!canSync || model?.canPullRepository != true)
 
             Button(model?.pushTitle ?? "Push") {
                 model?.pushRepository()
             }
             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-            .disabled(!isWorkspaceInteractive || model?.canPushRepository != true)
+            .disabled(!canSync || model?.canPushRepository != true)
+
+            Divider()
+
+            Button("Remotes…") {
+                model?.showRemotes()
+            }
+            .disabled(!isWorkspaceInteractive)
+
+            Button("Integrate…") {
+                model?.showIntegrateBranch()
+            }
+            .disabled(!canSync || model?.canIntegrateBranch != true)
 
             Divider()
 
@@ -93,6 +121,11 @@ private struct GallaeCommands: Commands {
     private var isWorkspaceInteractive: Bool {
         guard let model else { return false }
         return model.screen == .workspace && model.repository != nil && !model.isLoading
+    }
+
+    /// Sync commands and branch changes also wait for a running remote operation.
+    private var canSync: Bool {
+        isWorkspaceInteractive && model?.isSyncing != true
     }
 }
 
