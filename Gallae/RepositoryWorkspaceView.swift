@@ -3159,6 +3159,8 @@ private struct RepositoryCommitDetailView: View {
                 )
             }
             .fixedSize()
+            // ponytail: regular-size buttons plus the author badge exceed the 400pt detail minimum by a few points.
+            .controlSize(.small)
             }
 
             VStack(alignment: .leading, spacing: 6) {
@@ -4037,7 +4039,9 @@ private struct RepositoryRevisionChangesView: View {
                 .listStyle(.plain)
                 .accessibilityLabel("Changed Files, \(files.count) files")
             }
-            .frame(minWidth: 180, idealWidth: 220, maxWidth: 280)
+            // ponytail: files + patch minimums must stay within the 400pt detail pane, or the split view
+            // centers the overflow and clips both edges when the window narrows.
+            .frame(minWidth: 160, idealWidth: 200, maxWidth: 280)
 
             VStack(spacing: 0) {
                 if let file = selectedFile {
@@ -4066,7 +4070,7 @@ private struct RepositoryRevisionChangesView: View {
 
                 revisionPatchContent
             }
-            .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 230, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
