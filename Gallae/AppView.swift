@@ -9,6 +9,9 @@ struct ToolbarDivider: View {
         Rectangle()
             .fill(.separator)
             .frame(width: 1, height: 16)
+            // ControlGroup spaces its controls 12pt apart; pulling 6pt back on each side lands the line about
+            // 10pt from the neighbouring text, where the system draws the menu button's own divider.
+            .padding(.horizontal, -6)
             .accessibilityHidden(true)
     }
 }
@@ -126,6 +129,9 @@ struct AppView: View {
                         "Fetch Remote changes, or open the menu to also prune stale tracking references"
                     )
 
+                    // One control group, so the spacing around the dividers is the group's rather than the
+                    // toolbar's item spacing, and each button keeps its own accessibility label.
+                    ControlGroup {
                     Button {
                         model.pullRepository()
                     } label: {
@@ -137,6 +143,7 @@ struct AppView: View {
                         .labelStyle(.titleAndIcon)
                     }
                     .disabled(!model.canPullRepository || model.isLoading || model.isSyncing)
+                    .accessibilityLabel("Pull")
                     .help(
                         model.canPullRepository
                             ? "Fast-forward the current branch from its tracking branch"
@@ -159,6 +166,7 @@ struct AppView: View {
                         .labelStyle(.titleAndIcon)
                     }
                     .disabled(!model.canPushRepository || model.isLoading || model.isSyncing)
+                    .accessibilityLabel(model.pushTitle)
                     .help(
                         model.repository?.upstream == nil
                             ? "Publish the current branch to its remote and start tracking it"
@@ -176,8 +184,10 @@ struct AppView: View {
                         Task { await model.refreshRepository() }
                     }
                     .disabled(model.repository == nil || model.isLoading)
+                    .accessibilityLabel("Refresh Repository")
                     .help("Refresh · read the current Repository state again (⌘R)")
                     .accessibilityHint("Read the current Repository state again")
+                    }
                 }
             }
         }

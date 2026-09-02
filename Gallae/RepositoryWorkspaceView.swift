@@ -167,19 +167,22 @@ struct RepositoryWorkspaceView: View {
             // One capsule, two controls: a divider between the sidebar toggle and Library keeps them from
             // reading as one button.
             ToolbarItemGroup(placement: .navigation) {
-                navigatorToolbarItem
+                ControlGroup {
+                    navigatorToolbarItem
 
-                ToolbarDivider()
+                    ToolbarDivider()
 
-                Button {
-                    model.showLibrary()
-                } label: {
-                    Label("Library", systemImage: "chevron.backward")
-                        .labelStyle(.titleAndIcon)
+                    Button {
+                        model.showLibrary()
+                    } label: {
+                        Label("Library", systemImage: "chevron.backward")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .help("Return to the Repository Library in this window (⇧⌘L)")
+                    .accessibilityLabel("Library")
+                    .accessibilityHint("Return to the Repository Library in this window")
+                    .disabled(model.isLoading)
                 }
-                .help("Return to the Repository Library in this window (⇧⌘L)")
-                .accessibilityHint("Return to the Repository Library in this window")
-                .disabled(model.isLoading)
             }
         }
         .onChange(of: model.repository?.rootURL, initial: true) {
