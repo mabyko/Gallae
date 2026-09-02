@@ -94,8 +94,19 @@ struct RepositoryWorkspaceView: View {
     @State private var isNavigatorPanelPresented = false
     /// Changes list plus diff minimum widths.
     private static let detailMinimumWidth: CGFloat = 320 + 400
-    /// Navigator ideal width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
-    private static let navigatorFoldWidth: CGFloat = 220 + detailMinimumWidth + 8
+    static let navigatorDefaultWidth: CGFloat = 220
+    /// The sidebar width the user last dragged to; the fold threshold follows it so a wide Navigator never
+    /// pushes the detail column out of the window.
+    @AppStorage("navigatorWidth") private var navigatorWidth = Double(navigatorDefaultWidth)
+    /// Read once per launch, before the first layout, so the sidebar's ideal equals the width AppKit restores.
+    private static let launchNavigatorWidth: CGFloat = {
+        let stored = UserDefaults.standard.double(forKey: "navigatorWidth")
+        return stored >= 180 ? CGFloat(stored) : navigatorDefaultWidth
+    }()
+    /// Navigator width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
+    private var navigatorFoldWidth: CGFloat {
+        CGFloat(navigatorWidth) + Self.detailMinimumWidth + 8
+    }
     @State private var isConfirmingOperationAbort = false
     @FocusState private var isChangeListFocused: Bool
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
@@ -103,9 +114,7 @@ struct RepositoryWorkspaceView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
-            RepositoryNavigatorView(model: model, selection: $selection)
-                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
-                .toolbar(removing: .sidebarToggle)
+            navigatorColumn
         } detail: {
             VStack(spacing: 0) {
                 repositoryHeader
@@ -136,16 +145,10 @@ struct RepositoryWorkspaceView: View {
             }
         }
         .onChange(of: windowWidth, initial: true) { _, width in
-            // ponytail: the split view never shrinks the detail column below the list + diff minimums, so the
-            // window width decides. The Navigator folds first and comes back only once both fit again.
-            guard width > 0 else { return }
-            if width < Self.navigatorFoldWidth, columnVisibility != .detailOnly {
-                isNavigatorAutoCollapsed = true
-                columnVisibility = .detailOnly
-            } else if isNavigatorAutoCollapsed, width >= Self.navigatorFoldWidth {
-                isNavigatorAutoCollapsed = false
-                columnVisibility = .all
-            }
+            foldNavigatorIfNeeded(windowWidth: width)
+        }
+        .onChange(of: navigatorWidth) { _, _ in
+            foldOverwideNavigator()
         }
         .onChange(of: isWindowNarrow) { _, isNarrow in
             if !isNarrow { isNavigatorPanelPresented = false }
@@ -441,11 +444,43 @@ struct RepositoryWorkspaceView: View {
         .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
     }
 
+    private var navigatorColumn: some View {
+        RepositoryNavigatorView(model: model, selection: $selection)
+            .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: 320)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                guard columnVisibility != .detailOnly, width >= 180 else { return }
+                navigatorWidth = Double(width)
+            }
+            .toolbar(removing: .sidebarToggle)
+    }
+
     // MARK: - Narrow window Navigator
+
+    /// ponytail: the split view never shrinks the detail column below the list + diff minimums, so the window
+    /// width decides. The Navigator folds first and comes back only once both fit again.
+    private func foldNavigatorIfNeeded(windowWidth width: CGFloat) {
+        guard width > 0 else { return }
+        if width < navigatorFoldWidth, columnVisibility != .detailOnly {
+            isNavigatorAutoCollapsed = true
+            columnVisibility = .detailOnly
+        } else if isNavigatorAutoCollapsed, width >= navigatorFoldWidth {
+            isNavigatorAutoCollapsed = false
+            columnVisibility = .all
+        }
+    }
+
+    /// A sidebar dragged wider than the window can hold would push the detail out of view; fold it and forget
+    /// the width so the next opening fits.
+    private func foldOverwideNavigator() {
+        guard windowWidth > 0, columnVisibility != .detailOnly, windowWidth < navigatorFoldWidth else { return }
+        navigatorWidth = Double(Self.navigatorDefaultWidth)
+        isNavigatorAutoCollapsed = true
+        columnVisibility = .detailOnly
+    }
 
     /// Below the fold width the sidebar column never opens, so the window never grows; the setting decides the way in.
     private var isWindowNarrow: Bool {
-        windowWidth > 0 && windowWidth < Self.navigatorFoldWidth
+        windowWidth > 0 && windowWidth < navigatorFoldWidth
     }
 
     /// What the toolbar button and the View menu item do right now.
@@ -472,7 +507,7 @@ struct RepositoryWorkspaceView: View {
         return switch narrowNavigatorStyle {
         case .floatingPanel: "Show the Navigator over the content (⌃⌘S)"
         case .toolbarMenu: "Choose a destination, branch, remote, or tag"
-        case .locationMenu: "Widen the window past \(Int(Self.navigatorFoldWidth)) points to show the Navigator, or use the location menu in the context bar"
+        case .locationMenu: "Widen the window past \(Int(navigatorFoldWidth)) points to show the Navigator, or use the location menu in the context bar"
         }
     }
 
@@ -1131,19 +1166,21 @@ private struct RepositoryNavigatorView: View {
     private func branchRow(_ branch: String) -> some View {
         let isCurrent = branch == currentBranch
         let worktreeURL = isCurrent ? nil : model.localBranchWorktreeURLs[branch]
+        // The name truncates in the middle; the HEAD mark and the Worktree icon keep their size.
         return HStack(spacing: 6) {
             Label(branch, systemImage: "arrow.triangle.branch")
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .layoutPriority(1)
             Spacer(minLength: 4)
             if isCurrent {
                 Text("HEAD")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(Color.accentColor)
+                    .fixedSize()
             } else if let worktreeURL {
                 Image(systemName: "folder")
                     .foregroundStyle(.secondary)
+                    .fixedSize()
                     .help(worktreeURL.path)
             }
         }
