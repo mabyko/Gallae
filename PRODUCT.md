@@ -61,7 +61,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 - 화면마다 필요한 역할만 둔다. Repository Library는 **Library Folder 탐색 · Repository 목록 · 선택 요약**의 세 역할로 나눈다.
 - 작업 트리가 깨끗한 Repository를 열면 빈 Changes 대신 History를 먼저 보여 준다.
-- 첫 Changes는 상단 Repository 문맥 아래에 **변경 목록 · diff**의 2열만 둔다. 역할이 없는 빈 탐색 패널은 만들지 않는다.
+- Repository Workspace는 **Navigator · 목록 · 내용**의 3열이다. Navigator에는 목적지(Changes·History·Stashes·Reflog)와 Git 객체(Branches·Remotes·Tags)만 두고, 아직 구현하지 않은 객체의 빈 섹션은 만들지 않는다. 좁은 창에서는 Navigator부터 접는다. 이 구조는 [디자인 시안 3·4·5](#디자인-시안-345)에서 결정했고, 구현은 그 절의 슬라이스 순서를 따른다.
 - 현재 브랜치와 추적 대상 remote branch 대비 ahead/behind 상태는 모든 작업 공간의 상단에서 항상 확인할 수 있어야 한다.
 - 메인 윈도우 제목은 Active Repository 이름을 표시하고, macOS 제목 표시줄의 프록시 아이콘으로 Repository 경로를 노출한다.
 - Git의 branch upstream 관계는 사용자 화면에서 `Tracking`으로 표시한다. `upstream`은 내부 Git 용어 또는 실제 remote 이름일 때만 그대로 쓴다. Tracking 표기는 remote branch 이름이 현재 branch와 같으면 remote 이름만 보여 줘 긴 이름의 중복 잘림을 줄이고, 전체 이름은 도움말과 VoiceOver로 유지한다.
@@ -72,6 +72,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 - 디자인 다이얼: 밀도 9/10, 변주 3/10, 모션 2/10.
 - 시스템 글꼴, 시스템 색상, SF Symbols와 표준 macOS 컨트롤을 우선한다.
+- 사이드바와 툴바는 시스템 재질(반투명)을 그대로 쓰고, 목록·diff 같은 콘텐츠 패널은 불투명하게 둔다. 테마는 하나이며 macOS의 투명도 줄이기와 대비 증가 설정에 응답한다. 규칙은 [Gallae UI 및 테마 시스템](DESIGN_SYSTEM.md)이 관리한다.
 - 장식보다 정렬, 간격, 타이포그래피 위계로 밀도를 다룬다.
 - 상태 색에는 항상 `수정됨`, `추가됨`, `추적 안 됨`, `충돌` 같은 텍스트나 기호를 함께 둔다.
 - 라이트/다크 모드, 충분한 대비, 명확한 키보드 포커스, Reduce Motion을 기본 요구사항으로 둔다.
@@ -81,11 +82,14 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 
 - 메뉴와 화면 버튼은 같은 명령 모델을 공유한다.
 - 주요 명령은 macOS 메뉴에서 발견할 수 있고 안정적인 단축키를 제공한다. View 메뉴는 ⌘1–⌘4로 Changes·History·Stashes·Reflog를 전환하고 ⇧⌘L로 Repository Library로 돌아간다. Repository 메뉴는 Fetch(⌥⌘F), Fetch & Prune, Pull(⌥⌘↓), Push 또는 Publish(⌥⌘↑), Refresh Repository(⌘R)를 제공한다.
-- 진행 표시가 상호작용을 가리는 범위는 작업 성격에 맞춘다. 사용자가 직접 실행한 원격 작업만 즉시 중앙 진행 표시와 Cancel을 보여 주고, 짧은 로컬 작업은 일정 시간 이상 걸릴 때만 진행 표시를 낸다. 자동 Fetch는 작업 공간을 가리지 않는 모서리 표시와 Cancel을 사용한다.
+- 진행 표시는 작업 공간을 가리지 않는다. 원격 작업은 누른 툴바 버튼의 아이콘을 진행 표시로 바꾸고, 창 제목 아래 subtitle에 작업 이름을, 우하단 캡슐에 Cancel을 둔다. 잠기는 것은 동기화 묶음(Fetch·Pull·Push)과 branch 전환뿐이며 Stage·Commit·조회는 계속된다. 완료는 캡슐이 결과를 잠깐 보이고 사라지고, 실패는 실패한 작업을 제목으로 한 alert로 알린다. 짧은 로컬 작업은 일정 시간 이상 걸릴 때만 같은 방식으로 표시하며, 자동 Fetch도 이 규칙을 따르되 툴바를 잠그지 않는다.
 - 선택 전환과 새로고침은 이전에 읽은 내용을 유지한 채 제자리에서 갱신하고, 로드가 길어질 때만 진행 표시로 바꾼다.
 - 오류 알림은 실패한 작업을 제목으로 밝힌다.
 - 툴바 버튼은 hover 도움말로 이름과 동작, 있으면 단축키를 설명한다.
-- 툴바는 탐색 · 저장소(Remotes·Integrate) · 동기화(Fetch·Pull·Push) · 새로고침 묶음으로 나누고, 저장소·동기화 동작은 아이콘과 이름을 함께 표시한다.
+- 툴바는 탐색(Library·Navigator 토글) · 동기화(Fetch·Pull·Push 또는 Publish) · 새로고침 묶음만 둔다. Pull·Push에는 behind·ahead 수를 붙이고 동기화 동작은 아이콘과 이름을 함께 표시한다. Remotes는 Navigator의 객체이고 Integrate는 branch 문맥 메뉴와 Repository 메뉴에 둔다. 720pt 최소 폭에서 동기화 세 동사가 직접 보이는 것이 완료 조건이다.
+- diff의 Unified·Split은 diff 헤더의 보기 토글이며 마지막 선택을 기억한다. 설정 항목이 아니다.
+- 커밋 작성 영역은 staged 변경이 없으면 한 줄 바로 접히고 생기면 펼쳐진다. 사용자가 고르는 옵션이 아니다.
+- 설정에는 화면 밀도(Compact Rows)와 반투명 재질 사용 여부만 둔다. 테마 선택은 두지 않는다.
 - 시간은 목록에서 단일 단위 상대 표기로, 상세에서 절대 시각으로 보여 준다.
 - 상단의 현재 브랜치 버튼 한 번으로 검색 가능한 브랜치 목록을 열며, Navigator가 있는 화면에서는 전체 목록과 현재 항목도 함께 표시한다.
 - 커밋 작성은 문맥을 잃는 모달보다 현재 변경사항과 함께 보이는 인라인 영역을 우선한다.
@@ -565,6 +569,41 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 
 그다음 `http://localhost:8765/?variant=A&screen=library&appearance=system`을 연다. 화면 안에서 Library·Changes·History를 이동하고, 아래 전환기나 `←` `→` 키로 A·B·C 시안을 비교한다. `variant`는 시안 전용이며 제품 설정으로 만들지 않는다. `appearance`에는 `system`, `light`, `dark`를 사용할 수 있다.
 
+## 디자인 시안 3·4·5
+
+시안 2 이후의 작업공간 구조, 진행 표시, 시각 언어 결정 기록이다. 시안 3·4·5는 일회용 HTML이며 저장소에 넣지 않고 로컬에 둔다. 팀에 공유할 일이 생기면 그때 커밋하거나 링크로 전달한다. 이 절이 결정의 원본이다.
+
+### 검토한 방향
+
+| 시안 | 안 | 확인한 질문 | 결과 |
+| --- | --- | --- | --- |
+| 3 | A Navigator · B Modes(현재 구조) · C Timeline | refs를 상시 노출할 것인가, Changes를 목적지로 둘 것인가 | C 제외. 그래프 홈은 핵심 작업 1~3에 소음이다 |
+| 3 | B1 Compact Modes · A1 Task-derived Navigator | Navigator의 가치가 diff 폭의 비용보다 큰가 | A1 채택. Fork·SourceTree에 익숙한 사용자 기대와 Stashes·Reflog 상시 가시성 |
+| 4 | 6 제목 subtitle + 캡슐 · 7 문맥 바 활동 | 원격 작업 진행 표시를 어디에 둘 것인가 | 6 채택. 창 제목 아래는 자리가 바뀌지 않는 유일한 곳이다 |
+| 5 | 테마 A 뉴트럴 · B 시스템 재질 · C 고대비 × 밀도 × diff 배치 × staging × 커밋 작성 | 시각 언어와 남은 상호작용 축 | 아래 결정 |
+
+외부 검토로 Codex(gpt-5.6)에 같은 자료로 리뷰를 받았다. Codex는 B1을 권했고 제품 오너는 A1을 택했다. 두 리뷰가 일치한 항목은 그대로 채택했다. 헤더 슬림화, 동기화 전용 툴바, Remotes·Integrate의 자리, 버튼 스피너·subtitle·캡슐, 동기화 묶음만 잠금이다.
+
+### 결정
+
+- **작업공간 구조.** Navigator · 목록 · 내용의 3열. Navigator 맨 위에 목적지(Workspace: Changes·History, Recovery: Stashes·Reflog), 아래에 접을 수 있는 객체(Branches·Remotes·Tags). Stashes는 개수만 표시하고 항목은 본문에 둔다. Navigator에서 branch·remote·tag를 고르면 본문이 그 객체의 목록·상세로 바뀌고, branch 화면에 Switch와 Integrate가, remote 화면에 URL·Fetch·Prune·Test Connection·편집이 산다. 헤더는 한 줄 문맥 바(branch 메뉴 · Tracking · ahead/behind · 마지막 Fetch)다.
+- **진행 표시.** 6번. 누른 버튼 스피너, 창 제목 subtitle, 우하단 캡슐과 Cancel. 잠금은 동기화 묶음과 branch 전환뿐. 완료는 캡슐 결과, 실패는 alert.
+- **시각 언어.** 시스템 재질(B)이 기본이다. A(불투명 뉴트럴)는 투명도 줄이기에, C(고대비)는 대비 증가에 대한 같은 테마의 응답이며 테마 선택 UI는 없다. 콘텐츠 패널은 항상 불투명이다.
+- **설정.** Appearance(System·Light·Dark), Translucent Sidebar and Toolbar(기본 켬, 시스템 투명도 줄이기가 켜지면 강제로 꺼짐), Compact Rows(기본 끔). 그 외 시각 옵션은 두지 않는다.
+- **diff 배치.** Unified·Split은 diff 헤더 토글, 마지막 선택 기억.
+- **줄 단위 staging.** 거터 체크박스는 줄 단위 staging 기능이 들어올 때의 UI다. 그전까지는 hunk 버튼을 유지하고 둘을 설정으로 고르게 하지 않는다.
+- **커밋 작성.** staged가 없으면 한 줄 바(Commit …)로 접히고 생기면 펼쳐진다.
+- **보류.** History 맨 위의 Working Tree 행. 아래 다섯 과업 판정에서 결정한다.
+
+판정 방법은 Codex 제안을 따른다. 같은 데이터로 다섯 과업(현재 branch와 dirty 상태 말하기, hunk 하나 stage와 commit, commit의 branch 관계와 파일 찾기, stash 적용, reflog에서 복구 branch 만들기)을 1180pt와 720pt에서 수행하고, 클릭 수 대신 문맥을 잃은 횟수·가려진 핵심 명령·잘못 고를 수 있는 위험 동작·키보드 포커스 이동을 센다.
+
+### 다음 슬라이스
+
+1. Navigator 도입. `NavigationSplitView` 사이드바에 Workspace·Recovery·Branches·Remotes·Tags, segmented와 branch 팝오버 제거, 헤더를 한 줄 문맥 바로, ⌘1~4 유지.
+2. 툴바 축소와 진행 표시 모델. Remotes·Integrate 이동, 버튼 스피너·subtitle·캡슐, 잠금을 동기화 묶음으로 축소, 자동 Fetch가 툴바를 잠그지 않게.
+3. Navigator 선택 문맥. branch·remote·tag 선택 시 본문, Stashes·Reflog 목적지 화면, branch 우클릭 메뉴.
+4. 재질·접근성 응답과 설정(Appearance, Translucent, Compact Rows), diff Split 보기.
+
 ## 구현 기준
 
 - 개발 도구 기준: Xcode 26.6, Swift 6.3.3 컴파일러
@@ -595,6 +634,8 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 - [Apple Human Interface Guidelines: Split views](https://developer.apple.com/design/human-interface-guidelines/split-views)
 - [Apple Human Interface Guidelines: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)
 - [Apple Human Interface Guidelines: Lists and tables](https://developer.apple.com/design/human-interface-guidelines/lists-and-tables)
+- [Apple Human Interface Guidelines: Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
+- [Apple Human Interface Guidelines: Toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars)
 - [SwiftUI Table](https://developer.apple.com/documentation/swiftui/table)
 - [SwiftUI HSplitView](https://developer.apple.com/documentation/swiftui/hsplitview)
 - [SwiftUI EnvironmentValues](https://developer.apple.com/documentation/swiftui/environmentvalues)
