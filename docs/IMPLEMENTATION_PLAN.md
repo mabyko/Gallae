@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-5 좁은 창의 Navigator(시안 6) 완료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
+> 현재 범위: 7A-6 detail 열 최소폭 제거와 SwiftUI 분할 완료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
 
 ## 사용자 결과
 
@@ -720,6 +720,13 @@ GallaeApp
 - Location Menu는 문맥 바의 branch 메뉴 뒤에 `›`와 위치 칸을 둔다. 위치 칸은 `RepositoryNavigatorSelection.locationTitle`(History, feature · Local branch, origin · Remote, v0.1 · Tag)을 읽어 주고, 같은 메뉴에서 branch만 뺀 항목을 연다. 툴바 버튼은 비활성이고 도움말이 이유를 말한다.
 - branch 메뉴에 Show History ▸를 추가해 어느 폭에서든 다른 branch의 History 화면으로 갈 수 있다. View 메뉴의 Navigator 항목은 `NavigatorToggleCommand`(제목·활성·동작)를 Workspace가 FocusedValue로 내려보내 폭과 설정에 맞게 바뀐다.
 - 임시 Repository로 900pt 창에서 접근성 API로 확인했다. 세 방식 모두 창 폭이 900으로 유지되고, 오버레이는 열림·Reflog 선택 뒤 자동 닫힘·버튼 재클릭 닫힘, 툴바 메뉴와 위치 메뉴는 항목(Workspace·Changes (1)·History ✓·Recovery·Stashes·Reflog·(Branches)·Remotes·origin·Tags·v0.2·v0.1)과 Reflog 선택 뒤 헤더 전환, 위치 라벨이 History → Reflog → v0.1 · Tag로 바뀌는 것을 확인했다. Location Menu에서 툴바 버튼이 비활성인 것도 확인했다. branch 메뉴의 Show History ▸는 접근성 API가 borderless 메뉴를 열지 못해 눈으로 확인해야 한다. 테스트가 위치 라벨과 설정값 폴백을 검증한다.
+
+### 7A-6 · detail 열 최소폭 제거와 SwiftUI 분할 — 완료
+
+- 원인은 macOS `NavigationSplitView`가 detail 열의 최소폭에 사이드바 폭을 두 번 세는 것이다. detail에 최소폭만 주면 사이드바를 열 때 창이 커지고, 최소·ideal 폭을 함께 주면 사이드바가 (창 폭 − detail 최소폭)의 절반을 넘는 만큼 오른쪽이 빈다. Gallae 코드가 없는 40줄 앱에서 그대로 재현했다(1456pt 창, 최소폭 721: 사이드바 400→33pt, 500→133pt 빈 띠. 최소폭 201: 600까지 0).
+- detail 열에서 최소·ideal 폭을 없앴다. 여섯 곳의 `HSplitView`(Changes, History, Remote, Stashes, Reflog, commit 파일 목록)는 `ResizableHSplit`로 바꿨다. `GeometryReader` 기반이라 최소폭이 없고, 좁아지면 앞 pane이 자기 최소폭까지 먼저 양보하고 그 아래서는 둘이 최소폭 비율로 줄어든다. 구분선 드래그 폭은 `@SceneStorage`에 남는다.
+- Navigator 접힘은 창 폭 변화에서만 일어난다. 구분선 드래그 중 열을 뒤집던 `foldOverwideNavigator`는 뺐다. 드래그 중 AppKit 분할 뷰와 상태가 어긋나 사이드바 내용이 왼쪽으로 밀리고 detail이 오른쪽으로 넘치던 원인이었다. 저장된 사이드바 폭을 ideal로 쓸 때는 320으로 캡한다.
+- 접근성 API로 확인했다. 1456pt 창에서 사이드바 300·500·554 모두 diff 오른쪽 끝이 창 끝과 같고, 1000·800·720으로 줄이면 창이 그 폭을 지키며 사이드바가 접히고 1456에서 돌아온다. 테스트 112개가 통과하고 분할 폭 규칙 테스트를 더했다. 안쪽 구분선 드래그는 합성 드래그가 먹지 않아 눈으로 확인한다.
 
 ## 각 단계의 검증
 

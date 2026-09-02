@@ -2451,6 +2451,25 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.text.contains("other after") })
     }
 
+    func testResizableHSplitLeadingPaneYieldsThenBothShrink() {
+        func width(_ preferred: CGFloat, total: CGFloat) -> CGFloat {
+            ResizableHSplitLayout.leadingWidth(
+                preferred: preferred, leadingMinimum: 320, leadingMaximum: nil, trailingMinimum: 400, total: total
+            )
+        }
+        XCTAssertEqual(width(320, total: 1000), 320, "both minimums fit: the preferred width")
+        XCTAssertEqual(width(100, total: 1000), 320, "never below the leading minimum while there is room")
+        XCTAssertEqual(width(450, total: 801), 400, "too wide: the leading pane yields to keep the trailing minimum")
+        XCTAssertEqual(width(320, total: 361), 160, "narrower than both minimums: 320:400 of the 360 left")
+        XCTAssertEqual(
+            ResizableHSplitLayout.leadingWidth(
+                preferred: 500, leadingMinimum: 160, leadingMaximum: 280, trailingMinimum: 230, total: 1000
+            ),
+            280,
+            "the leading maximum caps the preferred width"
+        )
+    }
+
     func testPairsSplitDiffRowsAndKeepsFullWidthLines() {
         func line(_ id: Int, _ kind: RepositoryDiff.Line.Kind, old: Int? = nil, new: Int? = nil) -> RepositoryDiff.Line {
             .init(id: id, kind: kind, oldLineNumber: old, newLineNumber: new, text: "\(id)")

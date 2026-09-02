@@ -33,6 +33,107 @@ enum RepositoryWorkspaceSection: Int, CaseIterable {
     }
 }
 
+/// Two panes with a draggable divider, laid out by SwiftUI so the detail column never carries a hard minimum
+/// width. `HSplitView` is NSSplitView underneath, and macOS's `NavigationSplitView` counts the sidebar width into
+/// its detail minimum twice: with a hard minimum the window grows when the Navigator opens, and with a minimum plus
+/// ideal the trailing pane stops short of the window once the sidebar passes half the free width. With no minimum a
+/// narrow container squeezes the panes instead: the leading pane yields to its minimum first, then both shrink.
+struct ResizableHSplit<Leading: View, Trailing: View>: View {
+    let leadingMinimum: CGFloat
+    let leadingMaximum: CGFloat?
+    let trailingMinimum: CGFloat
+    private let leading: () -> Leading
+    private let trailing: () -> Trailing
+    @SceneStorage private var leadingWidth: Double
+    @State private var dragStartWidth: CGFloat?
+
+    init(
+        leadingMinimum: CGFloat,
+        leadingIdeal: CGFloat,
+        leadingMaximum: CGFloat? = nil,
+        trailingMinimum: CGFloat,
+        storageKey: String,
+        @ViewBuilder leading: @escaping () -> Leading,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.leadingMinimum = leadingMinimum
+        self.leadingMaximum = leadingMaximum
+        self.trailingMinimum = trailingMinimum
+        self.leading = leading
+        self.trailing = trailing
+        _leadingWidth = SceneStorage(wrappedValue: Double(leadingIdeal), "resizableSplit.\(storageKey).leadingWidth")
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = ResizableHSplitLayout.leadingWidth(
+                preferred: CGFloat(leadingWidth),
+                leadingMinimum: leadingMinimum,
+                leadingMaximum: leadingMaximum,
+                trailingMinimum: trailingMinimum,
+                total: proxy.size.width
+            )
+            HStack(spacing: 0) {
+                leading()
+                    .frame(width: width)
+                    .frame(maxHeight: .infinity)
+                    .clipped()
+
+                Divider()
+                    .overlay {
+                        Color.clear
+                            .frame(width: 9)
+                            .contentShape(.rect)
+                            .onHover { inside in
+                                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                            }
+                            .gesture(
+                                DragGesture(minimumDistance: 1)
+                                    .onChanged { value in
+                                        let start = dragStartWidth ?? width
+                                        dragStartWidth = start
+                                        leadingWidth = Double(ResizableHSplitLayout.leadingWidth(
+                                            preferred: start + value.translation.width,
+                                            leadingMinimum: leadingMinimum,
+                                            leadingMaximum: leadingMaximum,
+                                            trailingMinimum: trailingMinimum,
+                                            total: proxy.size.width
+                                        ))
+                                    }
+                                    .onEnded { _ in dragStartWidth = nil }
+                            )
+                    }
+                    .accessibilityHidden(true)
+
+                trailing()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+        }
+    }
+}
+
+enum ResizableHSplitLayout {
+    static let dividerWidth: CGFloat = 1
+
+    /// The leading pane's width in a container `total` points wide: the preferred width while both minimums fit,
+    /// else the leading pane yields down to its minimum, else both panes shrink in the ratio of their minimums.
+    static func leadingWidth(
+        preferred: CGFloat,
+        leadingMinimum: CGFloat,
+        leadingMaximum: CGFloat?,
+        trailingMinimum: CGFloat,
+        total: CGFloat
+    ) -> CGFloat {
+        let available = max(total - dividerWidth, 0)
+        let clamped = min(max(preferred, leadingMinimum), leadingMaximum ?? .infinity)
+        if clamped + trailingMinimum <= available { return clamped }
+        let yielded = available - trailingMinimum
+        if yielded >= leadingMinimum { return yielded }
+        return (available * leadingMinimum / (leadingMinimum + trailingMinimum)).rounded(.down)
+    }
+}
+
 /// What the Navigator has selected: a destination screen or one Git object whose list and detail fill the body.
 enum RepositoryNavigatorSelection: Hashable {
     case destination(RepositoryWorkspaceSection)
@@ -92,20 +193,21 @@ struct RepositoryWorkspaceView: View {
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigatorStyle = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
     /// The floating Navigator over the detail column in narrow windows.
     @State private var isNavigatorPanelPresented = false
-    /// Changes list plus diff minimum widths.
-    private static let detailMinimumWidth: CGFloat = 320 + 400
+    /// The narrowest detail column worth sharing the window with the Navigator: list plus diff at their minimums.
+    /// A guide for folding only; the detail itself has no minimum (see `ResizableHSplit`).
+    private static let detailComfortableWidth: CGFloat = 320 + 400
     static let navigatorDefaultWidth: CGFloat = 220
-    /// The sidebar width the user last dragged to; the fold threshold follows it so a wide Navigator never
-    /// pushes the detail column out of the window.
+    static let navigatorMaximumWidth: CGFloat = 320
+    /// The sidebar width the user last dragged to; the fold threshold follows it.
     @AppStorage("navigatorWidth") private var navigatorWidth = Double(navigatorDefaultWidth)
     /// Read once per launch, before the first layout, so the sidebar's ideal equals the width AppKit restores.
     private static let launchNavigatorWidth: CGFloat = {
         let stored = UserDefaults.standard.double(forKey: "navigatorWidth")
-        return stored >= 180 ? CGFloat(stored) : navigatorDefaultWidth
+        return stored >= 180 ? min(CGFloat(stored), navigatorMaximumWidth) : navigatorDefaultWidth
     }()
-    /// Navigator width plus the detail minimum and the split dividers; narrower windows fold the Navigator.
+    /// Navigator width plus the comfortable detail width and the divider; narrower windows fold the Navigator.
     private var navigatorFoldWidth: CGFloat {
-        CGFloat(navigatorWidth) + Self.detailMinimumWidth + 8
+        CGFloat(navigatorWidth) + Self.detailComfortableWidth + 8
     }
     @State private var isConfirmingOperationAbort = false
     @FocusState private var isChangeListFocused: Bool
@@ -135,9 +237,9 @@ struct RepositoryWorkspaceView: View {
                     }
                 }
             }
-            // ponytail: without an explicit ideal width the split view sizes the detail column to the
-            // diff panel's natural width and overflows the window; the list + diff minimums are the ideal.
-            .frame(minWidth: Self.detailMinimumWidth, idealWidth: Self.detailMinimumWidth, maxWidth: .infinity)
+            // No minimum or ideal width here on purpose: `NavigationSplitView` counts the sidebar into the detail
+            // minimum twice, growing the window or leaving a gap on the right (see `ResizableHSplit`).
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 if isNavigatorPanelPresented {
                     navigatorPanel
@@ -146,9 +248,6 @@ struct RepositoryWorkspaceView: View {
         }
         .onChange(of: windowWidth, initial: true) { _, width in
             foldNavigatorIfNeeded(windowWidth: width)
-        }
-        .onChange(of: navigatorWidth) { _, _ in
-            foldOverwideNavigator()
         }
         .onChange(of: isWindowNarrow) { _, isNarrow in
             if !isNarrow { isNavigatorPanelPresented = false }
@@ -460,7 +559,7 @@ struct RepositoryWorkspaceView: View {
 
     private var navigatorColumn: some View {
         RepositoryNavigatorView(model: model, selection: $selection)
-            .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: 320)
+            .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: Self.navigatorMaximumWidth)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
                 guard columnVisibility != .detailOnly, width >= 180 else { return }
                 navigatorWidth = Double(width)
@@ -470,8 +569,8 @@ struct RepositoryWorkspaceView: View {
 
     // MARK: - Narrow window Navigator
 
-    /// ponytail: the split view never shrinks the detail column below the list + diff minimums, so the window
-    /// width decides. The Navigator folds first and comes back only once both fit again.
+    /// Only the window width folds the Navigator, never a divider drag: flipping the column mid-drag leaves
+    /// AppKit's split view and our state disagreeing. A sidebar dragged too wide just squeezes the detail.
     private func foldNavigatorIfNeeded(windowWidth width: CGFloat) {
         guard width > 0 else { return }
         if width < navigatorFoldWidth, columnVisibility != .detailOnly {
@@ -481,15 +580,6 @@ struct RepositoryWorkspaceView: View {
             isNavigatorAutoCollapsed = false
             columnVisibility = .all
         }
-    }
-
-    /// A sidebar dragged wider than the window can hold would push the detail out of view; fold it and forget
-    /// the width so the next opening fits.
-    private func foldOverwideNavigator() {
-        guard windowWidth > 0, columnVisibility != .detailOnly, windowWidth < navigatorFoldWidth else { return }
-        navigatorWidth = Double(Self.navigatorDefaultWidth)
-        isNavigatorAutoCollapsed = true
-        columnVisibility = .detailOnly
     }
 
     /// Below the fold width the sidebar column never opens, so the window never grows; the setting decides the way in.
@@ -645,13 +735,14 @@ struct RepositoryWorkspaceView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            HSplitView {
+            ResizableHSplit(
+                leadingMinimum: theme.metrics.changeListMinimumWidth,
+                leadingIdeal: theme.metrics.changeListIdealWidth,
+                trailingMinimum: 400,
+                storageKey: "changes"
+            ) {
                 changeList(repository)
-                    .frame(
-                        minWidth: theme.metrics.changeListMinimumWidth,
-                        idealWidth: theme.metrics.changeListIdealWidth
-                    )
-
+            } trailing: {
                 RepositoryDiffView(
                     state: model.diffState,
                     fileURL: selectedFileURL(in: repository),
@@ -683,8 +774,6 @@ struct RepositoryWorkspaceView: View {
                         }
                     }
                 )
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
             }
         }
     }
@@ -1654,7 +1743,12 @@ private struct RepositoryHistoryView: View {
     @State private var pendingTrackingReferenceRemoval: String?
 
     var body: some View {
-        HSplitView {
+        ResizableHSplit(
+            leadingMinimum: theme.metrics.changeListMinimumWidth,
+            leadingIdeal: theme.metrics.changeListIdealWidth,
+            trailingMinimum: 400,
+            storageKey: "history"
+        ) {
             VStack(spacing: 0) {
                 VStack(spacing: 7) {
                     HStack {
@@ -1696,15 +1790,8 @@ private struct RepositoryHistoryView: View {
                 historyList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(
-                minWidth: theme.metrics.changeListMinimumWidth,
-                idealWidth: theme.metrics.changeListIdealWidth,
-                maxHeight: .infinity
-            )
-
+        } trailing: {
             RepositoryCommitDetailView(model: model)
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
         }
         .task(id: model.historyRequest) {
             await model.loadHistory()
@@ -2097,7 +2184,12 @@ private struct RepositoryRemoteView: View {
     }
 
     var body: some View {
-        HSplitView {
+        ResizableHSplit(
+            leadingMinimum: theme.metrics.changeListMinimumWidth,
+            leadingIdeal: theme.metrics.changeListIdealWidth,
+            trailingMinimum: 400,
+            storageKey: "remote"
+        ) {
             VStack(spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2125,15 +2217,8 @@ private struct RepositoryRemoteView: View {
                 branchList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(
-                minWidth: theme.metrics.changeListMinimumWidth,
-                idealWidth: theme.metrics.changeListIdealWidth,
-                maxHeight: .infinity
-            )
-
+        } trailing: {
             detail
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
         }
         .task(id: "\(model.repositoryRevision):\(remoteName)") {
             do {
@@ -2398,7 +2483,12 @@ private struct RepositoryStashesView: View {
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
-        HSplitView {
+        ResizableHSplit(
+            leadingMinimum: theme.metrics.changeListMinimumWidth,
+            leadingIdeal: theme.metrics.changeListIdealWidth,
+            trailingMinimum: 400,
+            storageKey: "stashes"
+        ) {
             VStack(spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2431,15 +2521,8 @@ private struct RepositoryStashesView: View {
                 stashList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(
-                minWidth: theme.metrics.changeListMinimumWidth,
-                idealWidth: theme.metrics.changeListIdealWidth,
-                maxHeight: .infinity
-            )
-
+        } trailing: {
             RepositoryStashDetailView(model: model)
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
         }
         .task(id: model.stashesRequest) {
             await model.loadStashes()
@@ -2493,7 +2576,12 @@ private struct RepositoryReflogView: View {
     @State private var recoveryEntry: RepositoryReflogEntry?
 
     var body: some View {
-        HSplitView {
+        ResizableHSplit(
+            leadingMinimum: theme.metrics.changeListMinimumWidth,
+            leadingIdeal: theme.metrics.changeListIdealWidth,
+            trailingMinimum: 400,
+            storageKey: "reflog"
+        ) {
             VStack(spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -2521,18 +2609,11 @@ private struct RepositoryReflogView: View {
                 reflogList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(
-                minWidth: theme.metrics.changeListMinimumWidth,
-                idealWidth: theme.metrics.changeListIdealWidth,
-                maxHeight: .infinity
-            )
-
+        } trailing: {
             RepositoryReflogDetailView(
                 entry: model.selectedReflogEntry,
                 onRecover: { recoveryEntry = $0 }
             )
-                .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
         }
         .task(id: model.reflogRequest) {
             await model.loadReflog()
@@ -4281,7 +4362,7 @@ private struct RepositoryRevisionChangesView: View {
     }
 
     private func revisionFiles(_ files: [RepositoryCommitFile]) -> some View {
-        HSplitView {
+        ResizableHSplit(leadingMinimum: 160, leadingIdeal: 200, leadingMaximum: 280, trailingMinimum: 230, storageKey: "revisionFiles") {
             VStack(spacing: 0) {
                 HStack {
                     Text("Changed Files")
@@ -4304,10 +4385,7 @@ private struct RepositoryRevisionChangesView: View {
                 .listStyle(.plain)
                 .accessibilityLabel("Changed Files, \(files.count) files")
             }
-            // ponytail: files + patch minimums must stay within the 400pt detail pane, or the split view
-            // centers the overflow and clips both edges when the window narrows.
-            .frame(minWidth: 160, idealWidth: 200, maxWidth: 280)
-
+        } trailing: {
             VStack(spacing: 0) {
                 if let file = selectedFile {
                     HStack(alignment: .center, spacing: 12) {
@@ -4335,7 +4413,6 @@ private struct RepositoryRevisionChangesView: View {
 
                 revisionPatchContent
             }
-            .frame(minWidth: 230, maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
