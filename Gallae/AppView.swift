@@ -132,8 +132,9 @@ struct AppView: View {
                         "Fetch Remote changes, or open the menu to also prune stale tracking references"
                     )
 
-                    // One control group, so the spacing around the dividers is the group's rather than the
-                    // toolbar's item spacing, and each button keeps its own accessibility label.
+                    // One-control groups in a zero-spacing HStack: each button keeps its own accessibility
+                    // name, and only the buttons' own padding sits around the dividers, as in Fetch's menu.
+                    HStack(spacing: 0) {
                     ControlGroup {
                     Button {
                         model.pullRepository()
@@ -156,8 +157,11 @@ struct AppView: View {
                         "Fast-forward the current branch from its tracking branch without merging or rebasing"
                     )
 
-                    ToolbarDivider()
+                    }
 
+                    ToolbarDivider(inset: 0)
+
+                    ControlGroup {
                     Button {
                         model.pushRepository()
                     } label: {
@@ -181,8 +185,11 @@ struct AppView: View {
                             : "Push the current branch to its configured destination without force"
                     )
 
-                    ToolbarDivider()
+                    }
 
+                    ToolbarDivider(inset: 0)
+
+                    ControlGroup {
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
                     }
@@ -190,6 +197,7 @@ struct AppView: View {
                     .accessibilityLabel("Refresh Repository")
                     .help("Refresh · read the current Repository state again (⌘R)")
                     .accessibilityHint("Read the current Repository state again")
+                    }
                     }
                 }
             }
