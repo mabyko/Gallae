@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7A-3 Navigator 선택 문맥 완료 · 다음 7A-4 재질·접근성 응답과 설정(Appearance·Translucent·Compact Rows), diff Split 보기
+> 현재 범위: 7A-4 재질·접근성 응답, Appearance 설정, Split diff 완료 · 시안 3·4·5 슬라이스 종료. 다음은 다섯 과업 판정(Working Tree 행 보류 해소)과 남은 표기 문제(remote 미지정 Fetch 진행 제목)
 
 ## 사용자 결과
 
@@ -703,6 +703,14 @@ GallaeApp
 - Navigator에 Tags 섹션을 추가했다. Inspector가 `for-each-ref`로 tag(최근 생성 순)와 remote별 remote-tracking branch를 읽되, `refname:short`는 branch와 같은 이름의 tag를 `tags/<name>`으로, remote의 `HEAD` 별칭을 remote 이름으로 바꿔 내놓으므로 전체 refname에서 접두어를 직접 뗀다. Stashes 행에는 개수 배지가 붙고, Navigator 필터는 branch·remote·tag 모두에 적용된다.
 - Navigator branch 행의 문맥 메뉴에 `Integrate…`를 추가했고 Integrate 시트는 그 branch를 미리 고른 채 열린다. 현재 branch 행은 메뉴가 없다.
 - 임시 Repository(branch 2·remote 1·tag 2)에서 접근성 API로 branch 화면의 헤더·Switch·Integrate…와 2개 commit, remote 화면의 URL·버튼·remote branch 행, tag 화면의 `New Branch…`와 도달 commit 수, ⌘2로 History 복귀, 우클릭 메뉴(branch: Switch·Integrate…·Remove Branch…, remote: Fetch·Fetch & Prune, 현재 branch: 없음), View 메뉴 체크 없음, Integrate 시트의 미리 선택을 확인했다. Inspector 테스트가 같은 이름의 branch·tag 분리와 `origin/HEAD` 제외를 검증한다.
+
+### 7A-4 · 재질·접근성 응답, Appearance 설정, Split diff — 완료
+
+- 테마는 하나이고 `GallaeTheme.resolve(response:compactRows:)`가 Material Response와 밀도에 맞는 Semantic 값을 돌려준다. 응답은 `GallaeMaterialResponse.resolve`가 시스템의 투명도 줄이기·대비 증가와 설정의 Translucent 값으로 정하며(대비 증가 > 투명도 줄이기 또는 Translucent 끔 > 기본), `AppView` 루트가 `accessibilityReduceTransparency`·`colorSchemeContrast`·`@AppStorage`를 읽어 한 번 해석하고 `gallaeTheme` 환경으로 내려보낸다.
+- Standard는 시스템 재질 그대로다. Reduced Transparency는 Navigator 목록의 배경을 숨기고 창 배경색으로 칠하며 창 툴바 배경을 `visible`로 둔다. Increased Contrast는 그 위에 배지·diff 추가/삭제/hunk 배경 농도를 올리고, diff 글자를 11pt로 줄이고, 추가·삭제 행 왼쪽에 3pt 컬러 바를 붙이고, diff 메타데이터를 secondary 대신 primary로 그린다. 선택 색과 구분선은 시스템 컨트롤이 대비 증가에 스스로 응답하므로 따로 그리지 않는다.
+- 설정에 Appearance 탭을 추가했다. Appearance(System·Light·Dark)는 `NSApp.appearance`로 모든 창에 적용되고 실행 시 저장값을 복원한다. Translucent Sidebar and Toolbar(기본 켬)는 시스템 투명도 줄이기가 켜져 있으면 비활성이며 설명이 그 이유를 말한다. Compact Rows(기본 끔)는 Changes·History·Stashes·Reflog 행의 세로 여백을 7에서 3으로 줄인다. 테마 선택 UI는 없고, 설정 하단 문구가 대비 증가는 시스템 설정을 따른다고 알린다.
+- diff 헤더(작업 트리 diff, commit·stash patch)에 Unified·Split segmented 토글을 두고 마지막 선택을 `@AppStorage`로 기억한다. Split은 `RepositoryDiffSplitRow.rows`가 문맥 행을 양쪽에, 삭제 묶음과 뒤따르는 추가 묶음을 순서대로 짝지어 old·new 두 열로 그리고, 짝이 없는 쪽은 빈 셀이다. metadata·hunk 행과 Stage/Unstage Hunk 버튼은 전체 폭이다. Split은 세로 스크롤만 쓰고 긴 줄을 줄바꿈하며, Unified는 종전처럼 가로 스크롤을 유지한다. 두 렌더러는 `RepositoryDiffLinesView` 하나를 공유한다.
+- 접근성 API로 diff 헤더의 Unified·Split 라디오, Split에서 추가 행이 오른쪽 열(패널 폭의 절반 위치)에 놓이고 hunk 헤더가 전체 폭인 것, 설정 Appearance 탭의 세 라디오와 두 토글, Compact Rows 켜고 끌 때 History 행 높이 63→55→63, Translucent 토글 끄고 켠 뒤 Navigator 유지, Dark→System 전환을 확인했다. 시스템 재질과 불투명 전환의 실제 모습은 화면 캡처 권한이 없어 눈으로 확인하지 못했다. 단위 테스트가 응답 해석과 Split 짝짓기(삭제 2·추가 1, 추가 뒤 삭제, 고유 id)를 검증한다.
 
 ## 각 단계의 검증
 

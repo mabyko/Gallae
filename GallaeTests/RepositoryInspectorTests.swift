@@ -2451,6 +2451,72 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.text.contains("other after") })
     }
 
+    func testPairsSplitDiffRowsAndKeepsFullWidthLines() {
+        func line(_ id: Int, _ kind: RepositoryDiff.Line.Kind, old: Int? = nil, new: Int? = nil) -> RepositoryDiff.Line {
+            .init(id: id, kind: kind, oldLineNumber: old, newLineNumber: new, text: "\(id)")
+        }
+        let lines = [
+            line(0, .metadata),
+            line(1, .hunk),
+            line(2, .context, old: 1, new: 1),
+            line(3, .deletion, old: 2),
+            line(4, .deletion, old: 3),
+            line(5, .addition, new: 2),
+            line(6, .context, old: 4, new: 3),
+            line(7, .addition, new: 4),
+            line(8, .addition, new: 5),
+            line(9, .deletion, old: 5)
+        ]
+
+        let rows = RepositoryDiffSplitRow.rows(from: lines)
+
+        XCTAssertEqual(rows.map(\.id), [0, 1, 2, 3, 4, 6, 9, 8])
+        XCTAssertEqual(rows[0].full?.id, 0)
+        XCTAssertEqual(rows[1].full?.id, 1)
+        XCTAssertEqual(rows[2].old?.id, 2)
+        XCTAssertEqual(rows[2].new?.id, 2)
+        // Two deletions followed by one addition pair in order; the second deletion faces an empty cell.
+        XCTAssertEqual(rows[3].old?.id, 3)
+        XCTAssertEqual(rows[3].new?.id, 5)
+        XCTAssertEqual(rows[4].old?.id, 4)
+        XCTAssertNil(rows[4].new)
+        // Additions before a deletion in the same run still pair with it.
+        XCTAssertEqual(rows[6].old?.id, 9)
+        XCTAssertEqual(rows[6].new?.id, 7)
+        XCTAssertNil(rows[7].old)
+        XCTAssertEqual(rows[7].new?.id, 8)
+        XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+    }
+
+    func testResolvesMaterialResponseFromSystemAndAppSettings() {
+        XCTAssertEqual(
+            GallaeMaterialResponse.resolve(reduceTransparency: false, increasedContrast: false, translucentChrome: true),
+            .standard
+        )
+        XCTAssertEqual(
+            GallaeMaterialResponse.resolve(reduceTransparency: false, increasedContrast: false, translucentChrome: false),
+            .reducedTransparency
+        )
+        XCTAssertEqual(
+            GallaeMaterialResponse.resolve(reduceTransparency: true, increasedContrast: false, translucentChrome: true),
+            .reducedTransparency
+        )
+        // Increase Contrast wins even when the app setting asks for the material.
+        XCTAssertEqual(
+            GallaeMaterialResponse.resolve(reduceTransparency: false, increasedContrast: true, translucentChrome: true),
+            .increasedContrast
+        )
+
+        let standard = GallaeTheme.resolve(response: .standard, compactRows: false)
+        let contrast = GallaeTheme.resolve(response: .increasedContrast, compactRows: true)
+        XCTAssertTrue(standard.materials.translucentChrome)
+        XCTAssertFalse(contrast.materials.translucentChrome)
+        XCTAssertEqual(standard.metrics.diffChangeBarWidth, 0)
+        XCTAssertGreaterThan(contrast.metrics.diffChangeBarWidth, 0)
+        XCTAssertLessThan(contrast.metrics.rowVerticalPadding, standard.metrics.rowVerticalPadding)
+        XCTAssertLessThan(contrast.metrics.diffFontSize, standard.metrics.diffFontSize)
+    }
+
     func testFiltersHistoryByMessageAuthorAndSHA() {
         let commit = RepositoryHistory.Commit(
             id: "abc123def456",

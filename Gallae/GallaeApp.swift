@@ -342,9 +342,52 @@ enum CommitSigningConfiguration {
     }
 }
 
+/// Keys and values of the Appearance settings; the theme itself is resolved in `AppView`.
+enum GallaeAppearanceSettings {
+    static let appearanceKey = "appearance"
+    static let translucentChromeKey = "translucentSidebarAndToolbar"
+    static let compactRowsKey = "compactRows"
+
+    enum Appearance: String, CaseIterable, Identifiable {
+        case system
+        case light
+        case dark
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .system: "System"
+            case .light: "Light"
+            case .dark: "Dark"
+            }
+        }
+
+        /// Applies to every window, including Settings, so it is set on the app rather than a view.
+        @MainActor
+        func apply() {
+            NSApp.appearance = switch self {
+            case .system: nil
+            case .light: NSAppearance(named: .aqua)
+            case .dark: NSAppearance(named: .darkAqua)
+            }
+        }
+    }
+
+    @MainActor
+    static func applyStoredAppearance() {
+        let stored = UserDefaults.standard.string(forKey: appearanceKey) ?? ""
+        (Appearance(rawValue: stored) ?? .system).apply()
+    }
+}
+
 private struct GallaeSettingsView: View {
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("loadsGitHubAvatars") private var loadsGitHubAvatars = true
+    @AppStorage(GallaeAppearanceSettings.appearanceKey) private var appearance = GallaeAppearanceSettings.Appearance.system
+    @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
+    @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
     @State private var installedURL: URL?
     @State private var errorMessage: String?
     @State private var signingState: CommitSigningState = .loading
@@ -355,6 +398,9 @@ private struct GallaeSettingsView: View {
         TabView {
             Tab("General", systemImage: "gearshape") {
                 generalSettings
+            }
+            Tab("Appearance", systemImage: "paintpalette") {
+                appearanceSettings
             }
             Tab("Git", systemImage: "arrow.triangle.branch") {
                 gitSettings
@@ -436,6 +482,57 @@ private struct GallaeSettingsView: View {
                 return
             }
             Task { await applySigningKey(newKeyID, keys: keys, previousKeyID: currentKeyID) }
+        }
+    }
+
+    private var appearanceSettings: some View {
+        Form {
+            Section {
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(GallaeAppearanceSettings.Appearance.allCases) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityHint("System follows the macOS appearance setting")
+
+                Text("System follows the macOS setting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Toggle("Translucent Sidebar and Toolbar", isOn: $translucentChrome)
+                    .disabled(reduceTransparency)
+                    .accessibilityHint(
+                        reduceTransparency
+                            ? "Unavailable while Reduce Transparency is on in System Settings"
+                            : "Show the system material behind the Navigator and the toolbar"
+                    )
+                Text(
+                    reduceTransparency
+                        ? "Turned off while Reduce Transparency is on in System Settings › Accessibility."
+                        : "Uses the system material. Turned off automatically while Reduce Transparency is on in System Settings."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                Toggle("Compact Rows", isOn: $compactRows)
+                    .accessibilityHint("Shorter rows in Changes, History, Stashes, and Reflog")
+                Text("Shorter rows in Changes, History, Stashes, and Reflog.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Text("Increase Contrast in System Settings › Accessibility raises divider, badge, and diff contrast and adds color bars to changed diff lines. There is no theme picker.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onChange(of: appearance) { _, appearance in
+            appearance.apply()
         }
     }
 

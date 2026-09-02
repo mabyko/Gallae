@@ -10,7 +10,10 @@ struct AppView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.gallaeTheme) private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
+    @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
     @State private var model = AppModel()
     @State private var folderSelection: FolderSelection?
     @State private var isFolderImporterPresented = false
@@ -44,6 +47,12 @@ struct AppView: View {
             windowWidth = width
         }
         .environment(\.windowWidth, windowWidth)
+        // The theme answers the system accessibility settings and the two appearance settings once, here.
+        .environment(\.gallaeTheme, theme)
+        .toolbarBackgroundVisibility(theme.materials.translucentChrome ? .automatic : .visible, for: .windowToolbar)
+        .onAppear {
+            GallaeAppearanceSettings.applyStoredAppearance()
+        }
         .overlay(alignment: .bottomTrailing) {
             activityCapsule
         }
@@ -254,6 +263,17 @@ struct AppView: View {
             guard phase == .active, model.repository != nil else { return }
             Task { await model.refreshRepository() }
         }
+    }
+
+    private var theme: GallaeTheme {
+        GallaeTheme.resolve(
+            response: .resolve(
+                reduceTransparency: reduceTransparency,
+                increasedContrast: colorSchemeContrast == .increased,
+                translucentChrome: translucentChrome
+            ),
+            compactRows: compactRows
+        )
     }
 
     private var workspaceSubtitle: String {

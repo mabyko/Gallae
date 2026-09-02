@@ -73,6 +73,8 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 
 시안 2(`prototype/gallae-workspace`)는 정보 구조 후보 A·B·C를 비교한다. 시안 5는 채택한 구조 위에서 세 Material Response와 밀도를 비교하는 로컬 일회용 HTML이며 저장소에 넣지 않는다. 시안 5의 토큰은 `:root[data-theme]`로 응답별 Semantic 값을 덮어쓰고 Light·Dark를 각각 가지며, 설정 창 목업의 두 토글과 시스템 접근성 토글 시뮬레이션으로 응답 전환을 확인한다. 제품에서는 시스템 설정과 두 개의 앱 설정으로만 응답이 결정된다.
 
+구현은 `Gallae/GallaeTheme.swift`다. `GallaeMaterialResponse.resolve`가 응답을 정하고 `GallaeTheme.resolve(response:compactRows:)`가 그 응답과 밀도의 Semantic 값을 돌려준다. 응답별로 달라지는 값은 배지·diff 배경 농도, diff 글자 크기와 컬러 바 폭, 행 세로 여백, 사이드바·툴바의 재질 사용 여부뿐이며 색 이름과 배치는 같다.
+
 ## 변경 방법
 
 | 바꾸려는 것 | 수정할 층 |

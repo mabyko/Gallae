@@ -604,6 +604,8 @@ python3 -m http.server 8765 --directory prototype/gallae-workspace
 3. Navigator 선택 문맥. branch·remote·tag 선택 시 본문, Stashes·Reflog 목적지 화면, branch 우클릭 메뉴.
 4. 재질·접근성 응답과 설정(Appearance, Translucent, Compact Rows), diff Split 보기.
 
+네 슬라이스는 구현 계획의 7A-1~7A-4로 끝났다. 남은 것은 보류한 Working Tree 행을 정하는 다섯 과업 판정이다.
+
 ## 구현 기준
 
 - 개발 도구 기준: Xcode 26.6, Swift 6.3.3 컴파일러

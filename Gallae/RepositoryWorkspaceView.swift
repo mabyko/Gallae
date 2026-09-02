@@ -564,7 +564,7 @@ struct RepositoryWorkspaceView: View {
                 children: \.children
             ) { node in
                 changeHierarchyRow(node)
-                    .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+                    .listRowInsets(.init(top: theme.metrics.rowVerticalPadding, leading: 12, bottom: theme.metrics.rowVerticalPadding, trailing: 12))
             }
         }
         .listStyle(.plain)
@@ -579,7 +579,7 @@ struct RepositoryWorkspaceView: View {
                     if expandedStatusGroups.contains(group.id) {
                         ForEach(group.changes) { change in
                             changeRow(change, showsParentPath: true)
-                                .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
+                                .listRowInsets(.init(top: theme.metrics.rowVerticalPadding, leading: 12, bottom: theme.metrics.rowVerticalPadding, trailing: 12))
                         }
                     }
                 } header: {
@@ -718,6 +718,7 @@ struct RepositoryWorkspaceView: View {
 private struct RepositoryNavigatorView: View {
     @Bindable var model: AppModel
     @Binding var selection: RepositoryNavigatorSelection
+    @Environment(\.gallaeTheme) private var theme
     @State private var filterText = ""
     @State private var branches: [String] = []
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
@@ -765,6 +766,7 @@ private struct RepositoryNavigatorView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(theme.materials.translucentChrome ? .automatic : .hidden)
             .accessibilityLabel("Navigator")
 
             Divider()
@@ -775,6 +777,8 @@ private struct RepositoryNavigatorView: View {
                 .padding(8)
                 .accessibilityLabel("Filter Branches, Remotes, and Tags")
         }
+        // Reduced Transparency and Increased Contrast paint the sidebar opaque instead of the system material.
+        .background(theme.materials.translucentChrome ? Color.clear : theme.colors.opaqueChrome)
         .task(id: model.repositoryRevision) {
             guard let rootURL = model.repository?.rootURL else { return }
             await model.loadRemotes(in: rootURL)
@@ -2309,6 +2313,7 @@ private struct RepositoryReflogView: View {
 }
 
 private struct RepositoryReflogRow: View {
+    @Environment(\.gallaeTheme) private var theme
     let entry: RepositoryReflogEntry
 
     var body: some View {
@@ -2333,7 +2338,7 @@ private struct RepositoryReflogRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, theme.metrics.rowVerticalPadding)
 
             Spacer(minLength: 8)
 
@@ -2476,6 +2481,7 @@ private struct RepositoryRecoveryBranchSheet: View {
 }
 
 private struct RepositoryStashRow: View {
+    @Environment(\.gallaeTheme) private var theme
     let stash: RepositoryStash
 
     var body: some View {
@@ -2500,7 +2506,7 @@ private struct RepositoryStashRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, theme.metrics.rowVerticalPadding)
 
             Spacer(minLength: 8)
 
@@ -2777,7 +2783,7 @@ private struct RepositoryHistoryRow: View {
                     }
                 }
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, theme.metrics.rowVerticalPadding)
 
             Spacer(minLength: 8)
 
@@ -3974,6 +3980,7 @@ private struct RepositoryRevisionChangesView: View {
     let retryFiles: () -> Void
     let retryPatch: () -> Void
     let loadExpandedPatch: () -> Void
+    @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
 
     @ViewBuilder
     var body: some View {
@@ -4034,7 +4041,8 @@ private struct RepositoryRevisionChangesView: View {
 
             VStack(spacing: 0) {
                 if let file = selectedFile {
-                    VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
                         Text(file.fileName)
                             .font(.callout.weight(.semibold))
                             .lineLimit(1)
@@ -4045,8 +4053,11 @@ private struct RepositoryRevisionChangesView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        RepositoryDiffLayoutPicker()
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
 
@@ -4090,13 +4101,15 @@ private struct RepositoryRevisionChangesView: View {
         switch content {
         case .text(let lines):
             GeometryReader { proxy in
-                ScrollView([.horizontal, .vertical]) {
+                ScrollView(layout == .split ? [.vertical] : [.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(lines) { line in
-                            RepositoryDiffLineView(line: line)
-                        }
+                        RepositoryDiffLinesView(lines: lines, layout: layout)
                     }
-                    .frame(minWidth: proxy.size.width, alignment: .leading)
+                    .frame(
+                        minWidth: proxy.size.width,
+                        maxWidth: layout == .split ? proxy.size.width : nil,
+                        alignment: .leading
+                    )
                     .textSelection(.enabled)
                 }
                 .defaultScrollAnchor(.topLeading, for: .alignment)
@@ -4226,6 +4239,7 @@ private struct RepositoryDiffView: View {
     let updateHunk: (RepositoryDiff.Hunk) -> Void
     let retry: () -> Void
     let loadExpanded: () -> Void
+    @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
     @State private var isConfirmingDiscard = false
     @State private var pendingConflictResolution: ConflictResolutionConfirmation?
 
@@ -4277,6 +4291,8 @@ private struct RepositoryDiffView: View {
                 }
 
                 Spacer()
+
+                RepositoryDiffLayoutPicker()
 
                 if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
                     Button("Mark Resolved…") {
@@ -4339,11 +4355,12 @@ private struct RepositoryDiffView: View {
                 )
             } else {
                 GeometryReader { proxy in
-                    ScrollView([.horizontal, .vertical]) {
+                    ScrollView(layout == .split ? [.vertical] : [.horizontal, .vertical]) {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(diff.sections) { section in
                                 RepositoryDiffSectionView(
                                     section: section,
+                                    layout: layout,
                                     fileURL: fileURL,
                                     canStageHunks: canStageHunks,
                                     canUnstageHunks: canUnstageHunks,
@@ -4353,7 +4370,11 @@ private struct RepositoryDiffView: View {
                                 )
                             }
                         }
-                        .frame(minWidth: proxy.size.width, alignment: .leading)
+                        .frame(
+                            minWidth: proxy.size.width,
+                            maxWidth: layout == .split ? proxy.size.width : nil,
+                            alignment: .leading
+                        )
                         .textSelection(.enabled)
                     }
                     .defaultScrollAnchor(.topLeading, for: .alignment)
@@ -4555,8 +4576,87 @@ private struct RepositoryConflictLineView: View {
     }
 }
 
+/// Unified shows one column with both line numbers; Split puts the old and new versions side by side.
+enum RepositoryDiffLayout: String, CaseIterable, Identifiable {
+    case unified
+    case split
+
+    static let storageKey = "diffLayout"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .unified: "Unified"
+        case .split: "Split"
+        }
+    }
+}
+
+/// One row of a split diff: a full-width metadata or hunk line, or an old/new pair. Context lines sit on
+/// both sides; each run of deletions is paired in order with the additions that follow it.
+struct RepositoryDiffSplitRow: Equatable, Identifiable {
+    let id: Int
+    let full: RepositoryDiff.Line?
+    let old: RepositoryDiff.Line?
+    let new: RepositoryDiff.Line?
+
+    static func rows(from lines: [RepositoryDiff.Line]) -> [RepositoryDiffSplitRow] {
+        var rows: [RepositoryDiffSplitRow] = []
+        var deletions: [RepositoryDiff.Line] = []
+        var additions: [RepositoryDiff.Line] = []
+
+        func flushChanges() {
+            for index in 0..<max(deletions.count, additions.count) {
+                let old = index < deletions.count ? deletions[index] : nil
+                let new = index < additions.count ? additions[index] : nil
+                rows.append(.init(id: old?.id ?? new?.id ?? -1, full: nil, old: old, new: new))
+            }
+            deletions.removeAll()
+            additions.removeAll()
+        }
+
+        for line in lines {
+            switch line.kind {
+            case .deletion:
+                deletions.append(line)
+            case .addition:
+                additions.append(line)
+            case .context:
+                flushChanges()
+                rows.append(.init(id: line.id, full: nil, old: line, new: line))
+            case .metadata, .hunk:
+                flushChanges()
+                rows.append(.init(id: line.id, full: line, old: nil, new: nil))
+            }
+        }
+        flushChanges()
+        return rows
+    }
+}
+
+/// The Unified/Split toggle in diff headers; the last choice is remembered across files and windows.
+private struct RepositoryDiffLayoutPicker: View {
+    @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
+
+    var body: some View {
+        Picker("Diff Layout", selection: $layout) {
+            ForEach(RepositoryDiffLayout.allCases) { layout in
+                Text(layout.title).tag(layout)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.small)
+        .fixedSize()
+        .help("Show the diff in one column, or the old and new versions side by side")
+        .accessibilityLabel("Diff Layout")
+    }
+}
+
 private struct RepositoryDiffSectionView: View {
     let section: RepositoryDiff.Section
+    let layout: RepositoryDiffLayout
     let fileURL: URL?
     let canStageHunks: Bool
     let canUnstageHunks: Bool
@@ -4578,25 +4678,14 @@ private struct RepositoryDiffSectionView: View {
 
             switch section.content {
             case .text(let lines):
-                ForEach(lines) { line in
-                    if let hunk = section.hunks.first(where: { $0.id == line.id }),
-                       let actionLabel = hunkActionLabel {
-                        HStack(spacing: 8) {
-                            RepositoryDiffLineView(line: line, fillsWidth: false)
-                            Button(actionLabel) {
-                                updateHunk(hunk)
-                            }
-                            .controlSize(.small)
-                            .disabled(isBusy)
-                            .help("\(actionLabel) without changing the working tree file")
-                            .accessibilityHint("Update only this hunk in the Git index")
-                            Spacer(minLength: 8)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(theme.colors.diffHunkBackground)
-                    } else {
-                        RepositoryDiffLineView(line: line)
+                RepositoryDiffLinesView(lines: lines, layout: layout, isBusy: isBusy) { line in
+                    guard
+                        let hunk = section.hunks.first(where: { $0.id == line.id }),
+                        let actionLabel = hunkActionLabel
+                    else {
+                        return nil
                     }
+                    return (actionLabel, { updateHunk(hunk) })
                 }
             case .binary:
                 RepositoryDiffNotice(
@@ -4640,44 +4729,126 @@ private struct RepositoryDiffSectionView: View {
     }
 }
 
+/// Text diff lines in either layout. `hunkAction` returns a button for hunk header lines that can be staged.
+private struct RepositoryDiffLinesView: View {
+    let lines: [RepositoryDiff.Line]
+    let layout: RepositoryDiffLayout
+    var isBusy = false
+    var hunkAction: (RepositoryDiff.Line) -> (label: String, perform: () -> Void)? = { _ in nil }
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        switch layout {
+        case .unified:
+            ForEach(lines) { line in
+                fullWidthLine(line)
+            }
+        case .split:
+            ForEach(RepositoryDiffSplitRow.rows(from: lines)) { row in
+                if let full = row.full {
+                    fullWidthLine(full)
+                } else {
+                    HStack(alignment: .top, spacing: 0) {
+                        RepositoryDiffLineView(line: row.old, side: .old)
+                        Divider()
+                        RepositoryDiffLineView(line: row.new, side: .new)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fullWidthLine(_ line: RepositoryDiff.Line) -> some View {
+        if let action = hunkAction(line) {
+            HStack(spacing: 8) {
+                RepositoryDiffLineView(line: line, fillsWidth: false)
+                Button(action.label, action: action.perform)
+                    .controlSize(.small)
+                    .disabled(isBusy)
+                    .help("\(action.label) without changing the working tree file")
+                    .accessibilityHint("Update only this hunk in the Git index")
+                Spacer(minLength: 8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.diffHunkBackground)
+        } else {
+            RepositoryDiffLineView(line: line)
+        }
+    }
+}
+
 private struct RepositoryDiffLineView: View {
-    let line: RepositoryDiff.Line
+    enum Side {
+        case old
+        case new
+    }
+
+    /// nil draws an empty cell opposite an unpaired change in the split layout.
+    let line: RepositoryDiff.Line?
+    /// nil is the unified layout with both line numbers; a side shows only its own number and wraps long lines.
+    var side: Side? = nil
     var fillsWidth = true
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            Text(line.oldLineNumber.map(String.init) ?? "")
-                .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
-                .padding(.trailing, 6)
-            Text(line.newLineNumber.map(String.init) ?? "")
-                .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
-                .padding(.trailing, 8)
-            Text(line.text.isEmpty ? " " : line.text)
-                .fixedSize(horizontal: true, vertical: false)
+            if side != .new {
+                Text(line?.oldLineNumber.map(String.init) ?? "")
+                    .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                    .padding(.trailing, side == nil ? 6 : 8)
+            }
+            if side != .old {
+                Text(line?.newLineNumber.map(String.init) ?? "")
+                    .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                    .padding(.trailing, 8)
+            }
+            if side == nil {
+                Text(line.map { $0.text.isEmpty ? " " : $0.text } ?? " ")
+                    .fixedSize(horizontal: true, vertical: false)
+            } else {
+                Text(line.map { $0.text.isEmpty ? " " : $0.text } ?? " ")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .font(.callout.monospaced())
+        .padding(.leading, theme.metrics.diffChangeBarWidth)
+        .font(.system(size: theme.metrics.diffFontSize, design: .monospaced))
         .foregroundStyle(foregroundColor)
         .frame(minWidth: 0, maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
         .background(backgroundColor)
+        .overlay(alignment: .leading) {
+            if theme.metrics.diffChangeBarWidth > 0, let changeBarColor {
+                changeBarColor.frame(width: theme.metrics.diffChangeBarWidth)
+            }
+        }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(line.accessibilityLabel)
+        .accessibilityLabel(line?.accessibilityLabel ?? "")
+        .accessibilityHidden(line == nil)
     }
 
     private var foregroundColor: Color {
-        switch line.kind {
+        switch line?.kind {
         case .metadata: theme.colors.diffMetadataText
         case .hunk: theme.colors.diffHunkText
-        case .context, .addition, .deletion: theme.colors.diffText
+        case .context, .addition, .deletion, nil: theme.colors.diffText
         }
     }
 
     private var backgroundColor: Color {
-        switch line.kind {
+        switch line?.kind {
         case .addition: theme.colors.diffAdditionBackground
         case .deletion: theme.colors.diffDeletionBackground
         case .hunk: theme.colors.diffHunkBackground
         case .metadata, .context: .clear
+        case nil: theme.colors.badgeBackground.opacity(0.5)
+        }
+    }
+
+    private var changeBarColor: Color? {
+        switch line?.kind {
+        case .addition: theme.colors.statusAdded
+        case .deletion: theme.colors.statusDeleted
+        default: nil
         }
     }
 }

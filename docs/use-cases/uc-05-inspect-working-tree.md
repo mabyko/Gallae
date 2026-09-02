@@ -13,7 +13,7 @@
 
 1. 사용자가 상단에서 Active Repository, HEAD, upstream 대비 상태와 진행 중인 Merge·Rebase를 확인한다.
 2. staged, unstaged, untracked, conflicted 파일을 상태별로 살핀다.
-3. 파일을 선택하고 경로, 상태, 추가·삭제 수와 diff를 읽는다.
+3. 파일을 선택하고 경로, 상태, 추가·삭제 수와 diff를 읽는다. diff 헤더의 Unified·Split 토글로 한 열 또는 old·new 두 열로 보며, 마지막 선택은 commit·stash patch에도 같이 적용되고 기억된다.
 4. 방향키로 다음 파일을 선택해 같은 화면에서 검토를 이어 간다.
 
 ## 대안 흐름
