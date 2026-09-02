@@ -169,7 +169,7 @@ struct RepositoryWorkspaceView: View {
             ToolbarItemGroup(placement: .navigation) {
                 navigatorToolbarItem
 
-                Divider()
+                ToolbarDivider()
 
                 Button {
                     model.showLibrary()

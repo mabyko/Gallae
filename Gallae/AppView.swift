@@ -2,6 +2,17 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Vertical separator between buttons that share one toolbar capsule, matching the line macOS draws between a
+/// menu button's action and its chevron. A plain `Divider` lies horizontal in the toolbar.
+struct ToolbarDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(.separator)
+            .frame(width: 1, height: 16)
+            .accessibilityHidden(true)
+    }
+}
+
 struct AppView: View {
     private enum FolderSelection {
         case openOrAdd
@@ -135,7 +146,7 @@ struct AppView: View {
                         "Fast-forward the current branch from its tracking branch without merging or rebasing"
                     )
 
-                    Divider()
+                    ToolbarDivider()
 
                     Button {
                         model.pushRepository()
@@ -159,7 +170,7 @@ struct AppView: View {
                             : "Push the current branch to its configured destination without force"
                     )
 
-                    Divider()
+                    ToolbarDivider()
 
                     Button("Refresh Repository", systemImage: "arrow.clockwise") {
                         Task { await model.refreshRepository() }
