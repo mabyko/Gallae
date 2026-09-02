@@ -88,7 +88,9 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
                                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
                             }
                             .gesture(
-                                DragGesture(minimumDistance: 1)
+                                // Global coordinates: the divider moves with the drag, so a local translation
+                                // would shift with it and the panes would oscillate.
+                                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                                     .onChanged { value in
                                         let start = dragStartWidth ?? width
                                         dragStartWidth = start
