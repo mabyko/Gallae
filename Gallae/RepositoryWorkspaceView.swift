@@ -115,6 +115,52 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
     }
 }
 
+/// Moves the sidebar divider back to `maximum` when asked. `navigationSplitViewColumnWidth(max:)` binds
+/// programmatic positions but not mouse drags or AppKit's restored frames, so the sidebar could swallow the window.
+private struct SidebarWidthClamp: NSViewRepresentable {
+    let maximum: CGFloat
+    let generation: Int
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> ClampView {
+        let view = ClampView(frame: .zero)
+        view.maximum = maximum
+        return view
+    }
+
+    func updateNSView(_ view: ClampView, context: Context) {
+        view.maximum = maximum
+        guard context.coordinator.handledGeneration != generation else { return }
+        context.coordinator.handledGeneration = generation
+        view.clampSoon()
+    }
+
+    final class Coordinator { var handledGeneration = 0 }
+
+    /// Clamps once attached, for the frame AppKit restores at launch, and whenever asked after a drag.
+    final class ClampView: NSView {
+        var maximum: CGFloat = .infinity
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { clampSoon() }
+        }
+
+        func clampSoon() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.clampIfNeeded() }
+        }
+
+        private func clampIfNeeded() {
+            var candidate = superview
+            while let current = candidate, !(current is NSSplitView) { candidate = current.superview }
+            guard let splitView = candidate as? NSSplitView, let sidebar = splitView.arrangedSubviews.first,
+                  sidebar.frame.width > maximum else { return }
+            splitView.setPosition(maximum, ofDividerAt: 0)
+        }
+    }
+}
+
 enum ResizableHSplitLayout {
     static let dividerWidth: CGFloat = 1
 
@@ -197,6 +243,9 @@ struct RepositoryWorkspaceView: View {
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigatorStyle = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
     /// The floating Navigator over the detail column in narrow windows.
     @State private var isNavigatorPanelPresented = false
+    @State private var navigatorWidthTask: Task<Void, Never>?
+    /// Bumped once a drag past the sidebar maximum settles; the clamp view then moves the divider back.
+    @State private var navigatorClampGeneration = 0
     /// The narrowest detail column worth sharing the window with the Navigator: list plus diff at their minimums.
     /// A guide for folding only; the detail itself has no minimum (see `ResizableHSplit`).
     private static let detailComfortableWidth: CGFloat = 320 + 400
@@ -566,8 +615,17 @@ struct RepositoryWorkspaceView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: Self.navigatorMaximumWidth)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
                 guard columnVisibility != .detailOnly, width >= 180 else { return }
-                navigatorWidth = Double(width)
+                // Settled width only: AppKit ignores the declared maximum for mouse drags and for its own
+                // restored frames, so after the drag rests the divider is moved back to the maximum.
+                navigatorWidthTask?.cancel()
+                navigatorWidthTask = Task {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled else { return }
+                    navigatorWidth = Double(min(width, Self.navigatorMaximumWidth))
+                    if width > Self.navigatorMaximumWidth { navigatorClampGeneration += 1 }
+                }
             }
+            .background(SidebarWidthClamp(maximum: Self.navigatorMaximumWidth, generation: navigatorClampGeneration))
             .toolbar(removing: .sidebarToggle)
     }
 
