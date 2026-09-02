@@ -166,12 +166,18 @@ struct RepositoryWorkspaceView: View {
         .toolbar {
             // One capsule, two controls: a divider between the sidebar toggle and Library keeps them from
             // reading as one button.
-            ToolbarItemGroup(placement: .navigation) {
-                ControlGroup {
-                    navigatorToolbarItem
+            // Two one-control groups in an HStack: a single ControlGroup either drifts to the trailing end
+            // (default style) or spaces its controls too widely (navigation style); this keeps the leading
+            // placement, the tight divider, and each button's own accessibility name.
+            ToolbarItem(placement: .navigation) {
+                HStack(spacing: 0) {
+                    ControlGroup {
+                        navigatorToolbarItem
+                    }
 
-                    ToolbarDivider()
+                    ToolbarDivider(inset: 5)
 
+                    ControlGroup {
                     Button {
                         model.showLibrary()
                     } label: {
@@ -182,6 +188,7 @@ struct RepositoryWorkspaceView: View {
                     .accessibilityLabel("Library")
                     .accessibilityHint("Return to the Repository Library in this window")
                     .disabled(model.isLoading)
+                    }
                 }
             }
         }
