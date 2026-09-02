@@ -175,7 +175,7 @@ struct RepositoryWorkspaceView: View {
                         navigatorToolbarItem
                     }
 
-                    ToolbarDivider(inset: 5)
+                    ToolbarDivider(inset: 0)
 
                     ControlGroup {
                     Button {

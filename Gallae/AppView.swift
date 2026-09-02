@@ -5,10 +5,10 @@ import UniformTypeIdentifiers
 /// Vertical separator between buttons that share one toolbar capsule, matching the line macOS draws between a
 /// menu button's action and its chevron. A plain `Divider` lies horizontal in the toolbar.
 struct ToolbarDivider: View {
-    /// Horizontal padding around the line. ControlGroup spaces its controls 12pt apart, so -6 lands the line
-    /// about 10pt from the neighbouring text, where the system draws a menu button's own divider; an HStack
-    /// with zero spacing wants about +5 for the same look.
-    var inset: CGFloat = -6
+    /// Horizontal padding around the line. Each toolbar button already pads its label by about 10pt (the hover
+    /// pill shows it), which is where the system draws a menu button's own divider. ControlGroup adds 12pt
+    /// between controls, so -12 cancels that; an HStack with zero spacing needs nothing.
+    var inset: CGFloat = -12
 
     var body: some View {
         Rectangle()
