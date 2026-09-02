@@ -3937,6 +3937,102 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testBuildsPartialHunkForEachDirection() throws {
+        typealias Line = RepositoryDiff.Line
+        let lines: [Line] = [
+            .init(id: 0, kind: .metadata, oldLineNumber: nil, newLineNumber: nil, text: "diff --git a/f b/f"),
+            .init(id: 1, kind: .metadata, oldLineNumber: nil, newLineNumber: nil, text: "--- a/f"),
+            .init(id: 2, kind: .metadata, oldLineNumber: nil, newLineNumber: nil, text: "+++ b/f"),
+            .init(id: 3, kind: .hunk, oldLineNumber: nil, newLineNumber: nil, text: "@@ -1,4 +1,4 @@ head"),
+            .init(id: 4, kind: .context, oldLineNumber: 1, newLineNumber: 1, text: " one"),
+            .init(id: 5, kind: .deletion, oldLineNumber: 2, newLineNumber: nil, text: "-two"),
+            .init(id: 6, kind: .addition, oldLineNumber: nil, newLineNumber: 2, text: "+TWO"),
+            .init(id: 7, kind: .context, oldLineNumber: 3, newLineNumber: 3, text: " three"),
+            .init(id: 8, kind: .deletion, oldLineNumber: 4, newLineNumber: nil, text: "-four"),
+            .init(id: 9, kind: .addition, oldLineNumber: nil, newLineNumber: 4, text: "+FOUR"),
+            .init(id: 10, kind: .metadata, oldLineNumber: nil, newLineNumber: nil, text: "\\ No newline at end of file"),
+        ]
+        let section = RepositoryDiff.Section(scope: .unstaged, content: .text(lines))
+
+        let staging = try XCTUnwrap(section.partialHunk(id: 3, keeping: [5, 6], direction: .apply))
+        XCTAssertEqual(
+            staging.patchText,
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,4 +1,4 @@ head\n one\n-two\n+TWO\n three\n four\n",
+            "an unchosen deletion stays as context, an unchosen addition and its no-newline marker drop out"
+        )
+
+        let unstaging = try XCTUnwrap(section.partialHunk(id: 3, keeping: [8, 9], direction: .revert))
+        XCTAssertEqual(
+            unstaging.patchText,
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,4 +1,4 @@ head\n one\n TWO\n three\n-four\n+FOUR\n\\ No newline at end of file\n",
+            "reversed: an unchosen addition stays as context, an unchosen deletion drops out, the marker stays with FOUR"
+        )
+
+        let additionOnly = try XCTUnwrap(section.partialHunk(id: 3, keeping: [6], direction: .apply))
+        XCTAssertTrue(additionOnly.patchText.contains("@@ -1,4 +1,5 @@ head\n one\n two\n+TWO\n"), "\(additionOnly.patchText)")
+
+        XCTAssertNil(section.partialHunk(id: 3, keeping: [4, 7], direction: .apply), "context alone is not a change")
+        XCTAssertNil(section.partialHunk(id: 99, keeping: [5], direction: .apply))
+        XCTAssertEqual(RepositoryDiff.Section.hunkHeader("@@ -0,0 +1,3 @@", oldCount: 0, newCount: 1), "@@ -0,0 +1,1 @@")
+        XCTAssertEqual(RepositoryDiff.Section.hunkHeader("@@ -7 +7 @@", oldCount: 1, newCount: 2), "@@ -7,1 +7,2 @@")
+    }
+
+    func testStagesAndUnstagesOnlyChosenLines() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        let original = (1...10).map { "line \($0)" }.joined(separator: "\n") + "\n"
+        try write(original, to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        var editedLines = (1...10).map { "line \($0)" }
+        editedLines[1] = "changed two"
+        editedLines[3] = "changed four"
+        let edited = editedLines.joined(separator: "\n") + "\n"
+        try write(edited, to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let workingSection = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+        XCTAssertEqual(workingSection.hunks.count, 1, "both edits sit in one hunk")
+        let workingLines = try textLines(in: diff, scope: .unstaged)
+        let chosen = Set(workingLines.filter { $0.text == "-line 2" || $0.text == "+changed two" }.map(\.id))
+        let hunkID = try XCTUnwrap(workingLines.first { $0.kind == .hunk }?.id)
+        let partial = try XCTUnwrap(workingSection.partialHunk(id: hunkID, keeping: chosen, direction: .apply))
+
+        let stagedRepository = try await inspector.stage(partial, for: change, in: repository)
+        let stagedChange = try XCTUnwrap(stagedRepository.changes.first)
+        XCTAssertEqual(stagedChange.staged, .modified)
+        XCTAssertEqual(stagedChange.unstaged, .modified)
+        let stagedDiff = try await inspector.diff(for: stagedChange, in: stagedRepository)
+        XCTAssertEqual(
+            try textLines(in: stagedDiff, scope: .staged).filter { $0.kind == .addition }.map(\.text),
+            ["+changed two"]
+        )
+        XCTAssertEqual(
+            try textLines(in: stagedDiff, scope: .unstaged).filter { $0.kind == .addition }.map(\.text),
+            ["+changed four"]
+        )
+        XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: "file.txt"), encoding: .utf8), edited)
+
+        let stagedSection = try XCTUnwrap(stagedDiff.sections.first { $0.scope == .staged })
+        let stagedLines = try textLines(in: stagedDiff, scope: .staged)
+        let chosenStaged = Set(stagedLines.filter { $0.text == "-line 2" || $0.text == "+changed two" }.map(\.id))
+        let stagedHunkID = try XCTUnwrap(stagedLines.first { $0.kind == .hunk }?.id)
+        let reverse = try XCTUnwrap(stagedSection.partialHunk(id: stagedHunkID, keeping: chosenStaged, direction: .revert))
+
+        let unstagedRepository = try await inspector.unstage(reverse, for: stagedChange, in: stagedRepository)
+        let unstagedChange = try XCTUnwrap(unstagedRepository.changes.first)
+        XCTAssertNil(unstagedChange.staged)
+        XCTAssertEqual(unstagedChange.unstaged, .modified)
+        let unstagedDiff = try await inspector.diff(for: unstagedChange, in: unstagedRepository)
+        XCTAssertEqual(
+            try textLines(in: unstagedDiff, scope: .unstaged).filter { $0.kind == .addition }.map(\.text),
+            ["+changed two", "+changed four"]
+        )
+    }
+
     func testReadsHeadCommitMessageSubjectAndBody() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

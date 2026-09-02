@@ -380,11 +380,103 @@ struct RepositoryDiff: Equatable, Sendable {
         let id: Int
         let scope: Scope
         fileprivate let patch: Data
+
+        var patchText: String { String(decoding: patch, as: UTF8.self) }
     }
 
     let path: String
     let originalPath: String?
     let sections: [Section]
+}
+
+extension RepositoryDiff.Section {
+    /// Which side a partial patch has to match. Staging applies against the index, which still equals the diff's
+    /// old side, so an unchosen deletion stays as context and an unchosen addition drops out. Unstaging and
+    /// discarding reverse a patch against the new side, so the opposite holds.
+    enum PartialDirection: Sendable {
+        case apply
+        case revert
+    }
+
+    /// The hunk `hunkID` cut down to the chosen addition and deletion lines, or nil when none is chosen. Context
+    /// lines stay, the header's counts are recomputed, and a `\ No newline at end of file` marker follows the
+    /// line it annotates: kept with it, dropped with it.
+    func partialHunk(
+        id hunkID: Int,
+        keeping chosenLineIDs: Set<Int>,
+        direction: PartialDirection
+    ) -> RepositoryDiff.Hunk? {
+        guard
+            case .text(let lines) = content,
+            let firstHunk = lines.firstIndex(where: { $0.kind == .hunk }),
+            let start = lines.firstIndex(where: { $0.id == hunkID && $0.kind == .hunk })
+        else {
+            return nil
+        }
+        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
+        var body: [String] = []
+        var oldCount = 0
+        var newCount = 0
+        var hasChange = false
+        var keptPreviousLine = true
+
+        for line in lines[(start + 1)..<end] {
+            switch line.kind {
+            case .context:
+                body.append(line.text)
+                oldCount += 1
+                newCount += 1
+                keptPreviousLine = true
+            case .addition:
+                if chosenLineIDs.contains(line.id) {
+                    body.append(line.text)
+                    newCount += 1
+                    hasChange = true
+                    keptPreviousLine = true
+                } else if direction == .revert {
+                    body.append(" " + line.text.dropFirst())
+                    oldCount += 1
+                    newCount += 1
+                    keptPreviousLine = true
+                } else {
+                    keptPreviousLine = false
+                }
+            case .deletion:
+                if chosenLineIDs.contains(line.id) {
+                    body.append(line.text)
+                    oldCount += 1
+                    hasChange = true
+                    keptPreviousLine = true
+                } else if direction == .apply {
+                    body.append(" " + line.text.dropFirst())
+                    oldCount += 1
+                    newCount += 1
+                    keptPreviousLine = true
+                } else {
+                    keptPreviousLine = false
+                }
+            case .metadata:
+                if keptPreviousLine { body.append(line.text) }
+            case .hunk:
+                break
+            }
+        }
+        guard hasChange else { return nil }
+
+        let metadata = lines[..<firstHunk].map(\.text)
+        let header = Self.hunkHeader(lines[start].text, oldCount: oldCount, newCount: newCount)
+        let patch = (metadata + [header] + body).joined(separator: "\n") + "\n"
+        return .init(id: hunkID, scope: scope, patch: Data(patch.utf8))
+    }
+
+    /// `@@ -12,7 +12,6 @@ func foo()` with both counts replaced; the starts and the trailing text stay.
+    static func hunkHeader(_ header: String, oldCount: Int, newCount: Int) -> String {
+        let fields = header.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
+        guard fields.count >= 3, fields[0] == "@@" else { return header }
+        func start(_ field: Substring) -> Substring { field.split(separator: ",", maxSplits: 1)[0] }
+        let trailing = fields.count > 3 ? " " + fields[3] : " @@"
+        return "@@ \(start(fields[1])),\(oldCount) \(start(fields[2])),\(newCount)" + trailing
+    }
 }
 
 enum RepositoryConflictSide: Hashable, Sendable {

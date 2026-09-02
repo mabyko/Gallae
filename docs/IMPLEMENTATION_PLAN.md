@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7B Navigator의 두 축(시안 7, A1) 완료. 다음은 줄 단위 staging 검토
+> 현재 범위: 7C-1 줄 단위 staging의 부분 패치 완료. 다음은 7C-2 Unified diff의 거터 체크박스
 
 ## 사용자 결과
 
@@ -748,6 +748,12 @@ GallaeApp
 - Navigator는 위의 화면 목록(네 행짜리 스택, 포커스를 스스로 받아 강조색·회색을 가른다)과 아래의 범위 목록(`List(selection:)`)으로 나뉜다. remote 행은 DisclosureGroup으로 열려 remote branch가 범위가 되고, 우클릭 메뉴에 Fetch·Fetch & Prune·Edit…·Remove…가, remote branch 행에는 Delete on Remote…·Remove Tracking Reference…가 있다. HEAD branch는 굵은 글씨다. 두 번 클릭 전환은 화면을 바꾸지 않는다.
 - Remote 화면(`RepositoryRemoteView`)은 없앴다. History 헤더가 remote 범위에서 Fetch·Fetch & Prune·Edit…를, remote branch·tag 범위에서 New Branch…를 보여 준다. `EditRemoteSheet`가 Test Connection(아래 왼쪽)과 Remove…(오른쪽 위, 확인 대화상자)를 품는다.
 - 테스트는 위치 라벨과 범위 ref를 검증한다.
+
+### 7C-1 · 줄 단위 staging의 부분 패치 — 완료
+
+- `RepositoryDiff.Section.partialHunk(id:keeping:direction:)`이 hunk 하나를 고른 추가·삭제 줄만 남긴 `Hunk`로 줄인다. `.apply`(stage, index는 아직 old 쪽)는 안 고른 삭제를 문맥으로 바꾸고 안 고른 추가를 뺀다. `.revert`(unstage·discard, new 쪽에 거꾸로 적용)는 반대다. 문맥은 그대로, 헤더의 줄 수는 다시 세고 시작 줄은 유지하며, `\ No newline at end of file` 표식은 바로 앞 줄과 운명을 같이한다. 고른 줄이 없으면 nil.
+- 기존 `inspector.stage/unstage(hunk…)`(`git apply --cached [--reverse]`)가 그대로 부분 패치를 받는다. 새 git 경로는 없다.
+- 테스트 둘. 손으로 만든 hunk로 두 방향의 패치 문자열(문맥 전환·드롭·표식·헤더 수)을 검증하고, 임시 저장소에서 한 hunk의 두 수정 중 하나만 stage 했다가 되돌리는 왕복을 git으로 검증한다.
 
 ## 각 단계의 검증
 
