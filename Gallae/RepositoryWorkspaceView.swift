@@ -507,7 +507,7 @@ struct RepositoryWorkspaceView: View {
             \.workspaceSection,
             Binding(
                 get: { workspaceSection },
-                set: { if let section = $0 { workspaceSection = section } }
+                set: { if let section = $0 { show(section) } }
             )
         )
         .focusedSceneValue(\.navigatorToggle, navigatorToggleCommand)
@@ -602,7 +602,7 @@ struct RepositoryWorkspaceView: View {
                     }
                     if !repository.changes.isEmpty {
                         Button {
-                            workspaceSection = .changes
+                            show(.changes)
                         } label: {
                             Label(workingTreeSummary(repository), systemImage: "pencil.line")
                                 .lineLimit(1)
@@ -893,9 +893,16 @@ struct RepositoryWorkspaceView: View {
     }
 
     private func destinationMenuItem(_ section: RepositoryWorkspaceSection, count: Int) -> some View {
-        Toggle(isOn: Binding(get: { workspaceSection == section }, set: { if $0 { workspaceSection = section } })) {
+        Toggle(isOn: Binding(get: { workspaceSection == section }, set: { if $0 { show(section) } })) {
             Label(count > 0 ? "\(section.title) (\(count))" : section.title, systemImage: section.systemImage)
         }
+    }
+
+    /// Choosing a screen drops the scope, so History from the screen list is always the whole Repository and the
+    /// scope list never shows a branch the body isn't about.
+    private func show(_ section: RepositoryWorkspaceSection) {
+        workspaceSection = section
+        scope = nil
     }
 
     /// Checked while History shows this scope; choosing it shows History.
@@ -1345,13 +1352,18 @@ private struct RepositoryNavigatorView: View {
                     HStack {
                         Text("Branches")
                         Spacer()
+                        // A 22pt target a little in from the edge; the glyph alone was too small to hit.
                         Button {
                             isCreatingBranch = true
                         } label: {
                             Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                                .frame(width: 22, height: 22)
+                                .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
+                        .padding(.trailing, 4)
                         .help("New Branch…")
                         .accessibilityLabel("New Branch")
                         .disabled(model.isLoading || model.isSyncing || model.repository == nil)
@@ -1535,8 +1547,8 @@ private struct RepositoryNavigatorView: View {
             let sections = RepositoryWorkspaceSection.allCases
             guard let index = sections.firstIndex(of: screen) else { return }
             switch direction {
-            case .up where index > 0: screen = sections[index - 1]
-            case .down where index + 1 < sections.count: screen = sections[index + 1]
+            case .up where index > 0: show(sections[index - 1])
+            case .down where index + 1 < sections.count: show(sections[index + 1])
             default: break
             }
         }
@@ -1557,7 +1569,7 @@ private struct RepositoryNavigatorView: View {
         let isSelected = screen == section
         let isActive = isSelected && isScreenListFocused
         return Button {
-            screen = section
+            show(section)
             isScreenListFocused = true
         } label: {
             HStack(spacing: 8) {
@@ -1587,10 +1599,15 @@ private struct RepositoryNavigatorView: View {
         .accessibilityLabel(badge > 0 ? "\(section.title), \(badge)" : section.title)
     }
 
+    /// Choosing a screen drops the scope: the two selections never disagree about what the body shows.
+    private func show(_ section: RepositoryWorkspaceSection) {
+        screen = section
+        scope = nil
+    }
+
     // MARK: - Scope list
 
-    /// Setting a scope also shows History, the only screen that reads it; the selection stays while other screens
-    /// show so the Navigator keeps telling which branch History last showed.
+    /// Setting a scope also shows History, the only screen that reads it.
     private var scopeSelection: Binding<RepositoryHistoryScope?> {
         Binding(
             get: { scope },
