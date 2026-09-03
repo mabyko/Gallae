@@ -1994,8 +1994,8 @@ private struct RepositoryChangeRow: View {
                             .foregroundStyle(statusColor(for: badge.state))
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
                             .background(theme.colors.badgeBackground, in: .capsule)
                     }
                 }
@@ -4018,7 +4018,7 @@ private struct InteractiveRebasePlanSheet: View {
                         Text(step.action.rawValue)
                             .font(.caption.monospaced().weight(.semibold))
                             .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
+                            .padding(.vertical, 2)
                             .background(theme.colors.badgeBackground, in: Capsule())
                         Text(step.subject)
                             .lineLimit(1)
@@ -4513,6 +4513,7 @@ private struct RepositoryRevisionChangesView: View {
     let retryPatch: () -> Void
     let loadExpandedPatch: () -> Void
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
+    @Environment(\.gallaeTheme) private var theme
 
     @ViewBuilder
     var body: some View {
@@ -4556,7 +4557,7 @@ private struct RepositoryRevisionChangesView: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .listHeaderInset()
 
@@ -4565,7 +4566,12 @@ private struct RepositoryRevisionChangesView: View {
                 List(files, selection: $selectedFileID) { file in
                     RepositoryCommitFileRow(file: file)
                         .tag(file.id)
-                        .listRowInsets(.init(top: 7, leading: 10, bottom: 7, trailing: 10))
+                        .listRowInsets(.init(
+                            top: theme.metrics.rowVerticalPadding,
+                            leading: 12,
+                            bottom: theme.metrics.rowVerticalPadding,
+                            trailing: 12
+                        ))
                 }
                 .listStyle(.plain)
                 .legacyScrollerAware()
