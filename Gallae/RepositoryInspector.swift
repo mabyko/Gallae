@@ -1319,6 +1319,20 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
+    /// Reverses one working tree hunk, or the partial hunk of chosen lines, on disk. The index is not touched.
+    func discard(
+        _ hunk: RepositoryDiff.Hunk,
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updatedRepository = try await Task.detached(priority: .userInitiated) {
+            try Self.discardHunkSynchronously(hunk, for: change, in: repository)
+        }.value
+        try Task.checkCancellation()
+        return updatedRepository
+    }
+
     func resolveConflict(
         _ change: RepositorySummary.Change,
         using side: RepositoryConflictSide,
@@ -1458,6 +1472,24 @@ struct RepositoryInspector: Sendable {
         return try inspectSynchronously(at: repository.rootURL)
     }
 
+    private static func discardHunkSynchronously(
+        _ hunk: RepositoryDiff.Hunk,
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary
+    ) throws -> RepositorySummary {
+        guard !change.isConflicted, change.unstaged == .modified, hunk.scope == .unstaged else {
+            throw RepositoryDiscardError.unavailable
+        }
+        let result = try runGit(
+            ["-C", repository.rootURL.path, "apply", "--reverse"],
+            standardInput: hunk.patch
+        )
+        guard result.status == 0 else {
+            throw RepositoryDiscardError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
     private static func discardSynchronously(
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
@@ -1589,10 +1621,12 @@ struct RepositoryInspector: Sendable {
     ) throws -> RepositorySummary {
         let expectedScope: RepositoryDiff.Scope = reverse ? .staged : .unstaged
         let expectedState = reverse ? change.staged : change.unstaged
+        // An untracked file's diff is a new-file patch; applying part of it adds the file to the index with
+        // only the chosen lines, and the rest stays as a working tree modification.
+        let stagesUntracked = !reverse && hunk.scope == .untracked && change.unstaged == .untracked
         guard
             !change.isConflicted,
-            expectedState == .modified,
-            hunk.scope == expectedScope
+            stagesUntracked || (expectedState == .modified && hunk.scope == expectedScope)
         else {
             throw RepositoryIndexError.unavailable
         }

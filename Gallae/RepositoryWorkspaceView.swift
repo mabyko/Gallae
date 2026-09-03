@@ -966,6 +966,9 @@ struct RepositoryWorkspaceView: View {
                     updateHunk: { hunk in
                         Task { await model.updateSelectedHunk(hunk) }
                     },
+                    discardHunk: { hunk in
+                        Task { await model.discardSelectedHunk(hunk) }
+                    },
                     retry: { Task { await model.loadSelectedDiff() } },
                     loadExpanded: {
                         Task {
@@ -4766,6 +4769,7 @@ private struct RepositoryDiffView: View {
     let resolveConflict: (RepositoryConflictSide) -> Void
     let markConflictResolved: () -> Void
     let updateHunk: (RepositoryDiff.Hunk) -> Void
+    let discardHunk: (RepositoryDiff.Hunk) -> Void
     let retry: () -> Void
     let loadExpanded: () -> Void
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
@@ -4895,6 +4899,7 @@ private struct RepositoryDiffView: View {
                                     canUnstageHunks: canUnstageHunks,
                                     isBusy: isBusy,
                                     updateHunk: updateHunk,
+                                    discardHunk: discardHunk,
                                     loadExpanded: loadExpanded
                                 )
                             }
@@ -5191,11 +5196,19 @@ private struct RepositoryDiffSectionView: View {
     let canUnstageHunks: Bool
     let isBusy: Bool
     let updateHunk: (RepositoryDiff.Hunk) -> Void
+    let discardHunk: (RepositoryDiff.Hunk) -> Void
     let loadExpanded: () -> Void
     @Environment(\.gallaeTheme) private var theme
     /// Addition and deletion lines ticked in the gutter; the hunk button then stages or unstages only those.
     @State private var chosenLineIDs: Set<Int> = []
     @State private var lastToggledLineID: Int?
+    @State private var pendingDiscard: PendingDiscard?
+
+    private struct PendingDiscard: Identifiable {
+        let hunk: RepositoryDiff.Hunk
+        let lineCount: Int?
+        var id: Int { hunk.id }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -5215,6 +5228,7 @@ private struct RepositoryDiffSectionView: View {
                     layout: layout,
                     isBusy: isBusy,
                     hunkAction: { line in hunkAction(for: line, in: lines) },
+                    hunkSecondaryAction: { line in discardAction(for: line, in: lines) },
                     lineChoice: { line in lineChoice(for: line) },
                     hunkChoice: { line in hunkChoice(for: line, in: lines) },
                     reservesChoiceColumn: choosesLines
@@ -5254,19 +5268,47 @@ private struct RepositoryDiffSectionView: View {
             chosenLineIDs = []
             lastToggledLineID = nil
         }
+        .confirmationDialog(
+            pendingDiscard.map { $0.lineCount.map { "Discard \($0 == 1 ? "1 Line" : "\($0) Lines")?" } ?? "Discard Hunk?" } ?? "",
+            isPresented: Binding(get: { pendingDiscard != nil }, set: { if !$0 { pendingDiscard = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDiscard
+        ) { pending in
+            Button("Discard", role: .destructive) {
+                discardHunk(pending.hunk)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("This rewrites the file on disk without these changes. The index is not touched, and Gallae cannot undo this action.")
+        }
     }
 
     private var hunkVerb: String? {
         switch section.scope {
         case .staged where canUnstageHunks: "Unstage"
-        case .unstaged where canStageHunks: "Stage"
+        case .unstaged where canStageHunks, .untracked where canStageHunks: "Stage"
         default: nil
         }
     }
 
-    /// Gutter checkboxes belong to the unified layout of a stageable section; the split layout keeps whole hunks.
+    /// Gutter checkboxes belong to every stageable section in both layouts.
     private var choosesLines: Bool {
-        hunkVerb != nil && layout == .unified
+        hunkVerb != nil
+    }
+
+    /// The second hunk button on a working tree section: the whole hunk or the ticked lines, after asking.
+    private func discardAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+        guard section.scope == .unstaged, canStageHunks, let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
+        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+        guard !chosen.isEmpty else {
+            return ("Discard Hunk…", { pendingDiscard = .init(hunk: hunk, lineCount: nil) })
+        }
+        let label = chosen.count == 1 ? "Discard 1 Line…" : "Discard \(chosen.count) Lines…"
+        return (label, {
+            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: .revert) {
+                pendingDiscard = .init(hunk: partial, lineCount: chosen.count)
+            }
+        })
     }
 
     /// The hunk button: the whole hunk while nothing is ticked, otherwise only the ticked lines of that hunk.
@@ -5330,6 +5372,8 @@ private struct RepositoryDiffLinesView: View {
     let layout: RepositoryDiffLayout
     var isBusy = false
     var hunkAction: (RepositoryDiff.Line) -> (label: String, perform: () -> Void)? = { _ in nil }
+    /// A second, destructive button on the hunk header (Discard…); it asks before acting.
+    var hunkSecondaryAction: (RepositoryDiff.Line) -> (label: String, perform: () -> Void)? = { _ in nil }
     /// A gutter checkbox for an addition or deletion line, and one on the hunk header for all of its lines.
     var lineChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
     var hunkChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
@@ -5349,9 +5393,21 @@ private struct RepositoryDiffLinesView: View {
                     fullWidthLine(full)
                 } else {
                     HStack(alignment: .top, spacing: 0) {
-                        RepositoryDiffLineView(line: row.old, side: .old)
+                        RepositoryDiffLineView(
+                            line: row.old,
+                            side: .old,
+                            choice: row.old.flatMap(lineChoice),
+                            reservesChoiceColumn: reservesChoiceColumn,
+                            choiceLabel: "Choose deleted line \(row.old?.oldLineNumber ?? 0)"
+                        )
                         Divider()
-                        RepositoryDiffLineView(line: row.new, side: .new)
+                        RepositoryDiffLineView(
+                            line: row.new,
+                            side: .new,
+                            choice: row.new.flatMap(lineChoice),
+                            reservesChoiceColumn: reservesChoiceColumn,
+                            choiceLabel: "Choose added line \(row.new?.newLineNumber ?? 0)"
+                        )
                     }
                 }
             }
@@ -5374,6 +5430,12 @@ private struct RepositoryDiffLinesView: View {
                     .disabled(isBusy)
                     .help("\(action.label) without changing the working tree file")
                     .accessibilityHint("Update only these lines in the Git index")
+                if let secondary = hunkSecondaryAction(line) {
+                    Button(secondary.label, role: .destructive, action: secondary.perform)
+                        .controlSize(.small)
+                        .disabled(isBusy)
+                        .help("Rewrite the file on disk without these changes; asks first")
+                }
                 Spacer(minLength: 8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)

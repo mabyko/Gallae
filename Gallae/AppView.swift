@@ -1943,8 +1943,9 @@ final class AppModel {
         selectedChange?.isConflicted == true
     }
 
+    /// Hunks and lines of a modified file go to the index; an untracked file's lines create its index entry.
     var canStageSelectedHunks: Bool {
-        selectedChange.map { !$0.isConflicted && $0.unstaged == .modified } ?? false
+        selectedChange.map { !$0.isConflicted && ($0.unstaged == .modified || $0.unstaged == .untracked) } ?? false
     }
 
     var canUnstageSelectedHunks: Bool {
@@ -3592,7 +3593,7 @@ final class AppModel {
         do {
             let updatedRepository: RepositorySummary
             switch hunk.scope {
-            case .unstaged where canStageSelectedHunks:
+            case .unstaged where canStageSelectedHunks, .untracked where canStageSelectedHunks:
                 updatedRepository = try await inspector.stage(hunk, for: change, in: repository)
             case .staged where canUnstageSelectedHunks:
                 updatedRepository = try await inspector.unstage(hunk, for: change, in: repository)
@@ -3607,6 +3608,31 @@ final class AppModel {
                 error,
                 title: hunk.scope == .staged ? "Couldn’t Unstage Hunk" : "Couldn’t Stage Hunk"
             )
+        }
+    }
+
+    /// Rewrites the working tree file without one hunk or its chosen lines. The caller confirms first.
+    func discardSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
+        guard !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
+
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration {
+                isLoading = false
+                isWritingRepository = false
+            }
+        }
+
+        do {
+            let updatedRepository = try await inspector.discard(hunk, for: change, in: repository)
+            guard generation == inspectionGeneration else { return }
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: "Couldn’t Discard Lines")
         }
     }
 

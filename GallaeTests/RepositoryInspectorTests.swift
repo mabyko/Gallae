@@ -4033,6 +4033,63 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testStagesChosenLinesOfUntrackedFile() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("one\ntwo\nthree\n", to: "new.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "new.txt" })
+        XCTAssertEqual(change.unstaged, .untracked)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .untracked })
+        let lines = try textLines(in: diff, scope: .untracked)
+        let hunkID = try XCTUnwrap(lines.first { $0.kind == .hunk }?.id)
+        let chosen = Set(lines.filter { $0.text == "+two" }.map(\.id))
+        let partial = try XCTUnwrap(section.partialHunk(id: hunkID, keeping: chosen, direction: .apply))
+
+        let staged = try await inspector.stage(partial, for: change, in: repository)
+        let stagedChange = try XCTUnwrap(staged.changes.first { $0.path == "new.txt" })
+        XCTAssertEqual(stagedChange.staged, .added)
+        XCTAssertEqual(stagedChange.unstaged, .modified)
+        let stagedDiff = try await inspector.diff(for: stagedChange, in: staged)
+        XCTAssertEqual(try textLines(in: stagedDiff, scope: .staged).filter { $0.kind == .addition }.map(\.text), ["+two"])
+        XCTAssertEqual(
+            try textLines(in: stagedDiff, scope: .unstaged).filter { $0.kind == .addition }.map(\.text),
+            ["+one", "+three"]
+        )
+        XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: "new.txt"), encoding: .utf8), "one\ntwo\nthree\n")
+    }
+
+    func testDiscardsOnlyChosenLines() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("a\nb\nc\nd\n", to: "f.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("a\nB\nc\nD\n", to: "f.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+        let lines = try textLines(in: diff, scope: .unstaged)
+        let hunkID = try XCTUnwrap(lines.first { $0.kind == .hunk }?.id)
+        let chosen = Set(lines.filter { $0.text == "-b" || $0.text == "+B" }.map(\.id))
+        let partial = try XCTUnwrap(section.partialHunk(id: hunkID, keeping: chosen, direction: .revert))
+
+        let discarded = try await inspector.discard(partial, for: change, in: repository)
+        XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: "f.txt"), encoding: .utf8), "a\nb\nc\nD\n")
+        let remaining = try XCTUnwrap(discarded.changes.first)
+        XCTAssertNil(remaining.staged)
+        XCTAssertEqual(remaining.unstaged, .modified)
+    }
+
     func testReadsHeadCommitMessageSubjectAndBody() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

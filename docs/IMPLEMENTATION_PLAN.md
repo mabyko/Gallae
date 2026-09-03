@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7C-2 Unified diff의 거터 체크박스 완료. 다음은 줄 단위 discard와 Split 보기 검토
+> 현재 범위: 7C-3 줄 단위 discard·Split 체크박스·untracked 줄 단위 stage 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -761,6 +761,13 @@ GallaeApp
 - hunk 버튼이 체크박스를 흡수한다. 아무것도 안 골랐으면 지금처럼 "Stage Hunk"·"Unstage Hunk"로 hunk 전체, 골랐으면 "Stage 2 Lines"처럼 고른 줄만 `partialHunk`로 만든 패치를 기존 `updateHunk` 경로로 적용한다. Split 배치는 체크박스 없이 hunk 전체를 유지한다. diff가 바뀌면 고른 줄은 비워진다.
 - 접근성 이름은 "Choose deleted line 2"·"Choose added line 2"·"Choose every line in this hunk". 시험 저장소에서 한 hunk의 두 수정 중 line 2의 삭제·추가만 골라 "Stage 2 Lines"를 눌러 index에 그 둘만, working tree에 나머지가 남는 것을 git으로 확인했다.
 - 남은 것: 줄 단위 discard(working tree에 `--reverse`, 확인 대화상자), Split 배치의 체크박스, untracked 파일(intent-to-add).
+
+### 7C-3 · 줄 단위 discard, Split 체크박스, untracked 줄 단위 stage — 완료
+
+- Working Tree 섹션의 hunk 헤더에 두 번째 버튼 "Discard Hunk…"가 붙고, 줄을 골랐으면 "Discard 2 Lines…"가 된다. 누르면 확인 대화상자를 거쳐 `inspector.discard(hunk…)`가 `git apply --reverse`로 working tree만 고쳐 쓴다. index는 건드리지 않는다.
+- Split 배치도 거터 체크박스를 갖는다. 왼쪽(삭제)과 오른쪽(추가) 각자 자기 체크박스이고 hunk 헤더와 버튼은 Unified와 같다.
+- untracked 파일은 diff가 새 파일 패치라 부분 패치를 `git apply --cached`에 그대로 넣으면 고른 줄만으로 index 항목이 생긴다(status `AM`). intent-to-add 없이 된다. `canStageSelectedHunks`가 untracked를 포함하고, `updateIndexSynchronously`가 `.untracked` 범위의 정방향 적용을 받는다.
+- 테스트 둘을 더했다. untracked 세 줄 중 한 줄만 stage 하면 staged는 `added`·unstaged는 `modified`이고 index diff에 그 줄만 있는 것, 두 수정 중 하나만 discard 하면 디스크 파일에 그 수정만 사라지는 것.
 
 ## 각 단계의 검증
 
