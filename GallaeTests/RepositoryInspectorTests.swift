@@ -3895,6 +3895,68 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    /// Every setting here is one that changed Git's patch text enough to break parsing or `git apply`
+    /// before the format was pinned. See `docs/research/git-diff-config.md`.
+    func testHostileDiffConfigurationCannotBreakParsingOrStaging() async throws {
+        let hostileSettings = [
+            ("color.diff", "always"),
+            ("color.ui", "always"),
+            ("diff.noprefix", "true"),
+            ("diff.mnemonicPrefix", "true"),
+            ("diff.context", "0"),
+            ("diff.suppressBlankEmpty", "true"),
+            ("core.quotepath", "true")
+        ]
+
+        for (key, value) in hostileSettings {
+            let repositoryURL = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: repositoryURL) }
+            try initializeRepository(at: repositoryURL)
+            // A blank line and a non-ASCII name are what suppressBlankEmpty and quotepath act on.
+            let original = "머리\n\n하나\n\n둘\n"
+            try write(original, to: "한글 파일.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "Initial")
+            try write("머리\n\n하나\n\n바꾼둘\n", to: "한글 파일.txt", in: repositoryURL)
+            try runGit(["-C", repositoryURL.path, "config", key, value])
+
+            let inspector = RepositoryInspector()
+            let repository = try await inspector.inspect(at: repositoryURL)
+            let change = try XCTUnwrap(repository.changes.first, "\(key)=\(value)")
+            let diff = try await inspector.diff(for: change, in: repository)
+            let section = try XCTUnwrap(
+                diff.sections.first { $0.scope == .unstaged },
+                "\(key)=\(value)"
+            )
+
+            // The hunk header parses, so the gutter controls exist at all.
+            XCTAssertEqual(section.hunks.count, 1, "\(key)=\(value)")
+            let lines = try textLines(in: diff, scope: .unstaged)
+            XCTAssertTrue(lines.contains { $0.kind == .hunk }, "\(key)=\(value)")
+            XCTAssertTrue(lines.contains { $0.text == "+바꾼둘" }, "\(key)=\(value)")
+            XCTAssertTrue(lines.contains { $0.text == "-둘" }, "\(key)=\(value)")
+
+            // Blank context lines are counted, so every line number after one stays true.
+            let changed = try XCTUnwrap(lines.first { $0.text == "-둘" }, "\(key)=\(value)")
+            XCTAssertEqual(changed.oldLineNumber, 5, "\(key)=\(value)")
+
+            // No escape sequence survives into what the reader sees.
+            XCTAssertFalse(lines.contains { $0.text.contains("\u{1B}") }, "\(key)=\(value)")
+            // The path is readable rather than octal-escaped.
+            XCTAssertTrue(
+                lines.contains { $0.kind == .metadata && $0.text.contains("한글 파일.txt") },
+                "\(key)=\(value)"
+            )
+
+            // And the patch Git produced still applies to the index.
+            let staged = try await inspector.stage(
+                try XCTUnwrap(section.hunks.first, "\(key)=\(value)"),
+                for: change,
+                in: repository
+            )
+            XCTAssertEqual(try XCTUnwrap(staged.changes.first).staged, .modified, "\(key)=\(value)")
+        }
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

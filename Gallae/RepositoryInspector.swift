@@ -505,6 +505,26 @@ struct RepositoryInspector: Sendable {
 
     private static let gitURL = URL(fileURLWithPath: "/usr/bin/git")
 
+    /// Git's patch output is what Gallae parses, and for the working tree it is fed straight back to
+    /// `git apply`. A user's diff configuration can change that text enough to break both, so every patch is
+    /// produced with the format pinned. Settings that define what a file's content *is* — `core.autocrlf`,
+    /// `.gitattributes` — are deliberately left alone. See `docs/research/git-diff-config.md`.
+    private static let pinnedDiffConfiguration = [
+        // Escapes non-ASCII paths as octal, which only ever reaches the reader as noise.
+        "-c", "core.quotepath=false",
+        // Writes a blank context line with no leading space, which stops the parser counting it.
+        "-c", "diff.suppressBlankEmpty=false"
+    ]
+
+    /// `--src-prefix`/`--dst-prefix` rather than `--default-prefix`: they override `diff.noprefix`,
+    /// `diff.mnemonicPrefix`, `diff.srcPrefix` and `diff.dstPrefix` just the same, and predate Git 2.45.
+    /// Zero context (`diff.context = 0`) makes `git apply` reject the patch, so the width is pinned too.
+    private static let pinnedDiffOptions = [
+        "--no-color", "--no-ext-diff", "--no-textconv",
+        "--src-prefix=a/", "--dst-prefix=b/",
+        "--diff-algorithm=histogram", "--unified=3"
+    ]
+
     func inspect(at selectedURL: URL) async throws -> RepositorySummary {
         try Task.checkCancellation()
         let repository = try await Task.detached(priority: .userInitiated) {
@@ -3549,12 +3569,14 @@ struct RepositoryInspector: Sendable {
         repository: RepositorySummary,
         maximumOutputBytes: Int?
     ) throws -> RepositoryCommitPatch {
-        var arguments = [
-            "-C", repository.rootURL.path,
-            "show", "--format=", "--no-color", "--no-ext-diff", "--no-textconv",
-            "--find-renames", "--first-parent", "--patch", commit.id, "--",
-            literalPathspec(file.path)
-        ]
+        var arguments = ["-C", repository.rootURL.path]
+            + pinnedDiffConfiguration
+            + ["show", "--format="]
+            + pinnedDiffOptions
+            + [
+                "--find-renames", "--first-parent", "--patch", commit.id, "--",
+                literalPathspec(file.path)
+            ]
         if let originalPath = file.originalPath {
             arguments.append(literalPathspec(originalPath))
         }
@@ -3579,12 +3601,14 @@ struct RepositoryInspector: Sendable {
         maximumOutputBytes: Int?
     ) throws -> RepositoryCommitPatch {
         let baseRevision = "\(stash.id)^1"
-        var arguments = [
-            "-C", repository.rootURL.path,
-            "diff", "--patch", "--no-color", "--no-ext-diff", "--no-textconv",
-            "--find-renames", baseRevision, stash.id, "--",
-            literalPathspec(file.path)
-        ]
+        var arguments = ["-C", repository.rootURL.path]
+            + pinnedDiffConfiguration
+            + ["diff", "--patch"]
+            + pinnedDiffOptions
+            + [
+                "--find-renames", baseRevision, stash.id, "--",
+                literalPathspec(file.path)
+            ]
         if let originalPath = file.originalPath {
             arguments.append(literalPathspec(originalPath))
         }
@@ -3720,11 +3744,11 @@ struct RepositoryInspector: Sendable {
             )
             acceptedStatuses = [0]
         case .untracked:
-            arguments = [
-                "-C", rootURL.path,
-                "diff", "--no-index", "--no-ext-diff", "--no-textconv",
-                "--", "/dev/null", change.path
-            ]
+            arguments = ["-C", rootURL.path]
+                + pinnedDiffConfiguration
+                + ["diff", "--no-index"]
+                + pinnedDiffOptions
+                + ["--", "/dev/null", change.path]
             acceptedStatuses = [0, 1]
         case .base, .ours, .theirs:
             throw RepositoryDiffError.unavailable
@@ -3871,10 +3895,11 @@ struct RepositoryInspector: Sendable {
         options: [String],
         change: RepositorySummary.Change
     ) -> [String] {
-        var arguments = [
-            "-C", rootURL.path,
-            "diff", "--no-ext-diff", "--no-textconv", "--find-renames"
-        ]
+        var arguments = ["-C", rootURL.path]
+            + pinnedDiffConfiguration
+            + ["diff"]
+            + pinnedDiffOptions
+            + ["--find-renames"]
         arguments.append(contentsOf: options)
         arguments.append("--")
         arguments.append(literalPathspec(change.path))
@@ -4803,18 +4828,33 @@ enum RepositoryInspectionError: LocalizedError, Equatable {
         switch self {
         case .gitUnavailable:
             "System Git is unavailable. Install or repair the Xcode Command Line Tools, then try again."
-        case .notWorkingTree:
-            "The selected folder is not a Git working tree."
+        case .notWorkingTree(let reason):
+            "The selected folder is not a Git working tree.\(Self.gitReason(reason))"
         case .bareRepository:
             "The selected folder is a bare Repository, which this version cannot open."
-        case .unreadableHead:
-            "The Repository exists, but its HEAD cannot be read."
-        case .unreadableStatus:
-            "The Repository exists, but its working tree status cannot be read."
-        case .unreadableHistory:
-            "The Repository exists, but its recent activity cannot be read."
+        case .unreadableHead(let reason):
+            "The Repository exists, but its HEAD cannot be read.\(Self.gitReason(reason))"
+        case .unreadableStatus(let reason):
+            "The Repository exists, but its working tree status cannot be read.\(Self.gitReason(reason))"
+        case .unreadableHistory(let reason):
+            "The Repository exists, but its recent activity cannot be read.\(Self.gitReason(reason))"
         case .invalidGitOutput:
             "Git returned an unexpected Repository description."
         }
+    }
+
+    /// Git's own first line of stderr names the cause, and often the setting at fault — a malformed value in
+    /// a gitconfig makes every command fail, and without this the reader is told only that reading failed.
+    private static func gitReason(_ standardError: String) -> String {
+        guard
+            let line = standardError
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .first?
+                .trimmingCharacters(in: .whitespaces),
+            !line.isEmpty
+        else {
+            return ""
+        }
+        return " Git said: \(line)"
     }
 }

@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7C-3 뒤 diff 거터 정렬 수정 완료. 다음 슬라이스는 미정. Git diff 설정 대응은 미착수
+> 현재 범위: 7D-1 Git diff 형식 고정 완료. 메타 줄 표시 여부는 미결
 
 ## 사용자 결과
 
@@ -103,6 +103,14 @@ GallaeApp
 
 - **툴바는 넘치지 않는다.** 최소 폭 720pt 창에서 Repository 이름을 68자까지 늘려도 툴바 항목 좌표가 바뀌지 않고 `>>` 오버플로도 나타나지 않는다. 제목은 Navigator 묶음과 Fetch 사이 169pt 칸에서 잘릴 뿐이다. 좁은 창의 툴바 오버플로 대응은 필요 없다.
 - **한 ToolbarItem 안의 그룹 이름은 고칠 수 없다.** 촘촘한 구분선을 얻으려고 여러 컨트롤을 `HStack`으로 한 `ToolbarItem`에 담았는데, 그 안의 `ControlGroup`들이 접근성 트리에서 첫 컨트롤의 이름을 함께 쓴다(Publish·Refresh가 "Pull", Library가 "Navigator"). `ControlGroup(label:)`과 `.accessibilityLabel` 둘 다 이 이름을 바꾸지 못했다. AppKit이 NSToolbarItem에 붙인 이름이라 SwiftUI에 손잡이가 없다. 컨트롤마다 별도 `ToolbarItem`으로 쪼개면 고쳐지지만 구분선 배치가 깨진다. 버튼 자체의 이름은 모두 정확하므로 그대로 둔다.
+
+### 7D-1 · Git diff 형식 고정 — 완료
+
+- patch를 만드는 네 곳(commit `show`, stash `diff`, untracked `--no-index`, working tree `diff`)이 같은 고정 옵션을 쓴다. `--no-color`, `--src-prefix=a/ --dst-prefix=b/`, `--diff-algorithm=histogram`, `--unified=3`과 `-c core.quotepath=false -c diff.suppressBlankEmpty=false`다. 사용자의 diff 설정은 더 이상 patch 텍스트에 닿지 않는다.
+- `--default-prefix` 대신 `--src-prefix`/`--dst-prefix`를 쓴다. 같은 설정 넷을 덮으면서 Git 2.45보다 오래된 버전에서도 동작한다.
+- `core.autocrlf`·`core.eol`과 `.gitattributes`는 파일의 내용을 정의하므로 그대로 존중한다.
+- 잘못된 설정 값은 git이 설정 파일을 읽는 단계에서 죽어 재정의로 구제되지 않는다. 대신 `RepositoryInspectionError`가 이미 들고 있던 git stderr의 첫 줄을 문구에 실어 원인을 말한다.
+- 테스트 하나를 더했다. 깨뜨리는 설정 일곱을 하나씩 건 임시 저장소에서 hunk가 파싱되고, 빈 줄 뒤 줄 번호가 맞고, escape가 섞이지 않고, 한글 경로가 읽히고, patch가 index에 적용되는 것을 확인한다.
 
 ## 단계별 완료 조건
 
