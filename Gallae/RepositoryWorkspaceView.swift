@@ -4896,6 +4896,8 @@ private struct RepositoryDiffView: View {
                                 RepositoryDiffSectionView(
                                     section: section,
                                     layout: layout,
+                                    // One section needs no name: the file and its status are already above.
+                                    showsHeader: diff.sections.count > 1,
                                     repositoryRootURL: repositoryRootURL,
                                     fileURL: fileURL,
                                     canStageHunks: canStageHunks,
@@ -5202,6 +5204,7 @@ private struct SemanticSummaryRequest: Equatable {
 private struct RepositoryDiffSectionView: View {
     let section: RepositoryDiff.Section
     let layout: RepositoryDiffLayout
+    var showsHeader = true
     let repositoryRootURL: URL
     let fileURL: URL?
     let canStageHunks: Bool
@@ -5229,8 +5232,10 @@ private struct RepositoryDiffSectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
-                Label(section.scope.label, systemImage: section.scope.systemImage)
-                    .font(.caption.weight(.semibold))
+                if showsHeader {
+                    Label(section.scope.label, systemImage: section.scope.systemImage)
+                        .font(.caption.weight(.semibold))
+                }
                 if !semanticChanges.isEmpty {
                     Text(semanticChanges.map(\.label).joined(separator: " · "))
                         .font(.caption2)
@@ -5244,9 +5249,11 @@ private struct RepositoryDiffSectionView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.vertical, showsHeader || !semanticChanges.isEmpty ? 7 : 0)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.colors.badgeBackground)
+            .opacity(showsHeader || !semanticChanges.isEmpty ? 1 : 0)
+            .frame(height: showsHeader || !semanticChanges.isEmpty ? nil : 0)
             .task(id: SemanticSummaryRequest(patch: section.patchText, isEnabled: showsSemanticSummary)) {
                 semanticChanges = []
                 guard showsSemanticSummary, let patch = section.patchText else { return }
@@ -5256,7 +5263,9 @@ private struct RepositoryDiffSectionView: View {
                 }.value
             }
 
-            Divider()
+            if showsHeader || !semanticChanges.isEmpty {
+                Divider()
+            }
 
             switch section.content {
             case .text(let lines):
@@ -5268,7 +5277,8 @@ private struct RepositoryDiffSectionView: View {
                     hunkSecondaryAction: { line in discardAction(for: line, in: lines) },
                     lineChoice: { line in lineChoice(for: line) },
                     hunkChoice: { line in hunkChoice(for: line, in: lines) },
-                    reservesChoiceColumn: choosesLines
+                    reservesChoiceColumn: choosesLines,
+                    isOneSided: section.isOneSided
                 )
             case .binary:
                 RepositoryDiffNotice(
@@ -5416,6 +5426,9 @@ private struct RepositoryDiffLinesView: View {
     var hunkChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
     /// Keeps the checkbox column on every unified line so numbers line up whether or not a line has one.
     var reservesChoiceColumn = false
+    /// A new or deleted file has no opposite version, so Split draws one column rather than half a screen
+    /// of empty cells.
+    var isOneSided = false
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -5430,6 +5443,18 @@ private struct RepositoryDiffLinesView: View {
             ForEach(RepositoryDiffSplitRow.rows(from: lines)) { row in
                 if let full = row.full {
                     fullWidthLine(full, numberWidth: numberWidth)
+                } else if isOneSided {
+                    let only = row.new ?? row.old
+                    RepositoryDiffLineView(
+                        line: only,
+                        side: row.new != nil ? .new : .old,
+                        numberWidth: numberWidth,
+                        choice: only.flatMap(lineChoice),
+                        reservesChoiceColumn: reservesChoiceColumn,
+                        choiceLabel: row.new != nil
+                            ? "Choose added line \(row.new?.newLineNumber ?? 0)"
+                            : "Choose deleted line \(row.old?.oldLineNumber ?? 0)"
+                    )
                 } else {
                     HStack(alignment: .top, spacing: 0) {
                         RepositoryDiffLineView(
@@ -5466,8 +5491,16 @@ private struct RepositoryDiffLinesView: View {
                     numberWidth: numberWidth,
                     choice: hunkChoice(line),
                     reservesChoiceColumn: reservesChoiceColumn,
-                    choiceLabel: "Choose every line in this hunk"
+                    choiceLabel: "Choose every line in this hunk",
+                    overrideText: line.hunkLocation
                 )
+                if line.hunkLocation != nil {
+                    // The raw header stays for readers who know it, quiet enough not to lead.
+                    Text(line.text)
+                        .font(.system(size: theme.metrics.diffFontSize - 1, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
                 Button(action.label, action: action.perform)
                     .controlSize(.small)
                     .disabled(isBusy)
@@ -5528,6 +5561,8 @@ private struct RepositoryDiffLineView: View {
     var choice: (isOn: Bool, toggle: () -> Void)? = nil
     var reservesChoiceColumn = false
     var choiceLabel = ""
+    /// Replaces the line's own text; the hunk header uses it to show a location instead of `@@ …`.
+    var overrideText: String? = nil
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -5558,11 +5593,12 @@ private struct RepositoryDiffLineView: View {
                     .frame(width: numberWidth, alignment: .trailing)
                     .padding(.trailing, 8)
             }
+            let shown = overrideText ?? line.map { $0.displayText.isEmpty ? " " : $0.displayText } ?? " "
             if side == nil {
-                Text(line.map { $0.text.isEmpty ? " " : $0.text } ?? " ")
+                Text(shown)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
-                Text(line.map { $0.text.isEmpty ? " " : $0.text } ?? " ")
+                Text(shown)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -5806,6 +5842,8 @@ private extension RepositoryDiff.Line {
         case .deletion: kindLabel = "Deleted"
         }
 
-        return location.isEmpty ? "\(kindLabel): \(text)" : "\(kindLabel), \(location): \(text)"
+        // The kind is already spoken, so the patch prefix would only repeat it; a hunk says where it is.
+        let spoken = hunkLocation ?? displayText
+        return location.isEmpty ? "\(kindLabel): \(spoken)" : "\(kindLabel), \(location): \(spoken)"
     }
 }

@@ -375,6 +375,34 @@ struct RepositoryDiff: Equatable, Sendable {
         let newLineNumber: Int?
         let text: String
 
+        /// The line as the reader should see it. `text` keeps Git's leading `+`, `-` or space because
+        /// `Section.hunks` feeds it straight back to `git apply`; on screen the colour, the column and the
+        /// change bar already say which side a line is on, and dropping the prefix lets context and changed
+        /// lines start in the same column.
+        var displayText: String {
+            switch kind {
+            case .context, .addition, .deletion: String(text.dropFirst())
+            case .metadata, .hunk: text
+            }
+        }
+
+        /// Where a hunk sits, for a reader who should not have to parse `@@ -1 +1,2 @@`. Reads the new side,
+        /// which is what the working tree and the index look like now; a hunk that only removes lines has no
+        /// new lines to point at, so it names the line the removal follows.
+        var hunkLocation: String? {
+            guard kind == .hunk else { return nil }
+            let fields = text.split(separator: " ")
+            guard fields.count >= 3, fields[2].hasPrefix("+") else { return nil }
+            let numbers = fields[2].dropFirst().split(separator: ",")
+            guard let start = Int(numbers[0]) else { return nil }
+            let count = numbers.count > 1 ? (Int(numbers[1]) ?? 1) : 1
+            switch count {
+            case 0: return "After line \(start)"
+            case 1: return "Line \(start)"
+            default: return "Lines \(start)–\(start + count - 1)"
+            }
+        }
+
         /// The lines Git writes above the first hunk to name the file and its blobs. `git apply` needs them,
         /// so they stay in the patch `hunks` builds; the view around the diff already names the file and its
         /// status, so it hides them. Other header lines — a new file's mode, a rename's old and new paths —
@@ -402,6 +430,21 @@ struct RepositoryDiff: Equatable, Sendable {
 }
 
 extension RepositoryDiff.Section {
+    /// True when every changed line is on the same side — a new file, a deleted file, or a hunk that only
+    /// adds or only removes. Split has nothing to compare against, so it draws one column instead of leaving
+    /// half the width empty.
+    var isOneSided: Bool {
+        guard case .text(let lines) = content else { return false }
+        var sawAddition = false
+        var sawDeletion = false
+        for line in lines {
+            if line.kind == .addition { sawAddition = true }
+            if line.kind == .deletion { sawDeletion = true }
+            if sawAddition, sawDeletion { return false }
+        }
+        return sawAddition != sawDeletion
+    }
+
     /// The section's patch exactly as Git wrote it. `Line.text` keeps each line's original prefix, so joining
     /// them reproduces the bytes `git diff` produced.
     var patchText: String? {

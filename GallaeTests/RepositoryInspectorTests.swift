@@ -4067,6 +4067,61 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(applied.changes.first).staged, .modified)
     }
 
+    func testDiffLineReadsWithoutPatchSyntax() throws {
+        func line(_ kind: RepositoryDiff.Line.Kind, _ text: String) -> RepositoryDiff.Line {
+            .init(id: 0, kind: kind, oldLineNumber: nil, newLineNumber: nil, text: text)
+        }
+
+        // The prefix goes, so context and changed lines start in the same column.
+        XCTAssertEqual(line(.context, " hello").displayText, "hello")
+        XCTAssertEqual(line(.addition, "+hello").displayText, "hello")
+        XCTAssertEqual(line(.deletion, "-hello").displayText, "hello")
+        // A line whose content begins with a dash keeps it.
+        XCTAssertEqual(line(.addition, "+--option").displayText, "--option")
+        // A blank context line survives as empty rather than losing a character it does not have.
+        XCTAssertEqual(line(.context, " ").displayText, "")
+        // Headers carry no prefix, so they are left alone.
+        XCTAssertEqual(line(.metadata, "new file mode 100644").displayText, "new file mode 100644")
+
+        // The hunk header reads as a place, taken from the new side.
+        XCTAssertEqual(line(.hunk, "@@ -0,0 +1 @@").hunkLocation, "Line 1")
+        XCTAssertEqual(line(.hunk, "@@ -1 +1,2 @@").hunkLocation, "Lines 1–2")
+        XCTAssertEqual(line(.hunk, "@@ -10,7 +12,7 @@ func body()").hunkLocation, "Lines 12–18")
+        // A hunk that only removes lines has no new line to point at.
+        XCTAssertEqual(line(.hunk, "@@ -5,3 +4,0 @@").hunkLocation, "After line 4")
+        XCTAssertNil(line(.context, " hello").hunkLocation)
+    }
+
+    func testOneSidedSectionIsDetectedForNewAndDeletedFiles() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("one\ntwo\n", to: "kept.txt", in: repositoryURL)
+        try write("gone\n", to: "removed.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("one\nchanged\n", to: "kept.txt", in: repositoryURL)
+        try FileManager.default.removeItem(at: repositoryURL.appending(path: "removed.txt"))
+        try write("fresh\n", to: "added.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+
+        func section(_ path: String) async throws -> RepositoryDiff.Section {
+            let change = try XCTUnwrap(repository.changes.first { $0.path == path }, path)
+            let diff = try await inspector.diff(for: change, in: repository)
+            return try XCTUnwrap(diff.sections.first { $0.scope != .staged }, path)
+        }
+
+        // A replaced line has both sides, so Split still compares.
+        let modified = try await section("kept.txt")
+        XCTAssertFalse(modified.isOneSided)
+        // A new file and a deleted file have nothing to compare against.
+        let added = try await section("added.txt")
+        XCTAssertTrue(added.isOneSided)
+        let removed = try await section("removed.txt")
+        XCTAssertTrue(removed.isOneSided)
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
