@@ -4777,6 +4777,117 @@ private struct RepositoryDiffView: View {
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
     @State private var isConfirmingDiscard = false
     @State private var pendingConflictResolution: ConflictResolutionConfirmation?
+    /// Which side the reader asked for. nil follows the file: a file with one side needs no choice, and the
+    /// choice is dropped when another file is selected.
+    @State private var chosenScope: RepositoryDiff.Scope?
+    @Environment(\.gallaeTheme) private var theme
+
+    /// Staged and Working Tree are the two sides a file can be on; the rest are conflict versions, which the
+    /// comparison view handles.
+    private static let switchableScopes: [RepositoryDiff.Scope] = [.staged, .unstaged, .untracked]
+
+    private func shownScope(in diff: RepositoryDiff) -> RepositoryDiff.Scope {
+        let available = diff.sections.map(\.scope).filter(Self.switchableScopes.contains)
+        if let chosenScope, available.contains(chosenScope) { return chosenScope }
+        // A side the reader was on that has just emptied stays selected, so the emptying is visible rather
+        // than looking like an unasked-for jump to the other side.
+        if let chosenScope, available.count == 1, chosenScope != available[0] { return chosenScope }
+        // Otherwise the working tree leads: it is where the next action happens.
+        return available.first { $0 != .staged } ?? available.first ?? .unstaged
+    }
+
+    /// The side not being shown, when there is one worth naming.
+    private func otherScope(in diff: RepositoryDiff, than shown: RepositoryDiff.Scope) -> RepositoryDiff.Scope? {
+        let available = diff.sections.map(\.scope).filter(Self.switchableScopes.contains)
+        guard available.count > 1 || (available.count == 1 && available[0] != shown) else { return nil }
+        return available.first { $0 != shown }
+    }
+
+    private func changedLines(in diff: RepositoryDiff, scope: RepositoryDiff.Scope) -> Int {
+        diff.sections.first { $0.scope == scope }?.changedLineCount ?? 0
+    }
+
+    @ViewBuilder
+    private func scopeSwitcher(
+        in diff: RepositoryDiff,
+        shown: RepositoryDiff.Scope,
+        other: RepositoryDiff.Scope
+    ) -> some View {
+        let ordered = [shown, other].sorted { $0 == .staged && $1 != .staged }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Picker("Diff Side", selection: Binding(get: { shown }, set: { chosenScope = $0 })) {
+                    ForEach(ordered, id: \.self) { scope in
+                        Text("\(scope.label)  \(changedLines(in: diff, scope: scope))").tag(scope)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                .fixedSize()
+                .help("Choose whether to read what is staged for the next commit, or what is not")
+
+                Text(shown == .staged ? "in the next commit" : "not in the next commit yet")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            // The side that is off screen still says what it holds, so staging a hunk reads as "it moved
+            // there" rather than "it vanished".
+            Button {
+                chosenScope = other
+            } label: {
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(other == .staged ? theme.colors.statusAdded : theme.colors.statusModified)
+                        .frame(width: 3)
+                    Text(other.label)
+                        .font(.caption.weight(.semibold))
+                    Text(changedLineSummary(changedLines(in: diff, scope: other), scope: other))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                }
+                .frame(height: 18)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+            .foregroundStyle(other == .staged ? theme.colors.statusAdded : theme.colors.statusModified)
+            .accessibilityLabel(
+                "\(other.label): \(changedLineSummary(changedLines(in: diff, scope: other), scope: other)). Show it"
+            )
+        }
+        .background(theme.colors.badgeBackground)
+    }
+
+    private func changedLineSummary(_ count: Int, scope: RepositoryDiff.Scope) -> String {
+        let lines = count == 1 ? "1 line" : "\(count) lines"
+        return scope == .staged ? "\(lines) · in the next commit" : "\(lines) · not in it yet"
+    }
+
+    @ViewBuilder
+    private func emptyScope(_ scope: RepositoryDiff.Scope) -> some View {
+        ContentUnavailableView {
+            Label(
+                scope == .staged ? "Nothing Staged" : "Nothing Left Here",
+                systemImage: "checkmark.circle"
+            )
+        } description: {
+            Text(
+                scope == .staged
+                    ? "None of this file's changes are in the next commit."
+                    : "Every change in this file is already in the next commit."
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+    }
+
 
     var body: some View {
         switch state {
@@ -4889,15 +5000,21 @@ private struct RepositoryDiffView: View {
                     loadExpanded: loadExpanded
                 )
             } else {
+                let shown = shownScope(in: diff)
+                if let other = otherScope(in: diff, than: shown) {
+                    scopeSwitcher(in: diff, shown: shown, other: other)
+                    Divider()
+                }
                 GeometryReader { proxy in
                     ScrollView(layout == .split ? [.vertical] : [.horizontal, .vertical]) {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(diff.sections) { section in
+                            if let section = diff.sections.first(where: { $0.scope == shown }) {
                                 RepositoryDiffSectionView(
                                     section: section,
                                     layout: layout,
-                                    // One section needs no name: the file and its status are already above.
-                                    showsHeader: diff.sections.count > 1,
+                                    // The switcher above already names the side, and a lone section needs
+                                    // no name at all: the file and its status sit right above it.
+                                    showsHeader: false,
                                     repositoryRootURL: repositoryRootURL,
                                     fileURL: fileURL,
                                     canStageHunks: canStageHunks,
@@ -4907,6 +5024,8 @@ private struct RepositoryDiffView: View {
                                     discardHunk: discardHunk,
                                     loadExpanded: loadExpanded
                                 )
+                            } else {
+                                emptyScope(shown)
                             }
                         }
                         .frame(
@@ -4919,6 +5038,10 @@ private struct RepositoryDiffView: View {
                     .defaultScrollAnchor(.topLeading, for: .alignment)
                 }
             }
+        }
+        .onChange(of: fileURL) {
+            // The side is a reading choice about one file, not a mode; another file starts fresh.
+            chosenScope = nil
         }
         .alert("Discard Unstaged Changes?", isPresented: $isConfirmingDiscard) {
             Button("Discard Changes", role: .destructive) {

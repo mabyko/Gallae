@@ -430,6 +430,12 @@ struct RepositoryDiff: Equatable, Sendable {
 }
 
 extension RepositoryDiff.Section {
+    /// Additions and deletions — what a reader counts as changed. Context and headers are not changes.
+    var changedLineCount: Int {
+        guard case .text(let lines) = content else { return 0 }
+        return lines.count { $0.kind == .addition || $0.kind == .deletion }
+    }
+
     /// True when every changed line is on the same side — a new file, a deleted file, or a hunk that only
     /// adds or only removes. Split has nothing to compare against, so it draws one column instead of leaving
     /// half the width empty.

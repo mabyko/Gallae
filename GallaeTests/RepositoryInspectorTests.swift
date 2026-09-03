@@ -4183,6 +4183,26 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testChangedLineCountCountsOnlyChanges() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("one\ntwo\nthree\nfour\nfive\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        // One line replaced and one added: two changed lines among four context lines and a header.
+        try write("one\nCHANGED\nthree\nfour\nfive\nsix\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+
+        XCTAssertEqual(section.changedLineCount, 3, "one deletion, two additions")
+        let lines = try textLines(in: diff, scope: .unstaged)
+        XCTAssertGreaterThan(lines.count, section.changedLineCount, "headers and context are not changes")
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
