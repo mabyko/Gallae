@@ -33,6 +33,8 @@ struct GallaeTheme: Sendable {
         let authorBadgeColors: [Color]
         let diffText: Color
         let diffMetadataText: Color
+        /// Neutral, never the accent: a hunk header is a label about the diff, not part of it, and an accent
+        /// that happens to be green or red would read as an added or deleted line.
         let diffHunkText: Color
         let diffAdditionBackground: Color
         let diffDeletionBackground: Color
@@ -88,10 +90,10 @@ struct GallaeTheme: Sendable {
                 authorBadgeColors: [.indigo, .teal, .orange, .blue, .pink, .green, .purple, .brown],
                 diffText: .primary,
                 diffMetadataText: contrast ? .primary : .secondary,
-                diffHunkText: .accentColor,
+                diffHunkText: contrast ? .primary : .secondary,
                 diffAdditionBackground: .green.opacity(contrast ? 0.24 : 0.12),
                 diffDeletionBackground: .red.opacity(contrast ? 0.24 : 0.12),
-                diffHunkBackground: .accentColor.opacity(contrast ? 0.16 : 0.08),
+                diffHunkBackground: .secondary.opacity(contrast ? 0.20 : 0.10),
                 opaqueChrome: Color(nsColor: .windowBackgroundColor)
             ),
             metrics: .init(
