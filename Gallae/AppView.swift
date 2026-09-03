@@ -1,3 +1,4 @@
+import AppKit
 import Observation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -293,8 +294,10 @@ struct AppView: View {
         .focusedSceneValue(\.openRepository) {
             chooseRepository()
         }
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, model.repository != nil else { return }
+        // Not `scenePhase`: on macOS it stays `.active` while another app is frontmost, so a window coming
+        // back to the front never fires it and the working tree stays as it was when the window opened.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            guard model.repository != nil else { return }
             Task { await model.refreshRepository() }
         }
     }
