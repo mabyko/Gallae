@@ -5584,7 +5584,8 @@ private struct RepositoryDiffLinesView: View {
                     choice: hunkChoice(line),
                     reservesChoiceColumn: reservesChoiceColumn,
                     choiceLabel: "Choose every line in this hunk",
-                    overrideText: line.hunkLocation
+                    overrideText: line.hunkLocation,
+                    truncatesText: layout == .split
                 )
                 if line.hunkLocation != nil {
                     // The raw header stays for readers who know it, quiet enough not to lead.
@@ -5617,7 +5618,8 @@ private struct RepositoryDiffLinesView: View {
                 reservesChoiceColumn: reservesChoiceColumn,
                 choiceLabel: line.kind == .deletion
                     ? "Choose deleted line \(line.oldLineNumber ?? 0)"
-                    : "Choose added line \(line.newLineNumber ?? 0)"
+                    : "Choose added line \(line.newLineNumber ?? 0)",
+                truncatesText: layout == .split
             )
         }
     }
@@ -5655,6 +5657,9 @@ private struct RepositoryDiffLineView: View {
     var choiceLabel = ""
     /// Replaces the line's own text; the hunk header uses it to show a location instead of `@@ …`.
     var overrideText: String? = nil
+    /// Split clamps the diff to the pane's width, so a full-width row has no horizontal scroll to spill into:
+    /// it truncates instead of drawing over the row beside it. Unified keeps its rigid width and scrolls.
+    var truncatesText = false
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -5686,7 +5691,11 @@ private struct RepositoryDiffLineView: View {
                     .padding(.trailing, 8)
             }
             let shown = overrideText ?? line.map { $0.displayText.isEmpty ? " " : $0.displayText } ?? " "
-            if side == nil {
+            if side == nil, truncatesText {
+                Text(shown)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else if side == nil {
                 Text(shown)
                     .fixedSize(horizontal: true, vertical: false)
             } else {
