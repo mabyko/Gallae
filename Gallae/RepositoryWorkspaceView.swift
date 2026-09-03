@@ -5384,6 +5384,7 @@ private struct RepositoryDiffLinesView: View {
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
+        let lines = lines.filter { !$0.isPatchHeader }
         let numberWidth = diffNumberWidth(for: lines, fontSize: theme.metrics.diffFontSize)
         switch layout {
         case .unified:

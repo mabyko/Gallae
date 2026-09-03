@@ -3957,6 +3957,44 @@ final class RepositoryInspectorTests: XCTestCase {
         }
     }
 
+    func testPatchHeaderIsHiddenFromViewButKeptInTheAppliedPatch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("one\ntwo\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("one\nchanged\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+        let lines = try textLines(in: diff, scope: .unstaged)
+
+        // Hidden from the reader.
+        let shown = lines.filter { !$0.isPatchHeader }
+        XCTAssertFalse(shown.contains { $0.text.hasPrefix("diff --git ") })
+        XCTAssertFalse(shown.contains { $0.text.hasPrefix("index ") })
+        XCTAssertFalse(shown.contains { $0.text.hasPrefix("--- ") })
+        XCTAssertFalse(shown.contains { $0.text.hasPrefix("+++ ") })
+        // A deletion whose text begins with the same characters is content, not a header.
+        XCTAssertFalse(try XCTUnwrap(lines.first { $0.text == "-two" }).isPatchHeader)
+
+        // Still in the patch Git is handed back.
+        let patch = try XCTUnwrap(section.hunks.first).patchText
+        XCTAssertTrue(patch.contains("diff --git "))
+        XCTAssertTrue(patch.contains("--- "))
+        XCTAssertTrue(patch.contains("+++ "))
+
+        let staged = try await inspector.stage(
+            try XCTUnwrap(section.hunks.first),
+            for: change,
+            in: repository
+        )
+        XCTAssertEqual(try XCTUnwrap(staged.changes.first).staged, .modified)
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

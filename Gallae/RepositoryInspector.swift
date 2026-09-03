@@ -374,6 +374,18 @@ struct RepositoryDiff: Equatable, Sendable {
         let oldLineNumber: Int?
         let newLineNumber: Int?
         let text: String
+
+        /// The lines Git writes above the first hunk to name the file and its blobs. `git apply` needs them,
+        /// so they stay in the patch `hunks` builds; the view around the diff already names the file and its
+        /// status, so it hides them. Other header lines — a new file's mode, a rename's old and new paths —
+        /// say something the view does not, and are kept.
+        var isPatchHeader: Bool {
+            guard kind == .metadata else { return false }
+            return text.hasPrefix("diff --git ")
+                || text.hasPrefix("index ")
+                || text.hasPrefix("--- ")
+                || text.hasPrefix("+++ ")
+        }
     }
 
     struct Hunk: Equatable, Identifiable, Sendable {

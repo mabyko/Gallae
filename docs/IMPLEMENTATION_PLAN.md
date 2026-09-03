@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7D-1 Git diff 형식 고정 완료. 메타 줄 표시 여부는 미결
+> 현재 범위: 7D-2 패치 헤더 숨김 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -111,6 +111,12 @@ GallaeApp
 - `core.autocrlf`·`core.eol`과 `.gitattributes`는 파일의 내용을 정의하므로 그대로 존중한다.
 - 잘못된 설정 값은 git이 설정 파일을 읽는 단계에서 죽어 재정의로 구제되지 않는다. 대신 `RepositoryInspectionError`가 이미 들고 있던 git stderr의 첫 줄을 문구에 실어 원인을 말한다.
 - 테스트 하나를 더했다. 깨뜨리는 설정 일곱을 하나씩 건 임시 저장소에서 hunk가 파싱되고, 빈 줄 뒤 줄 번호가 맞고, escape가 섞이지 않고, 한글 경로가 읽히고, patch가 index에 적용되는 것을 확인한다.
+
+### 7D-2 · 패치 헤더 숨김 — 완료
+
+- `diff --git`·`index`·`---`·`+++` 네 줄을 diff 화면에서 뺀다. 파일 이름과 상태는 diff를 둘러싼 화면이 이미 보여 주므로 이 줄들은 정보를 더하지 않는다.
+- 모델에서 지우지는 않는다. `RepositoryDiff.Section.hunks`가 이 줄들을 패치 헤더로 그대로 써서 `git apply`에 넘기기 때문이다. `Line.isPatchHeader`로 표시할 때만 거른다.
+- 새 파일의 mode, rename의 옛 경로와 새 경로처럼 화면이 달리 말해 주지 않는 헤더 줄은 남긴다. hunk 안의 `-`로 시작하는 내용 줄은 `.deletion`이라 헤더로 오인되지 않는다.
 
 ## 단계별 완료 조건
 
