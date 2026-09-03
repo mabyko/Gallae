@@ -34,10 +34,19 @@ Gallae는 patch를 만들 때 형식을 고정한다. 다음 설정이 무엇으
 
 근거와 실험 기록은 [docs/research/git-diff-config.md](docs/research/git-diff-config.md)에 있다.
 
+## sem이 있으면 무엇이 바뀌었는지 함께 읽는다
+
+[sem](https://github.com/ataraxy-labs/sem)이 설치돼 있으면 diff 위에 이 변경이 건드린 함수·타입·속성을 한 줄로 보여 준다.
+
+> Modified struct Counter · Added property isZero
+
+Gallae가 만든 patch를 `sem`에 그대로 넘기는 방식이라 diff 표시와 줄 단위 stage는 그대로다. `sem setup` 같은 설정은 필요 없고, `sem`이 없으면 이 줄만 나오지 않는다.
+
 ## 요구 사항
 
 - macOS 15 이상
 - 시스템 Git (Xcode Command Line Tools)
+- (선택) [sem](https://github.com/ataraxy-labs/sem) — entity 요약을 함께 보려면
 
 ## 문서
 

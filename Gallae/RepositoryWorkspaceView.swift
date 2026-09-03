@@ -946,6 +946,7 @@ struct RepositoryWorkspaceView: View {
             } trailing: {
                 RepositoryDiffView(
                     state: model.diffState,
+                    repositoryRootURL: repository.rootURL,
                     fileURL: selectedFileURL(in: repository),
                     canStage: model.canStageSelectedChange,
                     canUnstage: model.canUnstageSelectedChange,
@@ -4755,6 +4756,7 @@ private enum ConflictResolutionConfirmation {
 
 private struct RepositoryDiffView: View {
     let state: RepositoryDiffLoadState
+    let repositoryRootURL: URL
     let fileURL: URL?
     let canStage: Bool
     let canUnstage: Bool
@@ -4894,6 +4896,7 @@ private struct RepositoryDiffView: View {
                                 RepositoryDiffSectionView(
                                     section: section,
                                     layout: layout,
+                                    repositoryRootURL: repositoryRootURL,
                                     fileURL: fileURL,
                                     canStageHunks: canStageHunks,
                                     canUnstageHunks: canUnstageHunks,
@@ -5193,6 +5196,7 @@ private struct RepositoryDiffLayoutPicker: View {
 private struct RepositoryDiffSectionView: View {
     let section: RepositoryDiff.Section
     let layout: RepositoryDiffLayout
+    let repositoryRootURL: URL
     let fileURL: URL?
     let canStageHunks: Bool
     let canUnstageHunks: Bool
@@ -5205,6 +5209,8 @@ private struct RepositoryDiffSectionView: View {
     @State private var chosenLineIDs: Set<Int> = []
     @State private var lastToggledLineID: Int?
     @State private var pendingDiscard: PendingDiscard?
+    /// Empty whenever `sem` is not installed or has nothing to say; the diff below never depends on it.
+    @State private var semanticChanges: [SemanticChange] = []
 
     private struct PendingDiscard: Identifiable {
         let hunk: RepositoryDiff.Hunk
@@ -5214,12 +5220,33 @@ private struct RepositoryDiffSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Label(section.scope.label, systemImage: section.scope.systemImage)
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.colors.badgeBackground)
+            VStack(alignment: .leading, spacing: 2) {
+                Label(section.scope.label, systemImage: section.scope.systemImage)
+                    .font(.caption.weight(.semibold))
+                if !semanticChanges.isEmpty {
+                    Text(semanticChanges.map(\.label).joined(separator: " · "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help("What sem read from this patch")
+                        .accessibilityLabel(
+                            "Changed entities: \(semanticChanges.map(\.label).joined(separator: ", "))"
+                        )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.colors.badgeBackground)
+            .task(id: section.patchText) {
+                semanticChanges = []
+                guard let patch = section.patchText else { return }
+                let root = repositoryRootURL
+                semanticChanges = await Task.detached(priority: .utility) {
+                    SemanticSummary.changes(for: patch, in: root)
+                }.value
+            }
 
             Divider()
 

@@ -402,6 +402,13 @@ struct RepositoryDiff: Equatable, Sendable {
 }
 
 extension RepositoryDiff.Section {
+    /// The section's patch exactly as Git wrote it. `Line.text` keeps each line's original prefix, so joining
+    /// them reproduces the bytes `git diff` produced.
+    var patchText: String? {
+        guard case .text(let lines) = content, !lines.isEmpty else { return nil }
+        return lines.map(\.text).joined(separator: "\n") + "\n"
+    }
+
     /// Which side a partial patch has to match. Staging applies against the index, which still equals the diff's
     /// old side, so an unchosen deletion stays as context and an unchosen addition drops out. Unstaging and
     /// discarding reverse a patch against the new side, so the opposite holds.
@@ -4824,6 +4831,94 @@ enum RepositoryRemoteSetupError: LocalizedError, Equatable {
         case .publishFailed(let remote, let message):
             "Remote “\(remote)” was added, but Publish didn’t finish.\n\n\(message)"
         }
+    }
+}
+
+/// One entity `sem` reports as changed. `sem` is optional: it reads the patch Gallae already produced and
+/// says which functions, types and properties it touched. Nothing depends on it — when it is absent or fails,
+/// the summary is simply not shown. See `docs/research/git-diff-config.md`.
+struct SemanticChange: Equatable, Sendable, Identifiable {
+    let changeType: String
+    let entityType: String
+    let entityName: String
+
+    var id: String { "\(changeType)/\(entityType)/\(entityName)" }
+
+    /// "Added property isPatchHeader"
+    var label: String {
+        "\(changeType.capitalized) \(entityType) \(entityName)"
+    }
+}
+
+enum SemanticSummary {
+    private struct Payload: Decodable {
+        struct Change: Decodable {
+            let changeType: String
+            let entityType: String
+            let entityName: String
+        }
+        let changes: [Change]
+    }
+
+    /// A GUI launched from Finder inherits a bare PATH, so the usual install prefixes are searched too.
+    static func locateTool() -> URL? {
+        var directories = (ProcessInfo.processInfo.environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map(String.init)
+        directories += [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            FileManager.default.homeDirectoryForCurrentUser.appending(path: ".local/bin").path
+        ]
+        for directory in directories where !directory.isEmpty {
+            let candidate = URL(fileURLWithPath: directory).appending(path: "sem")
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        return nil
+    }
+
+    static func decode(_ data: Data) -> [SemanticChange] {
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [] }
+        var seen: Set<String> = []
+        return payload.changes.compactMap { change in
+            let entry = SemanticChange(
+                changeType: change.changeType,
+                entityType: change.entityType,
+                entityName: change.entityName
+            )
+            // A type and one of its members both report the change; the same label twice says nothing more.
+            return seen.insert(entry.id).inserted ? entry : nil
+        }
+    }
+
+    /// Returns an empty list rather than throwing: every failure here means "no summary", never "no diff".
+    /// `rootURL` matters: `sem` resolves the patch's paths against its working directory and reads the files
+    /// around them. Run from anywhere else and entities come back as `orphan module-level`.
+    static func changes(for patch: String, in rootURL: URL, tool: URL? = locateTool()) -> [SemanticChange] {
+        guard let tool, !patch.isEmpty else { return [] }
+        let process = Process()
+        let input = Pipe()
+        let output = Pipe()
+        process.executableURL = tool
+        process.arguments = ["diff", "--patch", "--json"]
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.currentDirectoryURL = rootURL
+
+        do {
+            try process.run()
+        } catch {
+            return []
+        }
+        input.fileHandleForWriting.write(Data(patch.utf8))
+        try? input.fileHandleForWriting.close()
+        let data = (try? output.fileHandleForReading.readToEnd()) ?? nil
+        process.waitUntilExit()
+        guard process.terminationStatus == 0, let data else { return [] }
+        return decode(data)
     }
 }
 

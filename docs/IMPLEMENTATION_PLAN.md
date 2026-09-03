@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7D-2 패치 헤더 숨김 완료. 다음 슬라이스는 미정
+> 현재 범위: 7D-3 sem entity 요약 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -117,6 +117,16 @@ GallaeApp
 - `diff --git`·`index`·`---`·`+++` 네 줄을 diff 화면에서 뺀다. 파일 이름과 상태는 diff를 둘러싼 화면이 이미 보여 주므로 이 줄들은 정보를 더하지 않는다.
 - 모델에서 지우지는 않는다. `RepositoryDiff.Section.hunks`가 이 줄들을 패치 헤더로 그대로 써서 `git apply`에 넘기기 때문이다. `Line.isPatchHeader`로 표시할 때만 거른다.
 - 새 파일의 mode, rename의 옛 경로와 새 경로처럼 화면이 달리 말해 주지 않는 헤더 줄은 남긴다. hunk 안의 `-`로 시작하는 내용 줄은 `.deletion`이라 헤더로 오인되지 않는다.
+
+### 7D-3 · sem entity 요약 — 완료
+
+- `sem`이 있으면 diff 구획 머리 아래에 이 patch가 건드린 entity를 한 줄로 보여 준다. `Modified struct Counter · Added property isZero` 같은 형태다.
+- `sem diff --patch`가 unified diff를 stdin으로 받는다. 7D-1에서 고정한 patch를 그대로 넘기므로 diff 표시와 줄 단위 staging은 sem과 무관하게 동작한다. difftastic은 출력이 patch가 아니라 staging을 못 쓰게 만들어 제외했다.
+- `sem`은 선택이다. 없거나, 실행에 실패하거나, 출력이 예상 형태가 아니면 그 줄만 나오지 않는다. 오류를 올리지 않는다.
+- Finder로 실행한 앱은 PATH가 빈약하므로 PATH 외에 `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`도 찾는다.
+- `sem`은 patch의 경로를 자신의 작업 디렉터리 기준으로 풀고 그 주변 파일을 읽는다. Repository 루트에서 실행하지 않으면 entity가 `orphan module-level`로 떨어진다.
+- `sem setup`은 `diff.external`을 걸어 터미널의 `git diff`를 바꾸는 것이라 Gallae에는 필요 없다. 오히려 `--no-ext-diff`로 무시해야 우리가 파싱할 patch가 온다.
+- 테스트는 `sem` 없이 돈다. 갈무리한 JSON 표본으로 해독을 확인하고, 도구가 없거나 출력이 깨졌을 때 요약이 비는 것을 확인한다.
 
 ## 단계별 완료 조건
 

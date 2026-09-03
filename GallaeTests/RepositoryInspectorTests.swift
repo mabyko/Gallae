@@ -3995,6 +3995,69 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(staged.changes.first).staged, .modified)
     }
 
+    /// `sem` is optional, so these run without it: the JSON shape is checked against a captured sample and
+    /// every failure path is checked to produce no summary rather than an error.
+    func testSemanticSummaryDecodesEntitiesAndFailsQuietly() throws {
+        let sample = """
+        {"summary":{"total":3},"changes":[
+          {"changeType":"modified","entityType":"struct","entityName":"RepositoryDiff"},
+          {"changeType":"modified","entityType":"struct","entityName":"Line"},
+          {"changeType":"added","entityType":"property","entityName":"isPatchHeader"},
+          {"changeType":"added","entityType":"property","entityName":"isPatchHeader"}
+        ]}
+        """
+        let changes = SemanticSummary.decode(Data(sample.utf8))
+
+        XCTAssertEqual(changes.count, 3, "the repeated entity is reported once")
+        XCTAssertEqual(changes.map(\.label), [
+            "Modified struct RepositoryDiff",
+            "Modified struct Line",
+            "Added property isPatchHeader"
+        ])
+
+        // Anything that is not the expected shape is no summary, never a thrown error.
+        XCTAssertTrue(SemanticSummary.decode(Data("not json".utf8)).isEmpty)
+        XCTAssertTrue(SemanticSummary.decode(Data()).isEmpty)
+        XCTAssertTrue(SemanticSummary.decode(Data(#"{"changes":[]}"#.utf8)).isEmpty)
+
+        // No tool, or a tool that is not there, means no summary.
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+        XCTAssertTrue(SemanticSummary.changes(for: "diff --git a/a b/a\n", in: root, tool: nil).isEmpty)
+        XCTAssertTrue(
+            SemanticSummary.changes(
+                for: "diff --git a/a b/a\n",
+                in: root,
+                tool: URL(fileURLWithPath: "/nonexistent/sem")
+            ).isEmpty
+        )
+        // An empty patch never starts a process.
+        XCTAssertTrue(SemanticSummary.changes(for: "", in: root, tool: URL(fileURLWithPath: "/bin/echo")).isEmpty)
+    }
+
+    func testSectionPatchTextReproducesWhatGitWrote() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("one\ntwo\nthree\n", to: "file.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("one\nchanged\nthree\n", to: "file.txt", in: repositoryURL)
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .unstaged })
+        let patch = try XCTUnwrap(section.patchText)
+
+        XCTAssertTrue(patch.hasPrefix("diff --git a/file.txt b/file.txt\n"))
+        XCTAssertTrue(patch.contains("\n-two\n"))
+        XCTAssertTrue(patch.contains("\n+changed\n"))
+        XCTAssertTrue(patch.hasSuffix("\n"))
+        // What it reproduces is a patch Git accepts.
+        let applied = try await inspector.stage(try XCTUnwrap(section.hunks.first), for: change, in: repository)
+        XCTAssertEqual(try XCTUnwrap(applied.changes.first).staged, .modified)
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
