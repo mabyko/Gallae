@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import XCTest
 @testable import Gallae
@@ -2506,6 +2507,27 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(rows[7].old)
         XCTAssertEqual(rows[7].new?.id, 8)
         XCTAssertEqual(Set(rows.map(\.id)).count, rows.count)
+    }
+
+    func testDiffNumberWidthFollowsTheLargestLineNumber() {
+        func line(_ id: Int, old: Int?, new: Int?) -> RepositoryDiff.Line {
+            .init(id: id, kind: .context, oldLineNumber: old, newLineNumber: new, text: "\(id)")
+        }
+        let digit = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular).maximumAdvancement.width
+
+        // Metadata and hunk lines carry no number, so a diff of only those still reserves the two-digit floor.
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: nil, new: nil)], fontSize: 13), (digit * 2).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 7, new: 7)], fontSize: 13), (digit * 2).rounded(.up))
+        // The widest number wins whichever side it is on, so both halves of a split share one gutter.
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 999, new: 12)], fontSize: 13), (digit * 3).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 12, new: 999)], fontSize: 13), (digit * 3).rounded(.up))
+        // Six digits fit instead of being truncated by a fixed column.
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 13), (digit * 6).rounded(.up))
+        // The column tracks the font, not a constant.
+        XCTAssertLessThan(
+            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 11),
+            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 13)
+        )
     }
 
     func testDescribesNavigatorLocationForDestinationsAndObjects() {

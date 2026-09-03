@@ -5038,11 +5038,12 @@ private struct RepositoryConflictVersionView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .text(let lines):
+            let numberWidth = diffNumberWidth(for: lines, fontSize: theme.metrics.diffFontSize)
             GeometryReader { proxy in
                 ScrollView([.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(lines) { line in
-                            RepositoryConflictLineView(line: line)
+                            RepositoryConflictLineView(line: line, numberWidth: numberWidth)
                         }
                     }
                     .frame(minWidth: proxy.size.width.rounded(.down), alignment: .leading)
@@ -5089,12 +5090,13 @@ private struct RepositoryConflictVersionView: View {
 
 private struct RepositoryConflictLineView: View {
     let line: RepositoryDiff.Line
+    let numberWidth: CGFloat
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(line.newLineNumber.map(String.init) ?? "")
-                .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                .frame(width: numberWidth, alignment: .trailing)
                 .padding(.trailing, 8)
                 .foregroundStyle(theme.colors.diffMetadataText)
             Text(line.text.isEmpty ? " " : line.text)
@@ -5382,20 +5384,22 @@ private struct RepositoryDiffLinesView: View {
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
+        let numberWidth = diffNumberWidth(for: lines, fontSize: theme.metrics.diffFontSize)
         switch layout {
         case .unified:
             ForEach(lines) { line in
-                fullWidthLine(line)
+                fullWidthLine(line, numberWidth: numberWidth)
             }
         case .split:
             ForEach(RepositoryDiffSplitRow.rows(from: lines)) { row in
                 if let full = row.full {
-                    fullWidthLine(full)
+                    fullWidthLine(full, numberWidth: numberWidth)
                 } else {
                     HStack(alignment: .top, spacing: 0) {
                         RepositoryDiffLineView(
                             line: row.old,
                             side: .old,
+                            numberWidth: numberWidth,
                             choice: row.old.flatMap(lineChoice),
                             reservesChoiceColumn: reservesChoiceColumn,
                             choiceLabel: "Choose deleted line \(row.old?.oldLineNumber ?? 0)"
@@ -5404,6 +5408,7 @@ private struct RepositoryDiffLinesView: View {
                         RepositoryDiffLineView(
                             line: row.new,
                             side: .new,
+                            numberWidth: numberWidth,
                             choice: row.new.flatMap(lineChoice),
                             reservesChoiceColumn: reservesChoiceColumn,
                             choiceLabel: "Choose added line \(row.new?.newLineNumber ?? 0)"
@@ -5415,12 +5420,14 @@ private struct RepositoryDiffLinesView: View {
     }
 
     @ViewBuilder
-    private func fullWidthLine(_ line: RepositoryDiff.Line) -> some View {
+    private func fullWidthLine(_ line: RepositoryDiff.Line, numberWidth: CGFloat) -> some View {
         if let action = hunkAction(line) {
             HStack(spacing: 8) {
                 RepositoryDiffLineView(
                     line: line,
                     fillsWidth: false,
+                    singleNumberColumn: layout == .split,
+                    numberWidth: numberWidth,
                     choice: hunkChoice(line),
                     reservesChoiceColumn: reservesChoiceColumn,
                     choiceLabel: "Choose every line in this hunk"
@@ -5443,6 +5450,8 @@ private struct RepositoryDiffLinesView: View {
         } else {
             RepositoryDiffLineView(
                 line: line,
+                singleNumberColumn: layout == .split,
+                numberWidth: numberWidth,
                 choice: lineChoice(line),
                 reservesChoiceColumn: reservesChoiceColumn,
                 choiceLabel: line.kind == .deletion
@@ -5451,6 +5460,16 @@ private struct RepositoryDiffLinesView: View {
             )
         }
     }
+}
+
+/// Width of a diff's line-number column: exactly as wide as its largest line number, so a six-digit file is
+/// never truncated and a short file is not padded out to a fixed five digits. One value per diff keeps every
+/// row, and both halves of the split layout, on the same gutter.
+func diffNumberWidth(for lines: [RepositoryDiff.Line], fontSize: CGFloat) -> CGFloat {
+    let largest = lines.reduce(0) { max($0, $1.oldLineNumber ?? 0, $1.newLineNumber ?? 0) }
+    let digits = max(2, String(largest).count)
+    let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    return (CGFloat(digits) * font.maximumAdvancement.width).rounded(.up)
 }
 
 private struct RepositoryDiffLineView: View {
@@ -5464,6 +5483,11 @@ private struct RepositoryDiffLineView: View {
     /// nil is the unified layout with both line numbers; a side shows only its own number and wraps long lines.
     var side: Side? = nil
     var fillsWidth = true
+    /// Split's full-width rows are metadata and hunk headers, which carry no line number. One empty number
+    /// column instead of two lines their text up with the code in the halves beside them.
+    var singleNumberColumn = false
+    /// Shared by every row of one diff; see `diffNumberWidth(for:fontSize:)`.
+    var numberWidth: CGFloat
     /// A gutter checkbox that picks this line for a partial stage or unstage.
     var choice: (isOn: Bool, toggle: () -> Void)? = nil
     var reservesChoiceColumn = false
@@ -5488,14 +5512,14 @@ private struct RepositoryDiffLineView: View {
                 .frame(width: 18, height: 14)
                 .padding(.leading, 2)
             }
-            if side != .new {
+            if side != .new, !singleNumberColumn {
                 Text(line?.oldLineNumber.map(String.init) ?? "")
-                    .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                    .frame(width: numberWidth, alignment: .trailing)
                     .padding(.trailing, side == nil ? 6 : 8)
             }
             if side != .old {
                 Text(line?.newLineNumber.map(String.init) ?? "")
-                    .frame(width: theme.metrics.diffLineNumberWidth, alignment: .trailing)
+                    .frame(width: numberWidth, alignment: .trailing)
                     .padding(.trailing, 8)
             }
             if side == nil {

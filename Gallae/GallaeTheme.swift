@@ -53,7 +53,6 @@ struct GallaeTheme: Sendable {
         let changeListMinimumWidth: CGFloat
         let changeListIdealWidth: CGFloat
         let historyGraphWidth: CGFloat
-        let diffLineNumberWidth: CGFloat
         let diffFontSize: CGFloat
         /// Width of the leading color bar on added and deleted diff lines; 0 hides it.
         let diffChangeBarWidth: CGFloat
@@ -107,7 +106,6 @@ struct GallaeTheme: Sendable {
                 changeListMinimumWidth: 320,
                 changeListIdealWidth: 320,
                 historyGraphWidth: 44,
-                diffLineNumberWidth: 44,
                 diffFontSize: contrast ? 11 : NSFont.systemFontSize,
                 diffChangeBarWidth: contrast ? 3 : 0,
                 rowVerticalPadding: compactRows ? 3 : 7

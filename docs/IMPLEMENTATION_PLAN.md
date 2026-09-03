@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
-> 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-02
-> 현재 범위: 7C-3 줄 단위 discard·Split 체크박스·untracked 줄 단위 stage 완료. 다음 슬라이스는 미정
+> 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
+> 현재 범위: 7C-3 뒤 diff 거터 정렬 수정 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
