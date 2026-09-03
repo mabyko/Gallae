@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7C-3 뒤 diff 거터 정렬 수정 완료. 다음 슬라이스는 미정
+> 현재 범위: 7C-3 뒤 diff 거터 정렬 수정 완료. 다음 슬라이스는 미정. Git diff 설정 대응은 미착수
 
 ## 사용자 결과
 
@@ -95,6 +95,14 @@ GallaeApp
 - `RepositoryScanner`는 허용된 Library Folder 안에서만 후보를 찾고 결과를 점진적으로 전달한다.
 - `LibraryStore`는 URL bookmark, 최근 Repository, 마지막 Workspace와 자동 Fetch 선택을 저장한다.
 - 구현체가 하나뿐인 protocol, DI container, coordinator, database layer는 만들지 않는다.
+- 아키텍처 패턴은 얹지 않는다. Apple 문서와 WWDC가 주는 것은 패턴이 아니라 규칙이고 현재 구조가 이미 그 규칙을 지킨다. 근거는 `docs/research/swiftui-macos-architecture.md`.
+
+### 툴바의 알려진 제약
+
+2026-09-03에 접근성 좌표로 확인한 두 가지다.
+
+- **툴바는 넘치지 않는다.** 최소 폭 720pt 창에서 Repository 이름을 68자까지 늘려도 툴바 항목 좌표가 바뀌지 않고 `>>` 오버플로도 나타나지 않는다. 제목은 Navigator 묶음과 Fetch 사이 169pt 칸에서 잘릴 뿐이다. 좁은 창의 툴바 오버플로 대응은 필요 없다.
+- **한 ToolbarItem 안의 그룹 이름은 고칠 수 없다.** 촘촘한 구분선을 얻으려고 여러 컨트롤을 `HStack`으로 한 `ToolbarItem`에 담았는데, 그 안의 `ControlGroup`들이 접근성 트리에서 첫 컨트롤의 이름을 함께 쓴다(Publish·Refresh가 "Pull", Library가 "Navigator"). `ControlGroup(label:)`과 `.accessibilityLabel` 둘 다 이 이름을 바꾸지 못했다. AppKit이 NSToolbarItem에 붙인 이름이라 SwiftUI에 손잡이가 없다. 컨트롤마다 별도 `ToolbarItem`으로 쪼개면 고쳐지지만 구분선 배치가 깨진다. 버튼 자체의 이름은 모두 정확하므로 그대로 둔다.
 
 ## 단계별 완료 조건
 
