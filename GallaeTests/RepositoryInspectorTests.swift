@@ -4018,54 +4018,6 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(staged.changes.first).staged, .modified)
     }
 
-    /// `sem` is optional, so these run without it: the JSON shape is checked against a captured sample and
-    /// every failure path is checked to produce no summary rather than an error.
-    func testSemanticSummaryDecodesEntitiesAndFailsQuietly() throws {
-        let sample = """
-        {"summary":{"total":3},"changes":[
-          {"changeType":"modified","entityType":"struct","entityName":"RepositoryDiff"},
-          {"changeType":"modified","entityType":"struct","entityName":"Line"},
-          {"changeType":"added","entityType":"property","entityName":"isPatchHeader"},
-          {"changeType":"added","entityType":"property","entityName":"isPatchHeader"}
-        ]}
-        """
-        let changes = SemanticSummary.decode(Data(sample.utf8))
-
-        XCTAssertEqual(changes.count, 3, "the repeated entity is reported once")
-        XCTAssertEqual(changes.map(\.label), [
-            "Modified struct RepositoryDiff",
-            "Modified struct Line",
-            "Added property isPatchHeader"
-        ])
-
-        // A file sem cannot parse yields line-range entities, which repeat what the diff already shows.
-        let unparsed = """
-        {"changes":[
-          {"changeType":"deleted","entityType":"chunk","entityName":"lines 1-1"},
-          {"changeType":"added","entityType":"orphan","entityName":"module-level"}
-        ]}
-        """
-        XCTAssertTrue(SemanticSummary.decode(Data(unparsed.utf8)).isEmpty)
-
-        // Anything that is not the expected shape is no summary, never a thrown error.
-        XCTAssertTrue(SemanticSummary.decode(Data("not json".utf8)).isEmpty)
-        XCTAssertTrue(SemanticSummary.decode(Data()).isEmpty)
-        XCTAssertTrue(SemanticSummary.decode(Data(#"{"changes":[]}"#.utf8)).isEmpty)
-
-        // No tool, or a tool that is not there, means no summary.
-        let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        XCTAssertTrue(SemanticSummary.changes(for: "diff --git a/a b/a\n", in: root, tool: nil).isEmpty)
-        XCTAssertTrue(
-            SemanticSummary.changes(
-                for: "diff --git a/a b/a\n",
-                in: root,
-                tool: URL(fileURLWithPath: "/nonexistent/sem")
-            ).isEmpty
-        )
-        // An empty patch never starts a process.
-        XCTAssertTrue(SemanticSummary.changes(for: "", in: root, tool: URL(fileURLWithPath: "/bin/echo")).isEmpty)
-    }
-
     func testSectionPatchTextReproducesWhatGitWrote() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

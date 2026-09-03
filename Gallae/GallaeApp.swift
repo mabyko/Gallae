@@ -426,10 +426,6 @@ private struct GallaeSettingsView: View {
     @State private var signingState: CommitSigningState = .loading
     @State private var selectedSigningKeyID: String?
     @State private var signingErrorMessage: String?
-    @AppStorage(SemanticSummary.settingKey) private var showsSemanticSummary = true
-    /// nil until the tab looks; then the tool's path, or nil again when it is not installed.
-    @State private var semToolURL: URL?
-    @State private var hasLookedForSemTool = false
 
     var body: some View {
         TabView {
@@ -506,48 +502,10 @@ private struct GallaeSettingsView: View {
                     }
                 }
             }
-
-            Section("Semantic Summary") {
-                if let semToolURL {
-                    Toggle("Show Changed Entities Above Each Diff", isOn: $showsSemanticSummary)
-                        .accessibilityHint(
-                            "Name the functions, types, and properties a patch changes, using sem"
-                        )
-
-                    LabeledContent("sem") {
-                        Text(semToolURL.path)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-
-                    Text("Gallae hands sem the patch it already produced and shows which functions, types, and properties changed. The diff itself and staging by hunk or line are unaffected either way.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if hasLookedForSemTool {
-                    Label(
-                        "sem was not found. Install it to see which functions, types, and properties a patch changes.",
-                        systemImage: "questionmark.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                    Link("Install sem", destination: SemanticSummary.homePage)
-                        .accessibilityHint("Open the sem project page in your browser")
-                } else {
-                    Text("Looking for sem…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .formStyle(.grouped)
         .task {
             await loadSigningState()
-        }
-        .task {
-            semToolURL = await Task.detached(priority: .utility) { SemanticSummary.locateTool() }.value
-            hasLookedForSemTool = true
         }
         .onChange(of: selectedSigningKeyID) { _, newKeyID in
             guard

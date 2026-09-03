@@ -23,12 +23,6 @@
 
 **설정 때문에 Git이 아예 실행되지 않으면 그 이유를 보여 준다.** 어느 설정의 어느 값이 문제인지 화면에서 읽고 고칠 수 있다.
 
-**[sem](https://github.com/ataraxy-labs/sem)이 있으면 무엇이 바뀌었는지 함께 읽는다.** diff 위에 이 변경이 건드린 함수·타입·속성이 한 줄로 붙는다.
-
-> Modified struct Counter · Added property isZero
-
-Gallae가 만든 patch를 그대로 넘기는 방식이라 diff와 줄 단위 stage는 영향받지 않는다. `sem`이 없으면 이 줄만 나오지 않는다.
-
 ## 빌드
 
 ```sh
@@ -51,7 +45,7 @@ DEVELOPMENT_TEAM = <your-team-id>
 xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS'
 ```
 
-**요구 사항** — macOS 15 이상, Xcode, 시스템 Git(Xcode Command Line Tools). `sem`은 선택이다.
+**요구 사항** — macOS 15 이상, Xcode, 시스템 Git(Xcode Command Line Tools).
 
 ## 문서
 

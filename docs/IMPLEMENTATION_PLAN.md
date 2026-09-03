@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7E-2 C2 세그먼트 완료. 시안 8 구현 끝. 다음 슬라이스는 미정
+> 현재 범위: 시안 8 구현 끝. sem 요약은 뺐다(7D-3·7D-4). 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -118,27 +118,24 @@ GallaeApp
 - 모델에서 지우지는 않는다. `RepositoryDiff.Section.hunks`가 이 줄들을 패치 헤더로 그대로 써서 `git apply`에 넘기기 때문이다. `Line.isPatchHeader`로 표시할 때만 거른다.
 - 새 파일의 mode, rename의 옛 경로와 새 경로처럼 화면이 달리 말해 주지 않는 헤더 줄은 남긴다. hunk 안의 `-`로 시작하는 내용 줄은 `.deletion`이라 헤더로 오인되지 않는다.
 
-### 7D-3 · sem entity 요약 — 완료
+### 7D-3 · 7D-4 · sem entity 요약 — 넣었다가 뺌
 
-- `sem`이 있으면 diff 구획 머리 아래에 이 patch가 건드린 entity를 한 줄로 보여 준다. `Modified struct Counter · Added property isZero` 같은 형태다.
-- `sem diff --patch`가 unified diff를 stdin으로 받는다. 7D-1에서 고정한 patch를 그대로 넘기므로 diff 표시와 줄 단위 staging은 sem과 무관하게 동작한다. difftastic은 출력이 patch가 아니라 staging을 못 쓰게 만들어 제외했다.
-- `sem`은 선택이다. 없거나, 실행에 실패하거나, 출력이 예상 형태가 아니면 그 줄만 나오지 않는다. 오류를 올리지 않는다.
-- Finder로 실행한 앱은 PATH가 빈약하므로 PATH 외에 `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`도 찾는다.
-- `sem`은 patch의 경로를 자신의 작업 디렉터리 기준으로 풀고 그 주변 파일을 읽는다. Repository 루트에서 실행하지 않으면 entity가 `orphan module-level`로 떨어진다.
-- `sem setup`은 `diff.external`을 걸어 터미널의 `git diff`를 바꾸는 것이라 Gallae에는 필요 없다. 오히려 `--no-ext-diff`로 무시해야 우리가 파싱할 patch가 온다.
-- 테스트는 `sem` 없이 돈다. 갈무리한 JSON 표본으로 해독을 확인하고, 도구가 없거나 출력이 깨졌을 때 요약이 비는 것을 확인한다.
+`sem`이 있으면 diff 위에 그 patch가 건드린 함수·타입·속성을 한 줄로 붙이고, 설정의 Git 탭에서 켜고 끌 수 있게 했다(`2584404`, `0c97fbc`). 동작은 확인했다 — 켜고 끄면 앱 재시작 없이 줄이 붙고 떨어진다.
 
-### 7D-4 · sem 설정 항목 — 완료
+**뺀 이유**는 자리가 맞지 않아서다. 그 파일 diff를 이미 보고 있는데 그 파일의 목차를 한 줄로 되풀이하고, entity가 서넛만 넘어도 한 줄에 안 들어가 잘린다. `sem`이 잘하는 것은 여러 파일을 묶어 보여 주는 커밋 단위 목차인데, 그 자리(History의 커밋 diff)에는 애초에 붙이지 않았다. 대가로 파일을 고를 때마다 외부 프로세스를 하나 띄웠다 — 앱에서 Git이 아닌 도구를 부르는 유일한 곳이었다.
 
-- 설정의 Git 탭에 Semantic Summary 절을 둔다. `sem`이 있으면 켜고 끄는 스위치와 찾은 경로를 보여 주고, 없으면 무엇을 잃는지 한 줄로 말하고 설치 페이지 링크를 건다.
-- 기본값은 켜짐이다. `sem`이 없으면 요약이 애초에 나오지 않으므로, 이 설정은 도구를 가진 사람이 굳이 끄고 싶을 때만 의미가 있다.
-- `sem`이 파싱하지 못한 파일에는 `chunk lines 1-1` 같은 줄 범위 entity가 온다. 옆의 diff가 이미 보여 주는 정보라 걸러 낸다. 걸러 낸 뒤 남는 것이 없으면 요약 줄도 나오지 않는다.
+되살릴 자리는 History의 커밋 diff다. 그때 참고할 것:
+
+- `sem diff --patch`는 unified diff를 stdin으로 받는다. 7D-1에서 고정한 patch를 그대로 넘기면 되고, diff 표시와 줄 단위 staging은 영향받지 않는다. difftastic은 출력이 patch가 아니라 staging을 못 쓰게 만들어 제외했다.
+- `sem`은 patch의 경로를 자기 작업 디렉터리 기준으로 푼다. Repository 루트에서 실행하지 않으면 entity가 `orphan module-level`로 떨어진다.
+- Finder로 실행한 앱은 PATH가 빈약하다. PATH 외에 `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`도 찾아야 한다.
+- 파싱하지 못한 파일에는 `chunk lines 1-1` 같은 줄 범위 entity가 온다. 옆 diff가 이미 보여 주는 정보라 걸러야 한다. `.txt`·`.md`·`.svg`는 걸러 내면 남는 게 없어 켜나 끄나 같아 보인다.
 
 ### 7E-1 · diff 칸 공통 개선 — 완료
 
 시안 8(C2)의 공통 항목을 먼저 넣는다. 세그먼트 구조와 독립이다.
 
-- **섹션이 하나뿐이면 구획 머리를 두지 않는다.** 파일 이름과 상태는 diff 위에 이미 있고, 대부분의 파일이 한쪽만 가진다. sem 요약이 있으면 머리 없이도 그 줄만 남는다.
+- **섹션이 하나뿐이면 구획 머리를 두지 않는다.** 파일 이름과 상태는 diff 위에 이미 있고, 대부분의 파일이 한쪽만 가진다.
 - **hunk 머리가 위치를 말한다.** `Line 1`·`Lines 12–18`, 지우기만 하는 hunk는 `After line 4`. raw `@@ …`는 흐리게 옆에 남겨 Git을 아는 사람이 계속 읽을 수 있다.
 - **`+`·`-` 접두사를 화면에서 뺀다.** 색과 칸과 변경 막대가 이미 말하는 것이고, 빼면 문맥 줄과 코드가 같은 열에서 시작한다. `Line.text`는 그대로 둔다. `Section.hunks`가 그것을 `git apply`에 넘기기 때문이다. 표시는 `displayText`가 맡는다.
 - **새 파일과 삭제된 파일은 Split에서도 한 칸으로 그린다.** 비교할 반대편이 없어 절반이 비던 것을 없앤다(`Section.isOneSided`).
