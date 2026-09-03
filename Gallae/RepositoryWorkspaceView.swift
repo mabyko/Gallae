@@ -4583,22 +4583,23 @@ private struct RepositoryRevisionChangesView: View {
                 if let file = selectedFile {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 3) {
-                        Text(file.fileName)
-                            .font(.callout.weight(.semibold))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Text(file.path)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
+                            Text(file.fileName)
+                                .font(.headline)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(file.path)
+                            Text(file.path)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         RepositoryDiffLayoutPicker()
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
 
                     Divider()
@@ -5000,6 +5001,10 @@ private struct RepositoryDiffView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            // One height for everything on this bar: the layout picker was already small while the buttons
+            // beside it stayed regular, so the row had two control heights. `controlSize` is an environment
+            // value, so setting it here covers every control the bar grows later.
+            .controlSize(.small)
 
             Divider()
 
