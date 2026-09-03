@@ -921,21 +921,9 @@ struct RepositoryWorkspaceView: View {
         if case .loaded(let stashes) = model.stashesState { stashes.count } else { 0 }
     }
 
-    @ViewBuilder
+    /// A clean working tree empties the file list, not the screen: the header, the commit bar and the diff
+    /// pane stay where they were so the window does not change shape between one state and the next.
     private func changesContent(_ repository: RepositorySummary) -> some View {
-        if repository.changes.isEmpty {
-            ContentUnavailableView {
-                Label("Working Tree Clean", systemImage: "checkmark.circle")
-            } description: {
-                Text("There are no staged, unstaged, or untracked files.")
-            } actions: {
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([repository.rootURL])
-                }
-                .accessibilityHint("Open the Repository folder in Finder")
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
             ResizableHSplit(
                 leadingMinimum: theme.metrics.changeListMinimumWidth,
                 leadingIdeal: theme.metrics.changeListIdealWidth,
@@ -979,7 +967,6 @@ struct RepositoryWorkspaceView: View {
                     }
                 )
             }
-        }
     }
 
     private func changeList(_ repository: RepositorySummary) -> some View {
@@ -1015,11 +1002,25 @@ struct RepositoryWorkspaceView: View {
 
             Divider()
 
-            switch changeViewMode {
-            case .hierarchy:
-                changeHierarchyList(repository)
-            case .status:
-                changeStatusList(repository)
+            if repository.changes.isEmpty {
+                ContentUnavailableView {
+                    Label("Working Tree Clean", systemImage: "checkmark.circle")
+                } description: {
+                    Text("There are no staged, unstaged, or untracked files.")
+                } actions: {
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([repository.rootURL])
+                    }
+                    .accessibilityHint("Open the Repository folder in Finder")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                switch changeViewMode {
+                case .hierarchy:
+                    changeHierarchyList(repository)
+                case .status:
+                    changeStatusList(repository)
+                }
             }
 
             Divider()
