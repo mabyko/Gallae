@@ -14,10 +14,17 @@ Gallae는 `git diff`를 그대로 부르고 출력을 파싱한다(`RepositoryIn
 | `color.diff` / `color.ui` | `always` | ANSI escape가 본문에 섞여 `@@` 헤더 인식 실패. 모든 줄이 metadata가 되고 **Stage Hunk·줄 체크박스·Discard가 사라진다** |
 | `diff.noprefix` | `true` | 화면은 그려지지만 `git apply -p1`이 경로를 벗기지 못해 **"Couldn't Stage Hunk"**. 줄 단위 staging·discard 전부 실패 |
 | `core.quotepath` | **기본값 `true`** | 비 ASCII 파일명이 `"i/\355\225\234..."` octal escape로 표시된다. 한글·CJK·악센트 파일명이 전부 깨져 보인다 |
+| `diff.context` | `0` | `git apply`가 `patch does not apply`로 실패. 스테이징 불가 |
+| `diff.suppressBlankEmpty` | `true` | 빈 문맥 줄이 앞 공백 없이 나와 파서가 문맥으로 못 세고 **이후 줄 번호가 조용히 어긋난다**. 3번 줄이 "line 2"로 표시됨 |
+| `diff.algorithm` 등 **아무 설정의 잘못된 값** | 예: `histgram` | `git status`·`diff`·`log`가 전부 exit 128. 앱은 **Repository Unavailable**이 되고 원인을 알려 주지 않는다 |
 
-앞의 둘은 사용자가 설정을 바꿔야 나타나지만, **세 번째는 기본 설정에서 그냥 일어난다.** 적용은 되므로 표시 결함이다.
+`core.quotepath`는 기본 설정에서 그냥 일어난다. 적용은 되므로 표시 결함이다. `diff.suppressBlankEmpty`는 화면이 멀쩡해 보이는데 숫자만 틀려 가장 위험하다.
 
 `diff.srcPrefix`·`diff.dstPrefix`도 `diff.noprefix`와 같은 부류다.
+
+**잘못된 값은 재정의로 구제되지 않는다.** `-c diff.algorithm=histogram`도 `--diff-algorithm=histogram`도 exit 128을 막지 못한다. git이 설정 파일을 파싱하는 단계에서 죽기 때문이다. 전역 설정에 있으면 모든 Repository가 동시에 열리지 않는다. 이 부류는 고칠 수 없고 **원인을 사람에게 전달하는 것**만 할 수 있다.
+
+값의 집합은 닫혀 있다. `git-config(1)`이 `diff.algorithm`의 variants를 `default`·`myers`·`minimal`·`patience`·`histogram`으로 열거하며 `default`는 `myers`의 별칭이라 실제 알고리즘은 넷이다. 넷 모두 문법 위반 없이 apply까지 통과하는 것을 확인했다.
 
 ## 2. 이건 이 앱만의 문제가 아니다
 
@@ -46,34 +53,59 @@ Git 문서는 스크립트가 쓸 안정적 출력을 위한 장치를 갖고 �
 
 즉 접두사 관련 설정 넷을 플래그 하나가 덮는다. `git 2.45`에서 들어왔고 macOS 15 기본 git(2.50.1, Apple Git-155)에서 동작을 확인했다. 더 오래된 git까지 감안하면 예전부터 있던 `--src-prefix=a/ --dst-prefix=b/`가 같은 효과를 낸다(둘 다 `diff.noprefix=true`를 덮는 것을 실험으로 확인).
 
-## 5. 무엇을 덮고 무엇을 존중할 것인가
+## 5. 결정 — 표준 하나를 정해 고정한다
 
-기준을 하나로 두면 판단이 쉽다. **출력 형식을 바꾸는 설정은 덮고, 내용을 정하는 설정은 존중한다.** 화면에 보이는 것과 index에 적용되는 것이 갈리면 안 되므로, 표시용과 적용용 patch는 같은 것이어야 한다.
+사용자 설정으로 diff를 표현하지 않는다. Gallae가 표준 하나를 정해 고정하고, 필요해지면 **호환이 확인된 항목만** 앱 설정으로 연다. 이유는 4절까지의 실험이 보여 준 대로다. 화면에 보이는 patch와 index에 적용되는 patch가 같아야 하는데, 사용자 설정을 그대로 통과시키면 그 둘이 갈리거나 파싱이 깨진다. 앱 설정으로 옮기면 UI가 감당할 수 있는 범위 안에서만 선택지를 준다.
 
-**덮어야 하는 것 (형식)**
+고정할 호출은 이렇다.
 
-| 설정 | 방법 | 현재 |
+```
+git -C <root> \
+    -c core.quotepath=false \
+    -c diff.suppressBlankEmpty=false \
+    diff \
+    --no-color --no-ext-diff --no-textconv \
+    --default-prefix \
+    --find-renames \
+    --diff-algorithm=histogram \
+    -U3 \
+    -- <pathspec>
+```
+
+`-c`는 하위 명령보다 앞에 와야 한다. `--default-prefix`는 git 2.45 이상이며 macOS 15 기본 git(2.50.1)에서 확인했다. 더 오래된 git까지 감안하면 `--src-prefix=a/ --dst-prefix=b/`가 같은 효과를 낸다.
+
+`histogram`을 고른 이유는 실제 코드에서 hunk 경계가 더 읽기 좋게 나오기 때문이다. `myers`(git 기본값)로 바꾸는 것은 한 단어짜리 변경이다.
+
+**존중하는 것은 파일의 내용을 정의하는 설정뿐이다.** `core.autocrlf`·`core.eol`과 `.gitattributes`의 text/eol 속성은 diff 렌더링이 아니라 저장소의 성질이므로 건드리지 않는다. `.gitattributes`의 `diff=<driver>` funcname 패턴도 hunk 헤더 뒤 문맥 텍스트일 뿐이라 그대로 둔다.
+
+## 6. 나중에 설정으로 열 수 있는 것과 열면 안 되는 것
+
+지금 만들지 않는다. 필요해질 때를 위한 기록이다.
+
+**열어도 되는 것 (apply 호환 확인됨)**
+
+| 항목 | 범위 | 근거 |
 | --- | --- | --- |
-| `diff.external` | `--no-ext-diff` | ✅ 이미 |
-| textconv 필터 | `--no-textconv` | ✅ 이미 |
-| `color.ui`·`color.diff` | `--no-color` | ⚠️ diff 호출 4곳 중 2곳에만 |
-| `diff.noprefix`·`srcPrefix`·`dstPrefix`·`mnemonicPrefix` | `--default-prefix` (또는 `--src-prefix=a/ --dst-prefix=b/`) | ❌ 없음 |
-| `core.quotepath` | `-c core.quotepath=false` | ❌ 없음 |
+| 문맥 줄 수 | 1 이상 | `-U0`만 apply가 깨진다. 1은 통과 확인 |
+| diff 알고리즘 | myers·minimal·patience·histogram | 넷 모두 문법 위반 0, apply 통과 확인 |
+| Unified·Split | — | 이미 있다 |
 
-**존중해야 하는 것 (내용)**
+**열면 안 되거나, 열려면 staging을 꺼야 하는 것**
 
-- `diff.algorithm` — hunk를 어디서 자를지. 사용자가 CLI에서 보는 것과 같아야 한다
-- `diff.renames`, `diff.context`
-- `core.autocrlf`·`core.eol`과 `.gitattributes`의 text/eol 속성 — 파일의 내용을 정의한다
-- `.gitattributes`의 `diff=<driver>` funcname 패턴 — hunk 헤더 뒤 문맥 텍스트
+| 항목 | 문제 |
+| --- | --- |
+| 공백 무시 (`-w`, `--ignore-space-change`, `--ignore-blank-lines`) | 생성된 patch를 **apply 할 수 없다**(`patch failed` 확인). 표시 전용으로 두고 그 동안 hunk·줄 단위 staging과 discard를 비활성으로 해야 한다 |
+| 단어 단위 diff (`--word-diff`) | 출력이 줄 단위 patch가 아니다. 파서와 부분 패치 빌더가 다룰 수 없다 |
 
-`diff.mnemonicPrefix`만 애매하다. 형식이면서 정보를 담는다(`i/`=index, `w/`=working tree). 덮으면 `a/`·`b/`가 된다.
-
-## 6. 남는 설계 질문
+## 7. 남는 설계 질문
 
 Gallae는 `diff --git`·`index`·`---`·`+++` 네 줄을 diff 화면에 그대로 보여 준다. GUI에는 이미 "Working Tree" 구획 머리와 파일 이름이 있으므로 이 네 줄은 정보를 더하지 않는다. 이 줄들을 화면에서 빼면
 
-- `core.quotepath`의 octal escape 문제가 표시 면에서 사라진다(파일 이름은 GUI가 따로 보여 준다)
+- `core.quotepath`의 octal escape가 표시 면에서 무의미해진다(파일 이름은 GUI가 따로 보여 준다)
 - `--default-prefix`로 접두사를 정규화해도 사용자가 잃는 것이 없다
 
-즉 5절의 재정의와 이 결정은 함께 가는 것이 자연스럽다. 다만 화면에서 눈에 보이는 변화이므로 제품 결정으로 남긴다.
+즉 5절의 고정과 이 결정은 함께 가는 것이 자연스럽다. 다만 화면에서 눈에 보이는 변화이므로 제품 결정으로 남긴다.
+
+## 8. 고칠 수 없는 부류의 처리
+
+잘못된 설정 값으로 git이 아예 돌지 않을 때, 지금 앱은 "The Repository exists, but its working tree status cannot be read."라고만 말하고 유일한 행동으로 Remove from Recent를 제안한다. 실제 해법은 gitconfig 한 줄을 고치는 것이므로 이 안내는 사용자를 틀린 곳으로 보낸다. git의 stderr(`unknown value for config 'diff.algorithm': histgram`)에 원인과 위치가 이미 들어 있으니 그것을 문구에 실어야 한다.
