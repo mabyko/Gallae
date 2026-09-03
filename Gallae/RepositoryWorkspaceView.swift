@@ -4638,10 +4638,14 @@ private struct RepositoryRevisionChangesView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         RepositoryDiffLinesView(lines: lines, layout: layout)
                     }
+                    // The height keeps a short diff at the top. Switching layouts changes the scroll
+                    // view's axes, and the rebuilt scroll view forgets `defaultScrollAnchor`, centring
+                    // content smaller than the pane; filling the height leaves nothing to centre.
                     .frame(
                         minWidth: proxy.size.width.rounded(.down),
                         maxWidth: layout == .split ? proxy.size.width.rounded(.down) : nil,
-                        alignment: .leading
+                        minHeight: proxy.size.height.rounded(.down),
+                        alignment: .topLeading
                     )
                     .textSelection(.enabled)
                 }
@@ -5028,10 +5032,14 @@ private struct RepositoryDiffView: View {
                                 emptyScope(shown)
                             }
                         }
+                        // The height keeps a short diff at the top. Switching layouts changes the scroll
+                        // view's axes, and the rebuilt scroll view forgets `defaultScrollAnchor`, centring
+                        // content smaller than the pane; filling the height leaves nothing to centre.
                         .frame(
                             minWidth: proxy.size.width.rounded(.down),
                             maxWidth: layout == .split ? proxy.size.width.rounded(.down) : nil,
-                            alignment: .leading
+                            minHeight: proxy.size.height.rounded(.down),
+                            alignment: .topLeading
                         )
                         .textSelection(.enabled)
                     }
