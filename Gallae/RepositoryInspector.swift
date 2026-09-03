@@ -525,13 +525,45 @@ extension RepositoryDiff.Section {
         }
         guard hasChange else { return nil }
 
-        let metadata = lines[..<firstHunk].map(\.text)
+        let metadata = Self.partialMetadata(
+            lines[..<firstHunk].map(\.text),
+            oldCount: oldCount,
+            newCount: newCount
+        )
         let header = Self.hunkHeader(lines[start].text, oldCount: oldCount, newCount: newCount)
         let patch = (metadata + [header] + body).joined(separator: "\n") + "\n"
         return .init(id: hunkID, scope: scope, patch: Data(patch.utf8))
     }
 
     /// `@@ -12,7 +12,6 @@ func foo()` with both counts replaced; the starts and the trailing text stay.
+    /// A whole-file patch that keeps some of its lines is no longer a whole-file patch. Leaving
+    /// `new file mode` and `--- /dev/null` in place makes Git refuse it — `new file … depends on old
+    /// contents` — because the header claims the old side is empty while the body has context lines.
+    /// A partial delete is the same the other way round.
+    static func partialMetadata(_ metadata: [String], oldCount: Int, newCount: Int) -> [String] {
+        let keepsOldSide = oldCount > 0 && metadata.contains { $0.hasPrefix("--- /dev/null") }
+        let keepsNewSide = newCount > 0 && metadata.contains { $0.hasPrefix("+++ /dev/null") }
+        guard keepsOldSide || keepsNewSide else { return metadata }
+
+        // The surviving side names the file; borrow that path for the side that was /dev/null.
+        let newPath = metadata.first { $0.hasPrefix("+++ ") && !$0.hasPrefix("+++ /dev/null") }
+            .map { String($0.dropFirst(4)) }
+        let oldPath = metadata.first { $0.hasPrefix("--- ") && !$0.hasPrefix("--- /dev/null") }
+            .map { String($0.dropFirst(4)) }
+
+        return metadata.compactMap { line in
+            if keepsOldSide, line.hasPrefix("new file mode ") { return nil }
+            if keepsNewSide, line.hasPrefix("deleted file mode ") { return nil }
+            if keepsOldSide, line.hasPrefix("--- /dev/null"), let newPath {
+                return "--- " + (newPath.hasPrefix("b/") ? "a/" + newPath.dropFirst(2) : newPath[...])
+            }
+            if keepsNewSide, line.hasPrefix("+++ /dev/null"), let oldPath {
+                return "+++ " + (oldPath.hasPrefix("a/") ? "b/" + oldPath.dropFirst(2) : oldPath[...])
+            }
+            return line
+        }
+    }
+
     static func hunkHeader(_ header: String, oldCount: Int, newCount: Int) -> String {
         let fields = header.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: false)
         guard fields.count >= 3, fields[0] == "@@" else { return header }
@@ -1706,9 +1738,12 @@ struct RepositoryInspector: Sendable {
         // An untracked file's diff is a new-file patch; applying part of it adds the file to the index with
         // only the chosen lines, and the rest stays as a working tree modification.
         let stagesUntracked = !reverse && hunk.scope == .untracked && change.unstaged == .untracked
+        // The mirror of that: part of a newly added file can be taken back out of the index.
+        // `partialMetadata` has already rewritten the patch so it no longer claims to create the file.
+        let unstagesAdded = reverse && change.staged == .added && hunk.scope == .staged
         guard
             !change.isConflicted,
-            stagesUntracked || (expectedState == .modified && hunk.scope == expectedScope)
+            stagesUntracked || unstagesAdded || (expectedState == .modified && hunk.scope == expectedScope)
         else {
             throw RepositoryIndexError.unavailable
         }

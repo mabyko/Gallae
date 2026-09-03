@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7E-1 diff 칸 공통 개선 완료. 7E-2 C2 세그먼트는 미착수
+> 현재 범위: 7E-3 새 파일 부분 unstage 완료. 7E-2 C2 세그먼트는 미착수
 
 ## 사용자 결과
 
@@ -143,6 +143,15 @@ GallaeApp
 - **`+`·`-` 접두사를 화면에서 뺀다.** 색과 칸과 변경 막대가 이미 말하는 것이고, 빼면 문맥 줄과 코드가 같은 열에서 시작한다. `Line.text`는 그대로 둔다. `Section.hunks`가 그것을 `git apply`에 넘기기 때문이다. 표시는 `displayText`가 맡는다.
 - **새 파일과 삭제된 파일은 Split에서도 한 칸으로 그린다.** 비교할 반대편이 없어 절반이 비던 것을 없앤다(`Section.isOneSided`).
 - 접근성 라벨도 접두사 대신 종류와 위치를 말한다. VoiceOver가 "Added"라고 이미 말하므로 `+`는 되풀이였다.
+
+### 7E-3 · 새 파일의 부분 unstage — 완료
+
+Staged 섹션에만 hunk 동작이 없어 Working Tree 와 비대칭이던 것을 없앤다. 7C-3 에서 untracked 파일의 부분 stage 를 열었으니 그 반대 방향이다.
+
+- 새 파일의 patch 를 일부만 되돌리려면 헤더를 고쳐야 한다. `new file mode` 와 `--- /dev/null` 을 그대로 두면 Git 이 `new file … depends on old contents` 로 거절한다. 본문에 문맥 줄이 있는데 헤더는 옛 쪽이 비었다고 말하기 때문이다. `partialMetadata` 가 그 두 줄을 지우고 사라진 쪽 경로를 살아남은 쪽에서 빌려 온다. 삭제된 파일은 같은 일을 반대로 한다.
+- 모든 줄을 고르면 문맥 줄이 없어 patch 가 정말로 파일을 만드는 것이 맞으므로 헤더를 그대로 둔다.
+- `canUnstageSelectedHunks` 와 `updateIndexSynchronously` 의 관문이 `staged == .modified` 만 통과시키던 것을 `.added` 도 받도록 넓혔다.
+- 테스트 둘. 세 줄짜리 새 파일에서 한 줄만 되돌리면 index 에 두 줄이 남고 디스크 파일은 그대로인 것, 그리고 `partialMetadata` 가 전부 고른 patch 는 건드리지 않고 일부만 고른 patch 의 헤더만 고치는 것.
 
 ## 단계별 완료 조건
 

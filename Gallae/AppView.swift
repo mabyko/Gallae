@@ -1948,8 +1948,10 @@ final class AppModel {
         selectedChange.map { !$0.isConflicted && ($0.unstaged == .modified || $0.unstaged == .untracked) } ?? false
     }
 
+    /// A newly added file can have part of its index entry taken back too; the patch is rewritten so it no
+    /// longer claims to create the file. Renames and deletions still move as a whole.
     var canUnstageSelectedHunks: Bool {
-        selectedChange.map { !$0.isConflicted && $0.staged == .modified } ?? false
+        selectedChange.map { !$0.isConflicted && ($0.staged == .modified || $0.staged == .added) } ?? false
     }
 
     var canCommit: Bool {

@@ -4122,6 +4122,67 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(removed.isOneSided)
     }
 
+    func testUnstagesSelectedLinesOfANewlyAddedFile() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "base.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("one\ntwo\nthree\n", to: "new.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "new.txt"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "new.txt" })
+        XCTAssertEqual(change.staged, .added)
+
+        let diff = try await inspector.diff(for: change, in: repository)
+        let staged = try XCTUnwrap(diff.sections.first { $0.scope == .staged })
+        let lines = try textLines(in: diff, scope: .staged)
+        let two = try XCTUnwrap(lines.first { $0.text == "+two" })
+        let hunk = try XCTUnwrap(staged.hunks.first)
+
+        // Taking one line back out of the index rewrites the header: a patch with context lines cannot
+        // still claim to create the file, or Git answers "new file … depends on old contents".
+        let partial = try XCTUnwrap(
+            staged.partialHunk(id: hunk.id, keeping: [two.id], direction: .revert)
+        )
+        XCTAssertFalse(partial.patchText.contains("new file mode"))
+        XCTAssertFalse(partial.patchText.contains("--- /dev/null"))
+        XCTAssertTrue(partial.patchText.contains("--- a/new.txt"))
+
+        let after = try await inspector.unstage(partial, for: change, in: repository)
+        let left = try XCTUnwrap(after.changes.first { $0.path == "new.txt" })
+        // Still staged as an addition, now without the line that was taken back.
+        XCTAssertEqual(left.staged, .added)
+        XCTAssertEqual(left.unstaged, .modified)
+        let indexed = try gitOutput(["-C", repositoryURL.path, "show", ":new.txt"])
+        XCTAssertEqual(indexed, "one\nthree\n")
+        // The file on disk is untouched.
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "new.txt"), encoding: .utf8),
+            "one\ntwo\nthree\n"
+        )
+    }
+
+    func testPartialMetadataLeavesAWholeFilePatchAlone() {
+        let newFile = ["diff --git a/x b/x", "new file mode 100644", "index 0000000..1", "--- /dev/null", "+++ b/x"]
+        // Every line chosen means no context, so the patch really does still create the file.
+        XCTAssertEqual(RepositoryDiff.Section.partialMetadata(newFile, oldCount: 0, newCount: 3), newFile)
+        // Keeping some lines makes it a modification.
+        XCTAssertEqual(
+            RepositoryDiff.Section.partialMetadata(newFile, oldCount: 2, newCount: 3),
+            ["diff --git a/x b/x", "index 0000000..1", "--- a/x", "+++ b/x"]
+        )
+        // The same the other way round for a deletion.
+        let deleted = ["diff --git a/x b/x", "deleted file mode 100644", "--- a/x", "+++ /dev/null"]
+        XCTAssertEqual(RepositoryDiff.Section.partialMetadata(deleted, oldCount: 3, newCount: 0), deleted)
+        XCTAssertEqual(
+            RepositoryDiff.Section.partialMetadata(deleted, oldCount: 3, newCount: 2),
+            ["diff --git a/x b/x", "--- a/x", "+++ b/x"]
+        )
+    }
+
     func testStagesAndUnstagesOnlySelectedTextHunk() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
