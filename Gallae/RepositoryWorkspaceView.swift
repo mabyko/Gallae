@@ -4597,7 +4597,7 @@ private struct RepositoryRevisionChangesView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        RepositoryDiffLayoutPicker()
+                        RepositoryDiffLayoutPicker(canSplit: canSplitSelectedPatch)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -4608,6 +4608,12 @@ private struct RepositoryRevisionChangesView: View {
                 revisionPatchContent
             }
         }
+    }
+
+    /// A saved version with nothing to compare against — an added or deleted file — has no Split to offer.
+    private var canSplitSelectedPatch: Bool {
+        guard case .loaded(let patch) = patchState else { return true }
+        return !patch.content.isOneSided
     }
 
     @ViewBuilder
@@ -4948,7 +4954,7 @@ private struct RepositoryDiffView: View {
 
                 Spacer()
 
-                RepositoryDiffLayoutPicker()
+                RepositoryDiffLayoutPicker(canSplit: !diff.sections.allSatisfy(\.isOneSided))
 
                 if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
                     Button("Mark Resolved…") {
@@ -5318,20 +5324,37 @@ struct RepositoryDiffSplitRow: Equatable, Identifiable {
 
 /// The Unified/Split toggle in diff headers; the last choice is remembered across files and windows.
 private struct RepositoryDiffLayoutPicker: View {
+    /// False for a new or deleted file: there is no opposite version, so Split would draw one column and the
+    /// control would claim a layout the diff is not in.
+    var canSplit = true
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
 
+    /// Reads Unified while Split is unavailable so the control never highlights a layout the diff is not in,
+    /// and writes through so the remembered choice survives a file that cannot be split.
+    private var shown: Binding<RepositoryDiffLayout> {
+        Binding(get: { canSplit ? layout : .unified }, set: { layout = $0 })
+    }
+
     var body: some View {
-        Picker("Diff Layout", selection: $layout) {
+        // The whole control is disabled rather than the Split segment alone: macOS ignores `disabled` on an
+        // individual segment of a segmented picker, so a lone dimmed segment stays clickable.
+        Picker("Diff Layout", selection: shown) {
             ForEach(RepositoryDiffLayout.allCases) { layout in
                 Text(layout.title).tag(layout)
             }
         }
+        .disabled(!canSplit)
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.small)
         .fixedSize()
-        .help("Show the diff in one column, or the old and new versions side by side")
+        .help(
+            canSplit
+                ? "Show the diff in one column, or the old and new versions side by side"
+                : "This file has no opposite version to compare, so it is shown in one column"
+        )
         .accessibilityLabel("Diff Layout")
+        .accessibilityValue(canSplit ? "" : "Split unavailable, no opposite version to compare")
     }
 }
 

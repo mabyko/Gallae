@@ -4073,10 +4073,12 @@ final class RepositoryInspectorTests: XCTestCase {
         try initializeRepository(at: repositoryURL)
         try write("one\ntwo\n", to: "kept.txt", in: repositoryURL)
         try write("gone\n", to: "removed.txt", in: repositoryURL)
+        try write("one\ntwo\n", to: "grown.txt", in: repositoryURL)
         try commitAll(in: repositoryURL, message: "Initial")
         try write("one\nchanged\n", to: "kept.txt", in: repositoryURL)
         try FileManager.default.removeItem(at: repositoryURL.appending(path: "removed.txt"))
         try write("fresh\n", to: "added.txt", in: repositoryURL)
+        try write("one\ntwo\nthree\nfour\n", to: "grown.txt", in: repositoryURL)
 
         let inspector = RepositoryInspector()
         let repository = try await inspector.inspect(at: repositoryURL)
@@ -4095,6 +4097,10 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(added.isOneSided)
         let removed = try await section("removed.txt")
         XCTAssertTrue(removed.isOneSided)
+        // An ordinary edit that only adds lines still has context to line the two columns up against, so
+        // Split keeps comparing. Only a file with no opposite version collapses to one column.
+        let grown = try await section("grown.txt")
+        XCTAssertFalse(grown.isOneSided)
     }
 
     func testUnstagesSelectedLinesOfANewlyAddedFile() async throws {

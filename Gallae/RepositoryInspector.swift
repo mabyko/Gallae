@@ -432,6 +432,28 @@ struct RepositoryDiff: Equatable, Sendable {
     let sections: [Section]
 }
 
+extension RepositoryDiff.Section.Content {
+    /// A file with no opposite version at all: every line added, or every line removed, and no context
+    /// between them. An ordinary edit that happens to only add lines is *not* one-sided — its context lines
+    /// are what the two columns line up against, which is the whole point of reading it side by side.
+    /// The History pane holds a bare `Content`, so this lives here and `Section` reads it.
+    var isOneSided: Bool {
+        guard case .text(let lines) = self else { return false }
+        var sawAddition = false
+        var sawDeletion = false
+        for line in lines {
+            switch line.kind {
+            case .context: return false
+            case .addition: sawAddition = true
+            case .deletion: sawDeletion = true
+            case .metadata, .hunk: break
+            }
+            if sawAddition, sawDeletion { return false }
+        }
+        return sawAddition != sawDeletion
+    }
+}
+
 extension RepositoryDiff.Section {
     /// Additions and deletions — what a reader counts as changed. Context and headers are not changes.
     var changedLineCount: Int {
@@ -442,17 +464,7 @@ extension RepositoryDiff.Section {
     /// True when every changed line is on the same side — a new file, a deleted file, or a hunk that only
     /// adds or only removes. Split has nothing to compare against, so it draws one column instead of leaving
     /// half the width empty.
-    var isOneSided: Bool {
-        guard case .text(let lines) = content else { return false }
-        var sawAddition = false
-        var sawDeletion = false
-        for line in lines {
-            if line.kind == .addition { sawAddition = true }
-            if line.kind == .deletion { sawDeletion = true }
-            if sawAddition, sawDeletion { return false }
-        }
-        return sawAddition != sawDeletion
-    }
+    var isOneSided: Bool { content.isOneSided }
 
     /// The section's patch exactly as Git wrote it. `Line.text` keeps each line's original prefix, so joining
     /// them reproduces the bytes `git diff` produced.
