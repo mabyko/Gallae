@@ -403,16 +403,19 @@ struct RepositoryDiff: Equatable, Sendable {
             }
         }
 
-        /// The lines Git writes above the first hunk to name the file and its blobs. `git apply` needs them,
-        /// so they stay in the patch `hunks` builds; the view around the diff already names the file and its
-        /// status, so it hides them. Other header lines — a new file's mode, a rename's old and new paths —
-        /// say something the view does not, and are kept.
+        /// The lines Git writes above the first hunk that the view around the diff already says itself —
+        /// the file name and its blobs, and the mode a new or deleted file gets, which the file list shows
+        /// as an Added or Deleted badge. `git apply` needs them, so they stay in the patch `hunks` builds.
+        /// Header lines the view does not say — a chmod's `old mode`/`new mode`, a rename's old path — are
+        /// kept.
         var isPatchHeader: Bool {
             guard kind == .metadata else { return false }
             return text.hasPrefix("diff --git ")
                 || text.hasPrefix("index ")
                 || text.hasPrefix("--- ")
                 || text.hasPrefix("+++ ")
+                || text.hasPrefix("new file mode ")
+                || text.hasPrefix("deleted file mode ")
         }
     }
 

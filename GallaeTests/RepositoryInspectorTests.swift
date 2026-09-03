@@ -3957,6 +3957,29 @@ final class RepositoryInspectorTests: XCTestCase {
         }
     }
 
+    func testNewFileModeIsHiddenFromViewButKeptInTheAppliedPatch() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        try initializeRepository(at: repositoryURL)
+        try write("one\n", to: "kept.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try write("added\n", to: "new.txt", in: repositoryURL)
+        try runGit(["-C", repositoryURL.path, "add", "new.txt"])
+
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: repositoryURL)
+        let added = try XCTUnwrap(repository.changes.first { $0.path == "new.txt" })
+        let diff = try await inspector.diff(for: added, in: repository)
+        let section = try XCTUnwrap(diff.sections.first { $0.scope == .staged })
+        guard case .text(let lines) = section.content else { return XCTFail("expected text content") }
+
+        // The file list already badges this Added, so the mode line only repeats it.
+        XCTAssertTrue(lines.contains { $0.text.hasPrefix("new file mode ") })
+        XCTAssertFalse(lines.filter { !$0.isPatchHeader }.contains { $0.text.hasPrefix("new file mode ") })
+        // Still in what Git is handed back.
+        XCTAssertTrue(try XCTUnwrap(section.hunks.first).patchText.contains("new file mode "))
+    }
+
     func testPatchHeaderIsHiddenFromViewButKeptInTheAppliedPatch() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
