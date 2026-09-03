@@ -5193,6 +5193,12 @@ private struct RepositoryDiffLayoutPicker: View {
     }
 }
 
+/// `task(id:)` reruns when either half changes, so turning the setting off clears the summary at once.
+private struct SemanticSummaryRequest: Equatable {
+    let patch: String?
+    let isEnabled: Bool
+}
+
 private struct RepositoryDiffSectionView: View {
     let section: RepositoryDiff.Section
     let layout: RepositoryDiffLayout
@@ -5209,8 +5215,10 @@ private struct RepositoryDiffSectionView: View {
     @State private var chosenLineIDs: Set<Int> = []
     @State private var lastToggledLineID: Int?
     @State private var pendingDiscard: PendingDiscard?
-    /// Empty whenever `sem` is not installed or has nothing to say; the diff below never depends on it.
+    /// Empty whenever `sem` is not installed, turned off in Settings, or has nothing to say; the diff below
+    /// never depends on it.
     @State private var semanticChanges: [SemanticChange] = []
+    @AppStorage(SemanticSummary.settingKey) private var showsSemanticSummary = true
 
     private struct PendingDiscard: Identifiable {
         let hunk: RepositoryDiff.Hunk
@@ -5239,9 +5247,9 @@ private struct RepositoryDiffSectionView: View {
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.colors.badgeBackground)
-            .task(id: section.patchText) {
+            .task(id: SemanticSummaryRequest(patch: section.patchText, isEnabled: showsSemanticSummary)) {
                 semanticChanges = []
-                guard let patch = section.patchText else { return }
+                guard showsSemanticSummary, let patch = section.patchText else { return }
                 let root = repositoryRootURL
                 semanticChanges = await Task.detached(priority: .utility) {
                     SemanticSummary.changes(for: patch, in: root)

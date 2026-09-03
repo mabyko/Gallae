@@ -4851,6 +4851,11 @@ struct SemanticChange: Equatable, Sendable, Identifiable {
 }
 
 enum SemanticSummary {
+    /// Defaults to on: with `sem` absent the summary never appears, so the setting only matters to someone
+    /// who has the tool and would rather not see it.
+    static let settingKey = "showsSemanticSummary"
+    static let homePage = URL(string: "https://github.com/ataraxy-labs/sem")!
+
     private struct Payload: Decodable {
         struct Change: Decodable {
             let changeType: String
@@ -4879,10 +4884,15 @@ enum SemanticSummary {
         return nil
     }
 
+    /// `sem` falls back to these when it cannot parse a file. They name line ranges, which the diff beside
+    /// them already shows, so they are dropped rather than shown as a summary that says nothing.
+    private static let unnamedEntityTypes: Set<String> = ["chunk", "orphan"]
+
     static func decode(_ data: Data) -> [SemanticChange] {
         guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else { return [] }
         var seen: Set<String> = []
         return payload.changes.compactMap { change in
+            guard !unnamedEntityTypes.contains(change.entityType) else { return nil }
             let entry = SemanticChange(
                 changeType: change.changeType,
                 entityType: change.entityType,

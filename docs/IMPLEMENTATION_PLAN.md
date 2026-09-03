@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 7D-3 sem entity 요약 완료. 다음 슬라이스는 미정
+> 현재 범위: 7D-4 sem 설정 항목 완료. 다음 슬라이스는 미정
 
 ## 사용자 결과
 
@@ -127,6 +127,12 @@ GallaeApp
 - `sem`은 patch의 경로를 자신의 작업 디렉터리 기준으로 풀고 그 주변 파일을 읽는다. Repository 루트에서 실행하지 않으면 entity가 `orphan module-level`로 떨어진다.
 - `sem setup`은 `diff.external`을 걸어 터미널의 `git diff`를 바꾸는 것이라 Gallae에는 필요 없다. 오히려 `--no-ext-diff`로 무시해야 우리가 파싱할 patch가 온다.
 - 테스트는 `sem` 없이 돈다. 갈무리한 JSON 표본으로 해독을 확인하고, 도구가 없거나 출력이 깨졌을 때 요약이 비는 것을 확인한다.
+
+### 7D-4 · sem 설정 항목 — 완료
+
+- 설정의 Git 탭에 Semantic Summary 절을 둔다. `sem`이 있으면 켜고 끄는 스위치와 찾은 경로를 보여 주고, 없으면 무엇을 잃는지 한 줄로 말하고 설치 페이지 링크를 건다.
+- 기본값은 켜짐이다. `sem`이 없으면 요약이 애초에 나오지 않으므로, 이 설정은 도구를 가진 사람이 굳이 끄고 싶을 때만 의미가 있다.
+- `sem`이 파싱하지 못한 파일에는 `chunk lines 1-1` 같은 줄 범위 entity가 온다. 옆의 diff가 이미 보여 주는 정보라 걸러 낸다. 걸러 낸 뒤 남는 것이 없으면 요약 줄도 나오지 않는다.
 
 ## 단계별 완료 조건
 

@@ -4015,6 +4015,15 @@ final class RepositoryInspectorTests: XCTestCase {
             "Added property isPatchHeader"
         ])
 
+        // A file sem cannot parse yields line-range entities, which repeat what the diff already shows.
+        let unparsed = """
+        {"changes":[
+          {"changeType":"deleted","entityType":"chunk","entityName":"lines 1-1"},
+          {"changeType":"added","entityType":"orphan","entityName":"module-level"}
+        ]}
+        """
+        XCTAssertTrue(SemanticSummary.decode(Data(unparsed.utf8)).isEmpty)
+
         // Anything that is not the expected shape is no summary, never a thrown error.
         XCTAssertTrue(SemanticSummary.decode(Data("not json".utf8)).isEmpty)
         XCTAssertTrue(SemanticSummary.decode(Data()).isEmpty)
