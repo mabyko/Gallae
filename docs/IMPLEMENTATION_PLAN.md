@@ -1,7 +1,7 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 시안 8 후속 — 새로고침 선택 보존, diff 표시 판단 통합, 좁은 History·접근성 개선. sem 요약은 뺐다(7D-3·7D-4).
+> 현재 범위: 시안 8 후속 — 선택 보존·diff 표시 통합·좁은 History·접근성 개선과 책임별 파일 분리 완료. sem 요약은 뺐다(7D-3·7D-4). 다음 슬라이스는 미정.
 
 ## 시안 8 후속 개선
 
@@ -98,7 +98,9 @@ GallaeApp
    └─ GallaeTheme
 ```
 
-- `AppModel`은 화면 전환, 선택과 비동기 작업 취소만 맡는다.
+- `AppView.swift`는 앱 루트와 시트 진입을, `AppModel.swift`는 화면 전환·선택·Git 작업 조정과 비동기 결과의 유효성 검사를 맡는다. 같은 저장소 갱신과 다른 저장소 진입을 구분하며 Git 명령 자체는 Inspector에 둔다.
+- `RepositoryWorkspaceView.swift`는 Navigator와 Changes·History·Stashes·Reflog 화면 구성을 맡는다. 공용 파일 목록·diff 선택기·행 렌더링은 `RepositoryDiffView.swift`에 둔다.
+- `WorkspaceLayout.swift`는 패널 폭 계산·분할선 조작·AppKit 사이드바 보정·스크롤바 정렬을 모은다. 기존 macOS 보정의 근거와 폭 계산 테스트는 유지한다.
 - `RepositoryInspector`는 Git 실행과 출력을 숨기고 불변 snapshot과 진행 중인 Merge·Rebase 상태·Continue·Abort, Interactive Rebase 계획·실행, file diff, commit history/patch와 Revert, Stash 목록·파일·patch·생성·적용·삭제, HEAD Reflog, local branch 목록·생성·전환·Merge·Rebase, configured Remote와 Fetch/Pull/Push 결과를 돌려준다.
 - `RepositoryScanner`는 허용된 Library Folder 안에서만 후보를 찾고 결과를 점진적으로 전달한다.
 - `LibraryStore`는 URL bookmark, 최근 Repository, 마지막 Workspace와 자동 Fetch 선택을 저장한다.

@@ -17,6 +17,9 @@
 		110000000000000000000008 /* RepositoryLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000B /* RepositoryLibraryView.swift */; };
 		110000000000000000000009 /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000C /* LibraryStore.swift */; };
 		11000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 12000000000000000000000E /* Assets.xcassets */; };
+		110000000000000000000010 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000010 /* AppModel.swift */; };
+		110000000000000000000011 /* WorkspaceLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000011 /* WorkspaceLayout.swift */; };
+		110000000000000000000012 /* RepositoryDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000012 /* RepositoryDiffView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +47,9 @@
 		12000000000000000000000C /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		12000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		12000000000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		120000000000000000000010 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		120000000000000000000011 /* WorkspaceLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLayout.swift; sourceTree = "<group>"; };
+		120000000000000000000012 /* RepositoryDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDiffView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +87,9 @@
 				12000000000000000000000E /* Assets.xcassets */,
 				120000000000000000000001 /* GallaeApp.swift */,
 				120000000000000000000002 /* AppView.swift */,
+				120000000000000000000012 /* RepositoryDiffView.swift */,
+				120000000000000000000011 /* WorkspaceLayout.swift */,
+				120000000000000000000010 /* AppModel.swift */,
 				120000000000000000000005 /* GallaeTheme.swift */,
 				12000000000000000000000C /* LibraryStore.swift */,
 				12000000000000000000000A /* RepositoryScanner.swift */,
@@ -217,6 +226,9 @@
 			files = (
 				110000000000000000000001 /* GallaeApp.swift in Sources */,
 				110000000000000000000002 /* AppView.swift in Sources */,
+				110000000000000000000012 /* RepositoryDiffView.swift in Sources */,
+				110000000000000000000011 /* WorkspaceLayout.swift in Sources */,
+				110000000000000000000010 /* AppModel.swift in Sources */,
 				110000000000000000000005 /* GallaeTheme.swift in Sources */,
 				110000000000000000000009 /* LibraryStore.swift in Sources */,
 				110000000000000000000007 /* RepositoryScanner.swift in Sources */,
