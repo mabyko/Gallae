@@ -1228,6 +1228,12 @@ final class AppModel {
         }
     }
 
+    func folderURL(for branch: String) -> URL? {
+        guard let repository else { return nil }
+        if repository.head == .branch(branch) { return repository.rootURL }
+        return localBranchWorktreeURLs[branch]
+    }
+
     func loadLocalBranches() async {
         guard !Task.isCancelled else { return }
         guard let repository else {

@@ -473,6 +473,10 @@ struct RepositoryWorkspaceView: View {
     @ViewBuilder
     private func branchMenuItems(for repository: RepositorySummary) -> some View {
         let currentBranch: String? = if case .branch(let branch) = repository.head { branch } else { nil }
+        RepositoryFolderMenu(folderURL: repository.rootURL) {
+            model.present($0, title: "Couldn’t Open Folder")
+        }
+        Divider()
         if case .loaded(let branches) = model.localBranchesState {
             let otherBranches = branches.filter { $0 != currentBranch }
             if !otherBranches.isEmpty {
@@ -1498,7 +1502,11 @@ private struct RepositoryNavigatorView: View {
             }
         )
         .contextMenu {
+            RepositoryFolderMenu(folderURL: model.folderURL(for: branch)) {
+                model.present($0, title: "Couldn’t Open Folder")
+            }
             if !isCurrent {
+                Divider()
                 if let worktreeURL {
                     Button("Open Worktree", systemImage: "folder") {
                         performPrimaryAction(for: branch)

@@ -77,6 +77,7 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 
 ### 시각 언어와 조작
 
+- branch 우클릭과 상단 작업 위치 메뉴의 Open in에서 Finder 또는 기본 터미널로 폴더를 열고, Copy Path로 경로를 복사한다. 현재 branch는 현재 폴더, 다른 Worktree에서 체크아웃한 branch는 해당 폴더를 대상으로 하며, 체크아웃된 폴더가 없는 branch에서는 비활성화한다. checkout은 바뀌지 않는다. Settings → General → Terminal Application에서 설치된 Terminal·Ghostty·Warp·iTerm2·cmux·Kaku·WezTerm·kitty·Alacritty·Rio 중 선택하며 기본값은 Terminal이다. Other…로 다른 앱을 선택할 수 있고, 사용자 지정 앱은 폴더 열기를 지원해야 한다. 선택은 재실행 후에도 유지한다. 앱이 사라졌거나 실행에 실패하면 오류를 표시한다.
 - Appearance → Accent Color에서 앱 선택·컨트롤의 강조색을 고른다. 기본값은 macOS 강조색을 따르는 System이며, 색상표에서 고른 값은 재실행 후에도 유지된다. History 그래프·배지 색과 diff의 추가·삭제 색은 별도로 유지한다.
 - 시스템 글꼴·색상·SF Symbols·표준 macOS 컨트롤을 우선한다. 재질·대비·밀도는 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)의 역할을 따른다.
 - 사이드바·툴바에는 시스템 재질을 사용하고 콘텐츠 패널은 불투명하게 둔다. System·Light·Dark, 반투명 여부, Compact Rows를 지원하며 시스템 접근성 설정에 응답한다.

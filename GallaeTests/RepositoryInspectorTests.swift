@@ -5,6 +5,67 @@ import XCTest
 
 final class RepositoryInspectorTests: XCTestCase {
     @MainActor
+    func testTerminalLaunchKeepsDirectoryLiteralAndValidatesCustomApplications() async throws {
+        let directory = try makeTemporaryDirectory().appending(path: "'quoted' $(touch nope); 한글")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for terminal in [TerminalApplication.kaku, .wezTerm, .kitty, .alacritty, .rio] {
+            let arguments = try XCTUnwrap(terminal.launchArguments(for: directory))
+            XCTAssertEqual(arguments.last, directory.path)
+            XCTAssertEqual(arguments.filter { $0 == directory.path }.count, 1)
+            XCTAssertFalse(arguments.contains("-c"))
+        }
+        let application = try XCTUnwrap(TerminalApplication.terminal.applicationURL)
+        XCTAssertNoThrow(try FolderOpening.validateApplication(application))
+        XCTAssertThrowsError(try FolderOpening.validateApplication(directory))
+        XCTAssertThrowsError(try FolderOpening.validateApplication(URL(string: "https://example.com/Terminal.app")!))
+        let fakeApp = directory.appending(path: "Empty.app")
+        try FileManager.default.createDirectory(at: fakeApp, withIntermediateDirectories: true)
+        do {
+            try await FolderOpening.open(directory, in: .custom, customPath: fakeApp.path)
+            XCTFail("An invalid app must fail before launch")
+        } catch FolderOpening.Failure.invalidApplication { }
+        do {
+            try await FolderOpening.open(directory, in: .custom)
+            XCTFail("An unset custom app must not fall back to another terminal")
+        } catch FolderOpening.Failure.missingApplication { }
+    }
+
+    @MainActor
+    func testExternalFolderActionsTargetCheckedOutBranchesAndRejectFiles() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "main 'quoted' $folder; 한글")
+        let linked = fixture.appending(path: "linked #folder")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try initializeRepository(at: root)
+        try write("initial\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try runGit(["-C", root.path, "branch", "not-checked-out"])
+        try runGit(["-C", root.path, "worktree", "add", "-b", "topic", linked.path])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: linked)
+        XCTAssertTrue(opened)
+        XCTAssertEqual(model.folderURL(for: "topic")?.standardizedFileURL.path, linked.standardizedFileURL.path)
+        await model.loadLocalBranches()
+        XCTAssertEqual(model.folderURL(for: "main")?.standardizedFileURL.path, root.standardizedFileURL.path)
+        XCTAssertNil(model.folderURL(for: "not-checked-out"))
+        XCTAssertNil(model.folderURL(for: "unknown"))
+        XCTAssertEqual(model.repository?.head, .branch("topic"))
+        XCTAssertNoThrow(try FolderOpening.validateDirectory(root))
+        XCTAssertNoThrow(try FolderOpening.validateDirectory(linked))
+        XCTAssertThrowsError(try FolderOpening.validateDirectory(fixture.appending(path: "missing")))
+        XCTAssertThrowsError(try FolderOpening.validateDirectory(URL(string: "https://example.com")!))
+        do {
+            try await FolderOpening.open(root.appending(path: "file.txt"), in: .terminal)
+            XCTFail("A file must not be sent to a terminal as an executable document")
+        } catch FolderOpening.Failure.notDirectory { }
+    }
+
+    @MainActor
     func testCancelledHistoryLoadKeepsBranchWorktreeIndicators() async throws {
         let fixture = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixture) }

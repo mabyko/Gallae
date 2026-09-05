@@ -656,6 +656,10 @@ private struct GallaeSettingsView: View {
 
     private var generalSettings: some View {
         Form {
+            Section("External Applications") {
+                TerminalApplicationPicker()
+            }
+
             Section("Author Avatars") {
                 Toggle("Load GitHub Avatars", isOn: $loadsGitHubAvatars)
                     .accessibilityHint(
