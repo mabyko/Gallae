@@ -275,6 +275,7 @@ final class AppModel {
     }
     var historySelection: RepositoryHistoryScope? {
         didSet {
+            selectedWorktreeURL = nil
             historyNavigationRevision += 1
             historyNavigationMessage = nil
         }
@@ -288,7 +289,20 @@ final class AppModel {
     var historyReference: String? { historyScope?.historyReference }
     var tagsState: RepositoryTagsLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
-    private(set) var localBranchWorktreeURLs: [String: URL] = [:]
+    private(set) var worktrees: [RepositoryWorktree] = []
+    private(set) var selectedWorktreeURL: URL?
+    var localBranchWorktreeURLs: [String: URL] { RepositoryWorktree.branchURLs(in: worktrees) }
+
+    func selectWorktree(_ worktree: RepositoryWorktree) {
+        historySelection = nil
+        selectedWorktreeURL = worktree.url
+    }
+
+    func canRemoveWorktree(at url: URL) -> Bool {
+        guard let repository, !isLoading, !isSyncing,
+              let worktree = worktrees.first(where: { sameFileLocation($0.url, url) }) else { return false }
+        return worktree.removalRestriction(currentURL: repository.rootURL) == nil
+    }
     var remotesState: RepositoryRemotesLoadState = .notLoaded
     var selectedHistoryFileID: String?
     var commitFilesState: RepositoryCommitFilesLoadState = .noSelection
@@ -417,7 +431,11 @@ final class AppModel {
     var historyRequest: RepositoryHistoryRequest? {
         guard let repository else { return nil }
         let focusReference: String?
-        if case .remote = historySelection { focusReference = nil }
+        if let selectedWorktreeURL {
+            let headID = worktrees.first(where: { $0.url == selectedWorktreeURL })?.headID
+            focusReference = headID?.contains(where: { $0 != "0" }) == true ? headID : nil
+        }
+        else if case .remote = historySelection { focusReference = nil }
         else { focusReference = historySelection?.historyReference }
         return .init(
             rootURL: repository.rootURL, revision: repositoryRevision, reference: historyReference,
@@ -816,7 +834,12 @@ final class AppModel {
         )
         if opened {
             if case .branch(let name) = repository?.head { historySelection = .branch(name) }
-            else { historySelection = nil }
+            else {
+                await loadLocalBranches()
+                if let worktree = worktrees.first(where: { sameFileLocation($0.url, url) }) {
+                    selectWorktree(worktree)
+                } else { historySelection = nil }
+            }
         }
         return opened
     }
@@ -885,7 +908,6 @@ final class AppModel {
     func showIntegrateBranch(preselecting branch: String? = nil) {
         guard canIntegrateBranch, let repository else { return }
         localBranchesState = .notLoaded
-        localBranchWorktreeURLs = [:]
         repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL, branch: branch)
     }
 
@@ -1238,7 +1260,8 @@ final class AppModel {
         guard !Task.isCancelled else { return }
         guard let repository else {
             localBranchesState = .notLoaded
-            localBranchWorktreeURLs = [:]
+            worktrees = []
+            selectedWorktreeURL = nil
             return
         }
         let rootURL = repository.rootURL
@@ -1248,7 +1271,7 @@ final class AppModel {
 
         do {
             async let branchesRequest = inspector.localBranches(in: repository)
-            async let worktreesRequest = inspector.localBranchWorktrees(in: repository)
+            async let worktreesRequest = inspector.worktrees(in: repository)
             let (branches, worktrees) = try await (branchesRequest, worktreesRequest)
             guard
                 revision == repositoryRevision,
@@ -1256,7 +1279,13 @@ final class AppModel {
             else {
                 return
             }
-            localBranchWorktreeURLs = worktrees
+            if let selectedWorktreeURL {
+                let previous = self.worktrees.first { $0.url == selectedWorktreeURL }
+                let updated = worktrees.first { $0.url == selectedWorktreeURL }
+                if previous?.headID != updated?.headID { historyNavigationRevision += 1 }
+                if updated == nil { self.selectedWorktreeURL = nil }
+            }
+            self.worktrees = worktrees
             localBranchesState = .loaded(branches)
         } catch is CancellationError {
             return
@@ -1267,7 +1296,6 @@ final class AppModel {
             else {
                 return
             }
-            localBranchWorktreeURLs = [:]
             localBranchesState = .failed(Self.message(for: error))
         }
     }
@@ -1344,6 +1372,30 @@ final class AppModel {
             guard generation == inspectionGeneration else { return false }
             present(error, title: "Couldn’t Create Branch")
             return false
+        }
+    }
+
+    func createWorktree(at destination: URL, branch: String, creatingBranch: Bool, startPoint: String) async -> URL? {
+        guard !isLoading, !isSyncing, let repository else { return nil }
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
+        }
+        do {
+            let url = try await inspector.createWorktree(
+                at: destination, branch: branch.trimmingCharacters(in: .whitespacesAndNewlines),
+                creatingBranch: creatingBranch, startPoint: startPoint, in: repository
+            )
+            guard generation == inspectionGeneration else { return url }
+            repositoryRevision += 1
+            await loadLocalBranches()
+            return url
+        } catch {
+            if generation == inspectionGeneration { present(error, title: "Couldn’t Create Worktree") }
+            return nil
         }
     }
 
@@ -3031,7 +3083,7 @@ final class AppModel {
         }
         reflogState = .notLoaded
         localBranchesState = .notLoaded
-        if !isSameRepository { localBranchWorktreeURLs = [:] }
+        if !isSameRepository { worktrees = []; selectedWorktreeURL = nil }
         remotesState = .notLoaded
         tagsState = .notLoaded
         let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)

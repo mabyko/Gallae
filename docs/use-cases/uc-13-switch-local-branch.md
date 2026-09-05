@@ -26,10 +26,22 @@
 - 선택한 branch가 사라졌거나 local 변경과 충돌하면 전환하지 않고 기존 branch·index·working tree와 Workspace를 유지한다.
 - 누락되었거나 정리 가능한 Worktree는 열지 않는다.
 
+## Worktrees 목록과 생성
+
+- 연결된 Worktree가 하나라도 있으면 Navigator의 Branches 위에 접을 수 있는 Worktrees 섹션을 표시한다. 기본 폴더만 있으면 생략한다.
+- 목록은 Git이 등록한 모든 작업 폴더를 표시한다. 폴더 이름 아래에 branch 또는 `Detached HEAD · SHA`를 표시하고 현재 폴더는 체크 표시, 다른 기본 폴더는 `Primary`로 구분한다. 같은 이름의 폴더는 부모 경로를 함께 표시한다.
+- 한 번 클릭하거나 방향키로 선택하면 전체 History에서 그 폴더의 HEAD로 이동한다. 작업 폴더와 명시적인 History 필터는 유지한다. HEAD가 필터 밖에 있으면 기존 필터 안내를 표시한다.
+- 더블클릭·Return·문맥 메뉴의 `Open Worktree`는 선택한 폴더를 연다. `Open in`과 `Copy Path`도 해당 폴더를 대상으로 한다.
+- `Branches ⋯`·`Worktrees ⋯`·상단 branch 메뉴의 `New Worktree…`로 생성 창을 연다. 체크아웃된 폴더가 없는 branch의 우클릭 메뉴에서는 해당 branch를 미리 선택한다.
+- 새 branch는 이름과 시작점(기본 `HEAD`), 기존 branch는 사용 중이 아닌 local branch를 고른다. 생성 위치와 새 폴더 이름을 정하고 `Create Worktree`를 누른다. `Open after creation`은 기본으로 켜져 있다.
+- 이미 존재하는 경로·중복 branch·잘못된 시작점·이미 체크아웃된 branch는 거부한다. 생성은 현재 폴더의 branch·index·수정 파일을 바꾸지 않는다.
+- 기본 폴더는 제거 메뉴를 제공하지 않는다. 현재·잠긴·누락된 폴더는 제거할 수 없다. 그 밖의 폴더도 수정 파일이나 untracked 파일이 있으면 Git이 제거를 거부한다. Worktrees 목록의 제거는 branch와 commit을 남긴다. 강제 제거·자동 prune·자동 unlock은 하지 않는다.
+- 목록 갱신 중에는 이전 정보를 유지하고 다른 저장소로 이동하면 초기화한다. 누락된 폴더도 등록 정보를 남겨 표시하며 열기를 비활성화한다.
+
 ## 완료 확인
 
 - 현재 branch와 선택 동작은 색 외의 텍스트와 VoiceOver 이름으로 식별할 수 있다.
 - 전환은 force·merge 옵션을 쓰거나 local 변경을 버리지 않는다.
-- Worktree 생성·삭제, branch 강제 전환, remote-tracking branch 전환과 stash 보조 동작은 포함하지 않는다.
+- branch 강제 전환, remote-tracking branch 전환과 stash 보조 동작은 포함하지 않는다.
 
 [사용자 흐름 문서로 돌아가기](../README.md)

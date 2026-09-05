@@ -21,6 +21,7 @@
 		110000000000000000000011 /* WorkspaceLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000011 /* WorkspaceLayout.swift */; };
 		110000000000000000000012 /* RepositoryDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000012 /* RepositoryDiffView.swift */; };
 		110000000000000000000013 /* ExternalApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000013 /* ExternalApplications.swift */; };
+		110000000000000000000014 /* RepositoryWorktreesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000014 /* RepositoryWorktreesView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -52,6 +53,7 @@
 		120000000000000000000011 /* WorkspaceLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceLayout.swift; sourceTree = "<group>"; };
 		120000000000000000000012 /* RepositoryDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDiffView.swift; sourceTree = "<group>"; };
 		120000000000000000000013 /* ExternalApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalApplications.swift; sourceTree = "<group>"; };
+		120000000000000000000014 /* RepositoryWorktreesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreesView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +93,7 @@
 				120000000000000000000002 /* AppView.swift */,
 				120000000000000000000012 /* RepositoryDiffView.swift */,
 				120000000000000000000013 /* ExternalApplications.swift */,
+				120000000000000000000014 /* RepositoryWorktreesView.swift */,
 				120000000000000000000011 /* WorkspaceLayout.swift */,
 				120000000000000000000010 /* AppModel.swift */,
 				120000000000000000000005 /* GallaeTheme.swift */,
@@ -231,6 +234,7 @@
 				110000000000000000000002 /* AppView.swift in Sources */,
 				110000000000000000000012 /* RepositoryDiffView.swift in Sources */,
 				110000000000000000000013 /* ExternalApplications.swift in Sources */,
+				110000000000000000000014 /* RepositoryWorktreesView.swift in Sources */,
 				110000000000000000000011 /* WorkspaceLayout.swift in Sources */,
 				110000000000000000000010 /* AppModel.swift in Sources */,
 				110000000000000000000005 /* GallaeTheme.swift in Sources */,

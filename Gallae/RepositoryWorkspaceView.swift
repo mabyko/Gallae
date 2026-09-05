@@ -116,6 +116,7 @@ struct RepositoryWorkspaceView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var isNavigatorAutoCollapsed = false
     @State private var isCreatingBranch = false
+    @State private var worktreeCreation: WorktreeCreationRequest?
     /// The Navigator's scope axis; the screen axis is `workspaceSection`. Choosing a scope shows History.
     private var scope: RepositoryHistoryScope? {
         get { model.historySelection }
@@ -423,6 +424,9 @@ struct RepositoryWorkspaceView: View {
             .sheet(isPresented: $isCreatingBranch) {
                 CreateBranchSheet(model: model)
             }
+            .sheet(item: $worktreeCreation) { request in
+                CreateWorktreeSheet(model: model, existingBranch: request.branch)
+            }
 
             if let operation = model.repository?.operation {
                 Divider()
@@ -503,6 +507,11 @@ struct RepositoryWorkspaceView: View {
                 }
             }
         }
+
+        Button("New Worktree…", systemImage: "folder.badge.plus") {
+            worktreeCreation = .init()
+        }
+        .disabled(model.isLoading || model.isSyncing)
 
         Button("New Branch…", systemImage: "plus") {
             isCreatingBranch = true
@@ -1109,7 +1118,7 @@ private struct RepositoryNavigatorView: View {
     @Bindable var model: AppModel
     /// The screen axis: which of Changes, History, Stashes, Reflog fills the body. Always set.
     @Binding var screen: RepositoryWorkspaceSection
-    /// The scope axis: the branch, remote, remote branch, or tag History is narrowed to. Choosing one shows History.
+    /// The selected reference is revealed in History without changing its filter.
     @Binding var scope: RepositoryHistoryScope?
     /// Inside the floating panel the panel paints the background, so the list stays transparent.
     var isFloating = false
@@ -1129,6 +1138,7 @@ private struct RepositoryNavigatorView: View {
     @State private var removalErrorMessage: String?
     @State private var editedRemote: RepositoryRemote?
     @State private var isCreatingBranch = false
+    @State private var worktreeCreation: WorktreeCreationRequest?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1140,7 +1150,10 @@ private struct RepositoryNavigatorView: View {
             Divider()
                 .padding(.horizontal, 10)
 
-            List(selection: scopeSelection) {
+            List(selection: navigatorSelection) {
+                RepositoryWorktreesSection(model: model, filter: filterText,
+                                           isFocused: isReferenceListFocused,
+                                           select: selectWorktree, create: { worktreeCreation = .init() })
                 Section {
                     branchRows
                 } header: {
@@ -1150,6 +1163,9 @@ private struct RepositoryNavigatorView: View {
                         Menu {
                             Button("New Branch…", systemImage: "plus") {
                                 isCreatingBranch = true
+                            }
+                            Button("New Worktree…", systemImage: "folder.badge.plus") {
+                                worktreeCreation = .init()
                             }
                         } label: {
                             Image(systemName: "ellipsis")
@@ -1182,6 +1198,15 @@ private struct RepositoryNavigatorView: View {
             .focused($isReferenceListFocused)
             .scrollContentBackground(theme.materials.translucentChrome && !isFloating ? .automatic : .hidden)
             .accessibilityLabel("Navigator")
+            .onKeyPress(.return) {
+                guard let url = model.selectedWorktreeURL,
+                      let worktree = model.worktrees.first(where: { $0.url == url }),
+                      worktree.isAvailable, !model.isLoading, !model.isSyncing else { return .ignored }
+                if url.resolvingSymlinksInPath().path != model.repository?.rootURL.resolvingSymlinksInPath().path {
+                    Task { _ = await model.openWorktree(at: url) }
+                }
+                return .handled
+            }
 
             Divider()
 
@@ -1189,7 +1214,7 @@ private struct RepositoryNavigatorView: View {
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .padding(8)
-                .accessibilityLabel("Filter Branches, Remotes, and Tags")
+                .accessibilityLabel("Filter Worktrees, Branches, Remotes, and Tags")
         }
         // Reduced Transparency and Increased Contrast paint the sidebar opaque instead of the system material.
         .background(theme.materials.translucentChrome || isFloating ? Color.clear : theme.colors.opaqueChrome)
@@ -1230,6 +1255,9 @@ private struct RepositoryNavigatorView: View {
         }
         .sheet(isPresented: $isCreatingBranch) {
             CreateBranchSheet(model: model)
+        }
+        .sheet(item: $worktreeCreation) { request in
+            CreateWorktreeSheet(model: model, existingBranch: request.branch)
         }
         .sheet(item: $editedRemote) { remote in
             if let rootURL = model.repository?.rootURL {
@@ -1409,6 +1437,26 @@ private struct RepositoryNavigatorView: View {
     // MARK: - Scope list
 
     /// Selecting a reference reveals it in History without changing the filter.
+    private func selectWorktree(_ worktree: RepositoryWorktree) {
+        model.selectWorktree(worktree)
+        screen = .history
+        isScreenListFocused = false
+    }
+
+    private var navigatorSelection: Binding<RepositoryNavigatorSelection?> {
+        Binding(get: {
+            if let url = model.selectedWorktreeURL { return .worktree(url) }
+            return scope.map { .reference($0) }
+        }, set: { selection in
+            switch selection {
+            case .reference(let reference): scopeSelection.wrappedValue = reference
+            case .worktree(let url):
+                if let worktree = model.worktrees.first(where: { $0.url == url }) { selectWorktree(worktree) }
+            case nil: break
+            }
+        })
+    }
+
     private var scopeSelection: Binding<RepositoryHistoryScope?> {
         Binding(
             get: { scope },
@@ -1484,7 +1532,7 @@ private struct RepositoryNavigatorView: View {
             }
         }
         .contentShape(.rect)
-        .tag(RepositoryHistoryScope.branch(branch))
+        .tag(RepositoryNavigatorSelection.reference(.branch(branch)))
         .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.branch(branch), isFocused: isReferenceListFocused, sidebar: true)
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue(for: branch))
@@ -1519,6 +1567,13 @@ private struct RepositoryNavigatorView: View {
                     .disabled(model.isLoading || model.isSyncing)
                 }
 
+                if !model.worktrees.contains(where: { $0.branch == branch }) {
+                    Button("New Worktree…", systemImage: "folder.badge.plus") {
+                        worktreeCreation = .init(branch: branch)
+                    }
+                    .disabled(model.isLoading || model.isSyncing)
+                }
+
                 Button("Integrate…", systemImage: "arrow.triangle.merge") {
                     model.showIntegrateBranch(preselecting: branch)
                 }
@@ -1527,17 +1582,18 @@ private struct RepositoryNavigatorView: View {
                 Divider()
 
                 if let worktreeURL {
-                    Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
-                        Task {
-                            let trackingRef = await model.trackingRemoteBranch(for: branch)
-                            pendingWorktreeRemoval = .init(
-                                branch: branch,
-                                worktreeURL: worktreeURL,
-                                trackingRef: trackingRef
-                            )
+                    if model.canRemoveWorktree(at: worktreeURL) {
+                        Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
+                            Task {
+                                let trackingRef = await model.trackingRemoteBranch(for: branch)
+                                pendingWorktreeRemoval = .init(
+                                    branch: branch,
+                                    worktreeURL: worktreeURL,
+                                    trackingRef: trackingRef
+                                )
+                            }
                         }
                     }
-                    .disabled(model.isLoading)
                 } else {
                     Button("Remove Branch…", systemImage: "minus.circle", role: .destructive) {
                         pendingBranchDeletion = branch
@@ -1584,7 +1640,7 @@ private struct RepositoryNavigatorView: View {
                     .truncationMode(.middle)
                     .help(branch)
                     .contentShape(.rect)
-                    .tag(RepositoryHistoryScope.remoteBranch(branch))
+                    .tag(RepositoryNavigatorSelection.reference(.remoteBranch(branch)))
                     .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remoteBranch(branch), isFocused: isReferenceListFocused, sidebar: true)
                     .accessibilityLabel("Remote branch \(branch)")
                     .contextMenu {
@@ -1605,7 +1661,7 @@ private struct RepositoryNavigatorView: View {
                 .badge(remoteBranches[name]?.count ?? 0)
                 .help(fetchURL)
                 .contentShape(.rect)
-                .tag(RepositoryHistoryScope.remote(name))
+                .tag(RepositoryNavigatorSelection.reference(.remote(name)))
                 .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remote(name), isFocused: isReferenceListFocused, sidebar: true)
                 .contextMenu {
                     Button("Fetch", systemImage: "arrow.down.circle") {
@@ -1656,7 +1712,7 @@ private struct RepositoryNavigatorView: View {
                     Label(tag, systemImage: "tag")
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .tag(RepositoryHistoryScope.tag(tag))
+                        .tag(RepositoryNavigatorSelection.reference(.tag(tag)))
                         .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.tag(tag), isFocused: isReferenceListFocused, sidebar: true)
                 }
             }
@@ -2408,6 +2464,7 @@ private struct RepositoryHistoryView: View {
                                 canFastForwardCurrentHere: commit.id != history.headCommitID
                                     && descendantCommitIDs.contains(commit.id),
                                 worktreeURLs: model.localBranchWorktreeURLs,
+                                canRemoveWorktree: { model.canRemoveWorktree(at: $0) },
                                 fastForward: { branch in
                                     Task { await model.fastForwardBranchToCurrent(branch) }
                                 },
@@ -3188,6 +3245,7 @@ private struct RepositoryHistoryRow: View {
     var canFastForwardBranchRefs = false
     var canFastForwardCurrentHere = false
     var worktreeURLs: [String: URL] = [:]
+    var canRemoveWorktree: (URL) -> Bool = { _ in false }
     var fastForward: (String) -> Void = { _ in }
     var fastForwardCurrent: (String) -> Void = { _ in }
     var switchToBranch: (String) -> Void = { _ in }
@@ -3274,8 +3332,10 @@ private struct RepositoryHistoryRow: View {
                     Button("Open Worktree for \(reference.name)") {
                         openWorktree(worktreeURL)
                     }
-                    Button("Remove Worktree for \(reference.name)") {
-                        requestWorktreeRemoval(reference.name, worktreeURL)
+                    if canRemoveWorktree(worktreeURL) {
+                        Button("Remove Worktree for \(reference.name)") {
+                            requestWorktreeRemoval(reference.name, worktreeURL)
+                        }
                     }
                 } else {
                     Button("Switch to \(reference.name)") {
@@ -3368,8 +3428,10 @@ private struct RepositoryHistoryRow: View {
                     ) {
                         openWorktree(worktreeURL)
                     }
-                    Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
-                        requestWorktreeRemoval(reference.name, worktreeURL)
+                    if canRemoveWorktree(worktreeURL) {
+                        Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
+                            requestWorktreeRemoval(reference.name, worktreeURL)
+                        }
                     }
                 } else {
                     Button("Switch", systemImage: "arrow.triangle.branch") {

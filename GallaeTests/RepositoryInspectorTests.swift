@@ -4,6 +4,149 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    func testWorktreeRecordsPreserveDetachedLockedAndMissingFolders() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let linked = root.appending(path: "same\nfolder")
+        try FileManager.default.createDirectory(at: linked, withIntermediateDirectories: true)
+        let missing = root.appending(path: "missing")
+        let fields = ["worktree \(root.path)", "HEAD abc123", "branch refs/heads/trunk", "",
+                      "worktree \(linked.path)", "HEAD def456", "detached", "locked keep\nfor later", "",
+                      "worktree \(missing.path)", "HEAD 987654", "branch refs/heads/topic", "prunable gitdir missing", ""]
+        let records = RepositoryInspector.parseWorktrees(Data(fields.joined(separator: "\0").utf8))
+        XCTAssertEqual(records.count, 3)
+        XCTAssertTrue(records[0].isPrimary)
+        XCTAssertEqual(records[0].branch, "trunk")
+        XCTAssertNil(records[1].branch)
+        XCTAssertEqual(records[1].headID, "def456")
+        XCTAssertEqual(records[1].lockedReason, "keep\nfor later")
+        XCTAssertTrue(records[1].isAvailable)
+        XCTAssertFalse(records[2].isAvailable)
+        XCTAssertEqual(records[2].prunableReason, "gitdir missing")
+        XCTAssertEqual(RepositoryWorktree.branchURLs(in: records).keys.sorted(), ["trunk"])
+        XCTAssertNotNil(records[0].removalRestriction(currentURL: linked))
+        XCTAssertNotNil(records[1].removalRestriction(currentURL: root))
+        XCTAssertNotNil(records[2].removalRestriction(currentURL: root))
+    }
+
+    func testCreateAndRemoveWorktreePreservesWorkingChangesAndProtectedFolders() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "primary")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try initializeRepository(at: root)
+        try write("first\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "First")
+        try write("second\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Second")
+        try write("staged\n", to: "file.txt", in: root)
+        try runGit(["-C", root.path, "add", "file.txt"])
+        try write("unstaged\n", to: "file.txt", in: root)
+        let before = try gitOutput(["-C", root.path, "status", "--porcelain=v1"])
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let linked = fixture.appending(path: "linked 'quote'; $folder 한글")
+        _ = try await inspector.createWorktree(at: linked, branch: "feature/topic", creatingBranch: true,
+                                               startPoint: "HEAD~1", in: repository)
+        XCTAssertEqual(try String(contentsOf: linked.appending(path: "file.txt"), encoding: .utf8), "first\n")
+        XCTAssertEqual(try gitOutput(["-C", root.path, "status", "--porcelain=v1"]), before)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "show", ":file.txt"]), "staged\n")
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "unstaged\n")
+        let linkedRepository = try await inspector.inspect(at: linked)
+        // Original, current, locked, and dirty worktrees must all refuse removal in the shared backend.
+        for (url, context) in [(root, linkedRepository), (linked, linkedRepository)] {
+            do { _ = try await inspector.removeWorktree(at: url, in: context); XCTFail("Protected folder removed") }
+            catch { XCTAssertTrue(FileManager.default.fileExists(atPath: url.path)) }
+        }
+        try runGit(["-C", root.path, "worktree", "lock", "--reason", "Keep", linked.path])
+        do { _ = try await inspector.removeWorktree(at: linked, in: repository); XCTFail("Locked folder removed") }
+        catch { XCTAssertTrue(FileManager.default.fileExists(atPath: linked.path)) }
+        try runGit(["-C", root.path, "worktree", "unlock", linked.path])
+        try write("keep", to: "untracked", in: linked)
+        do { _ = try await inspector.removeWorktree(at: linked, in: repository); XCTFail("Dirty folder removed") }
+        catch { XCTAssertEqual(try String(contentsOf: linked.appending(path: "untracked"), encoding: .utf8), "keep") }
+        try FileManager.default.removeItem(at: linked.appending(path: "untracked"))
+        _ = try await inspector.removeWorktree(at: linked, in: repository)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: linked.path))
+        _ = try await inspector.createWorktree(at: linked, branch: "feature/topic", creatingBranch: false, in: repository)
+        let rejected = fixture.appending(path: "rejected")
+        for (url, name, newBranch, start) in [
+            (linked, "must-not-exist", true, "HEAD"),
+            (rejected, "feature/topic", true, "HEAD"),
+            (rejected, "feature/topic", false, "HEAD"),
+            (rejected, "main", false, "HEAD"),
+            (rejected, "bad..name", true, "HEAD"),
+            (rejected, "must-not-exist", true, "missing-commit")
+        ] {
+            do {
+                _ = try await inspector.createWorktree(at: url, branch: name, creatingBranch: newBranch, startPoint: start, in: repository)
+                XCTFail("Invalid creation succeeded: \(name)")
+            } catch { }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rejected.path))
+        XCTAssertFalse(try gitOutput(["-C", root.path, "branch", "--list"]).contains("must-not-exist"))
+        XCTAssertEqual(try gitOutput(["-C", root.path, "status", "--porcelain=v1"]), before)
+    }
+
+    @MainActor
+    func testWorktreeSelectionFocusesDetachedHeadWithoutSwitchingOrFiltering() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "primary")
+        let linked = fixture.appending(path: "detached")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try initializeRepository(at: root)
+        try write("first\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "First")
+        try runGit(["-C", root.path, "worktree", "add", "--detach", linked.path])
+        try write("detached\n", to: "file.txt", in: linked)
+        try commitAll(in: linked, message: "Detached only")
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        _ = await model.openRepository(at: root)
+        await model.loadLocalBranches()
+        let worktree = try XCTUnwrap(model.worktrees.first { $0.branch == nil })
+        model.selectWorktree(worktree)
+        XCTAssertNil(model.historySelection)
+        XCTAssertNil(model.historyRequest?.reference)
+        XCTAssertEqual(model.historyRequest?.focusReference, worktree.headID)
+        await model.loadHistory()
+        XCTAssertEqual(model.selectedHistoryCommitID, worktree.headID)
+        XCTAssertEqual(model.repository?.rootURL.resolvingSymlinksInPath(), root.resolvingSymlinksInPath())
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        XCTAssertEqual(model.selectedWorktreeURL, worktree.url)
+        model.historyScope = .branch("main")
+        model.selectWorktree(worktree)
+        await model.loadHistory()
+        XCTAssertEqual(model.historyRequest?.reference, "refs/heads/main")
+        XCTAssertNotNil(model.historyNavigationMessage)
+        XCTAssertNotEqual(model.selectedHistoryCommitID, worktree.headID)
+        model.historyScope = nil
+        try write("new detached\n", to: "file.txt", in: linked)
+        try commitAll(in: linked, message: "Detached moves")
+        await model.loadLocalBranches()
+        XCTAssertNotEqual(model.historyRequest?.focusReference, worktree.headID)
+        XCTAssertEqual(model.selectedWorktreeURL, worktree.url)
+        model.historySelection = .branch("main")
+        XCTAssertNil(model.selectedWorktreeURL)
+        let created = await model.createWorktree(at: fixture.appending(path: "new"), branch: "new-topic",
+                                                 creatingBranch: true, startPoint: "HEAD")
+        XCTAssertNotNil(created)
+        XCTAssertTrue(model.worktrees.contains { $0.branch == "new-topic" })
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        model.historyScope = .branch("main")
+        let opened = await model.openWorktree(at: linked)
+        XCTAssertTrue(opened)
+        await model.loadHistory()
+        XCTAssertEqual(model.repository?.rootURL.resolvingSymlinksInPath(), linked.resolvingSymlinksInPath())
+        XCTAssertEqual(model.historyRequest?.reference, "refs/heads/main")
+        XCTAssertNotNil(model.historyRequest?.focusReference)
+        XCTAssertNotNil(model.historyNavigationMessage)
+        XCTAssertFalse(model.canRemoveWorktree(at: linked))
+    }
+
     @MainActor
     func testTerminalLaunchKeepsDirectoryLiteralAndValidatesCustomApplications() async throws {
         let directory = try makeTemporaryDirectory().appending(path: "'quoted' $(touch nope); 한글")

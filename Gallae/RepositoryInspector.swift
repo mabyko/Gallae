@@ -1,5 +1,37 @@
 import Foundation
 
+struct RepositoryWorktree: Identifiable, Equatable, Sendable {
+    let url: URL
+    let headID: String
+    let branch: String?
+    let isPrimary: Bool
+    let isBare: Bool
+    let lockedReason: String?
+    let prunableReason: String?
+    let isAvailable: Bool
+    var id: URL { url }
+    var name: String { url.lastPathComponent }
+    var headLabel: String { branch ?? "Detached HEAD · \(headID.prefix(8))" }
+
+    func removalRestriction(currentURL: URL) -> String? {
+        if isPrimary || isBare { return "The primary working tree cannot be removed." }
+        if sameFileLocation(url.resolvingSymlinksInPath(), currentURL.resolvingSymlinksInPath()) {
+            return "Open another working tree before removing this one."
+        }
+        if let lockedReason { return lockedReason.isEmpty ? "This Worktree is locked." : "Locked: \(lockedReason)" }
+        if !isAvailable || prunableReason != nil { return "This Worktree folder is unavailable. Its registration has been kept." }
+        return nil
+    }
+
+    static func branchURLs(in worktrees: [Self]) -> [String: URL] {
+        var result: [String: URL] = [:]
+        for worktree in worktrees where !worktree.isBare && worktree.prunableReason == nil {
+            if let branch = worktree.branch { result[branch] = worktree.url }
+        }
+        return result
+    }
+}
+
 struct RepositorySummary: Equatable, Sendable {
     enum Head: Equatable, Sendable {
         case branch(String)
@@ -904,6 +936,60 @@ struct RepositoryInspector: Sendable {
         }.value
         try Task.checkCancellation()
         return worktrees
+    }
+
+    func worktrees(in repository: RepositorySummary) async throws -> [RepositoryWorktree] {
+        try Task.checkCancellation()
+        let result = try await Task.detached(priority: .userInitiated) {
+            try Self.worktreesSynchronously(in: repository)
+        }.value
+        try Task.checkCancellation()
+        return result
+    }
+
+    func createWorktree(
+        at destination: URL, branch: String, creatingBranch: Bool,
+        startPoint: String = "HEAD", in repository: RepositorySummary
+    ) async throws -> URL {
+        try Task.checkCancellation()
+        // Once Git has created the folder, report success even if the presenting view is dismissed.
+        return try await Task.detached(priority: .userInitiated) {
+            guard destination.isFileURL, !FileManager.default.fileExists(atPath: destination.path) else {
+                throw RepositoryBranchError.worktreeCreationFailed("Choose a new folder. Existing paths will not be overwritten.")
+            }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: destination.deletingLastPathComponent().path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw RepositoryBranchError.worktreeCreationFailed("Choose an existing parent folder.")
+            }
+            guard !branch.isEmpty, !branch.contains("\0"), !startPoint.contains("\0"), !branch.hasPrefix("-"), branch != "HEAD",
+                  try Self.runGit(["check-ref-format", "--branch", branch]).status == 0 else {
+                throw RepositoryBranchError.worktreeCreationFailed("Enter a valid local branch name.")
+            }
+            let branches = try Self.localBranchesSynchronously(in: repository)
+            var arguments = ["-C", repository.rootURL.path, "worktree", "add", "--quiet"]
+            let target: String
+            if creatingBranch {
+                guard !branches.contains(branch) else {
+                    throw RepositoryBranchError.worktreeCreationFailed("A branch named \(branch) already exists.")
+                }
+                let revision = try Self.runGit(["-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(startPoint)^{commit}"])
+                guard revision.status == 0 else {
+                    throw RepositoryBranchError.worktreeCreationFailed("Choose an existing commit as the starting point.")
+                }
+                target = String(decoding: revision.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                arguments += ["-b", branch]
+            } else {
+                guard branches.contains(branch) else { throw RepositoryBranchError.unavailable }
+                guard try !Self.worktreesSynchronously(in: repository).contains(where: { $0.branch == branch }) else {
+                    throw RepositoryBranchError.worktreeCreationFailed("This branch already has a Worktree. Open that folder instead.")
+                }
+                target = branch
+            }
+            arguments += ["--", destination.path, target]
+            let result = try Self.runGit(arguments)
+            guard result.status == 0 else { throw RepositoryBranchError.worktreeCreationFailed(result.standardError) }
+            return destination.standardizedFileURL
+        }.value
     }
 
     func remotes(in repository: RepositorySummary) async throws -> [RepositoryRemote] {
@@ -2036,46 +2122,53 @@ struct RepositoryInspector: Sendable {
     private static func localBranchWorktreesSynchronously(
         in repository: RepositorySummary
     ) throws -> [String: URL] {
-        let result = try runGit([
-            "-C", repository.rootURL.path,
-            "worktree", "list", "--porcelain", "-z"
-        ])
-        guard result.status == 0 else {
-            throw RepositoryBranchError.unreadable(result.standardError)
-        }
+        RepositoryWorktree.branchURLs(in: try worktreesSynchronously(in: repository))
+    }
 
-        var worktrees: [String: URL] = [:]
-        var worktreeURL: URL?
+    private static func worktreesSynchronously(in repository: RepositorySummary) throws -> [RepositoryWorktree] {
+        let result = try runGit(["-C", repository.rootURL.path, "worktree", "list", "--porcelain", "-z"])
+        guard result.status == 0 else { throw RepositoryBranchError.unreadable(result.standardError) }
+        return parseWorktrees(result.standardOutput)
+    }
+
+    static func parseWorktrees(_ data: Data) -> [RepositoryWorktree] {
+        var result: [RepositoryWorktree] = []
+        var url: URL?
+        var headID = ""
         var branch: String?
         var isBare = false
-        var isPrunable = false
-
-        func recordWorktree() {
-            guard let worktreeURL, let branch, !isBare, !isPrunable else { return }
-            worktrees[branch] = worktreeURL
+        var locked: String?
+        var prunable: String?
+        func record() {
+            guard let url else { return }
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            result.append(RepositoryWorktree(
+                url: url, headID: headID, branch: branch, isPrimary: result.isEmpty,
+                isBare: isBare, lockedReason: locked, prunableReason: prunable,
+                isAvailable: exists && isDirectory.boolValue
+            ))
         }
-
-        for data in result.standardOutput.split(separator: 0) {
-            let field = String(decoding: data, as: UTF8.self)
+        for bytes in data.split(separator: 0) {
+            let field = String(decoding: bytes, as: UTF8.self)
             if field.hasPrefix("worktree ") {
-                recordWorktree()
-                worktreeURL = URL(
-                    filePath: String(field.dropFirst("worktree ".count)),
-                    directoryHint: .isDirectory
-                ).standardizedFileURL
+                record()
+                url = URL(filePath: String(field.dropFirst(9)), directoryHint: .isDirectory).standardizedFileURL
+                headID = ""
                 branch = nil
                 isBare = false
-                isPrunable = false
-            } else if field.hasPrefix("branch refs/heads/") {
-                branch = String(field.dropFirst("branch refs/heads/".count))
-            } else if field == "bare" {
-                isBare = true
-            } else if field.hasPrefix("prunable") {
-                isPrunable = true
-            }
+                locked = nil
+                prunable = nil
+            } else if field.hasPrefix("HEAD ") { headID = String(field.dropFirst(5)) }
+            else if field.hasPrefix("branch refs/heads/") { branch = String(field.dropFirst(18)) }
+            else if field == "bare" { isBare = true }
+            else if field == "locked" { locked = "" }
+            else if field.hasPrefix("locked ") { locked = String(field.dropFirst(7)) }
+            else if field == "prunable" { prunable = "" }
+            else if field.hasPrefix("prunable ") { prunable = String(field.dropFirst(9)) }
         }
-        recordWorktree()
-        return worktrees
+        record()
+        return result
     }
 
     private static func remotesSynchronously(
@@ -2679,9 +2772,15 @@ struct RepositoryInspector: Sendable {
         at worktreeURL: URL,
         in repository: RepositorySummary
     ) throws -> RepositorySummary {
+        guard let worktree = try worktreesSynchronously(in: repository).first(where: {
+            sameFileLocation($0.url.resolvingSymlinksInPath(), worktreeURL.resolvingSymlinksInPath())
+        }) else { throw RepositoryBranchError.worktreeRemovalFailed("This Worktree is no longer registered.") }
+        if let restriction = worktree.removalRestriction(currentURL: repository.rootURL) {
+            throw RepositoryBranchError.worktreeRemovalFailed(restriction)
+        }
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "worktree", "remove", worktreeURL.path
+            "worktree", "remove", worktree.url.path
         ])
         guard result.status == 0 else {
             throw RepositoryBranchError.worktreeRemovalFailed(result.standardError)
@@ -3185,7 +3284,17 @@ struct RepositoryInspector: Sendable {
     ) throws -> RepositoryHistory {
         guard !repository.isUnborn else { return .init(commits: []) }
 
-        let revisions = reference.map { [$0, "--"] } ?? ["--branches", "--remotes", "--tags", "HEAD", "--"]
+        let revisions: [String]
+        if let reference {
+            revisions = [reference, "--"]
+        } else {
+            // Detached Worktree commits have no branch ref, but still belong in the shared History.
+            // Keep unrelated refs (such as refs/stash) out of this branch-and-tag graph.
+            let detachedHeads = try worktreesSynchronously(in: repository)
+                .filter { !$0.isBare && $0.branch == nil && $0.headID.contains(where: { $0 != "0" }) }
+                .map(\.headID)
+            revisions = ["--branches", "--remotes", "--tags", "HEAD"] + detachedHeads + ["--"]
+        }
         var count = max(1, limit)
         var focusedCommitID: String?
         if let focusReference {
