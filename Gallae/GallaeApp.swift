@@ -658,6 +658,7 @@ private struct GallaeSettingsView: View {
         Form {
             Section("External Applications") {
                 TerminalApplicationPicker()
+                EditorApplicationPicker()
             }
 
             Section("Author Avatars") {

@@ -4,6 +4,30 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    @MainActor
+    func testEditorOpeningRejectsInvalidTargetsWithoutLaunching() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write("keep", to: "file.txt", in: directory)
+        for target in [directory.appending(path: "file.txt"), URL(string: "https://example.com/folder")!] {
+            do {
+                try await FolderOpening.open(target, inEditor: .vscode)
+                XCTFail("Only local folders may be sent to the editor")
+            } catch { }
+        }
+        do {
+            try await FolderOpening.open(directory, inEditor: .custom)
+            XCTFail("An unset custom editor must not fall back to another app")
+        } catch FolderOpening.Failure.missingApplication { }
+        let invalidApp = directory.appending(path: "Invalid.app")
+        try FileManager.default.createDirectory(at: invalidApp, withIntermediateDirectories: true)
+        do {
+            try await FolderOpening.open(directory, inEditor: .custom, customPath: invalidApp.path)
+            XCTFail("Invalid apps must be rejected before launch")
+        } catch FolderOpening.Failure.invalidApplication { }
+        XCTAssertEqual(try String(contentsOf: directory.appending(path: "file.txt"), encoding: .utf8), "keep")
+    }
+
     func testWorktreeRecordsPreserveDetachedLockedAndMissingFolders() throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
