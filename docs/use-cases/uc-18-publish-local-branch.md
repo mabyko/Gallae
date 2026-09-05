@@ -19,6 +19,8 @@
 
 ## 대안 흐름
 
+- Navigator의 Remotes → Add Remote…는 원격 주소만 등록하는 별도 진입점이다. 이 경로에서는 Fetch·Publish하지 않으며, 등록 후 Publish를 따로 실행할 수 있다.
+
 - Add Remote 입력 중 Cancel 또는 Escape를 누르면 remote를 등록하지 않는다.
 - Publish 목적지 선택 중 Cancel 또는 Escape를 누르면 아무 remote에도 게시하지 않는다.
 - 실행 중 Cancel 또는 Escape를 누르면 Publish를 중단한다. remote 등록 뒤 취소되었다면 추가한 remote는 유지한다.

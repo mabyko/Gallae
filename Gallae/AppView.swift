@@ -248,8 +248,10 @@ struct AppView: View {
             )
         ) { request in
             switch request {
-            case .addRemote(let repositoryRootURL):
-                AddRemoteSheet(model: model, repositoryRootURL: repositoryRootURL)
+            case .addRemote(let repositoryRootURL, let publishAfterAdding):
+                AddRemoteSheet(model: model, repositoryRootURL: repositoryRootURL, publishAfterAdding: publishAfterAdding)
+            case .createTag(let repositoryRootURL):
+                CreateTagSheet(model: model, repositoryRootURL: repositoryRootURL)
             case .createStash(let repositoryRootURL):
                 CreateStashSheet(model: model, repositoryRootURL: repositoryRootURL)
             case .integrateBranch(let repositoryRootURL, let branch):
@@ -1113,6 +1115,9 @@ private struct AddRemoteSheet: View {
     @FocusState private var focusedField: Field?
     let model: AppModel
     let repositoryRootURL: URL
+    var publishAfterAdding = true
+    @State private var errorMessage: String?
+    @State private var isSubmitting = false
     @State private var remoteName = "origin"
     @State private var repositoryURL = ""
 
@@ -1126,7 +1131,9 @@ private struct AddRemoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Add Remote", systemImage: "network")
                     .font(.title2.bold())
-                Text("Connect \(repositoryRootURL.lastPathComponent) to a remote, then publish the current branch.")
+                Text(publishAfterAdding
+                     ? "Connect \(repositoryRootURL.lastPathComponent) to a remote, then publish the current branch."
+                     : "Save a remote URL for \(repositoryRootURL.lastPathComponent). This does not fetch or push.")
                     .foregroundStyle(.secondary)
             }
 
@@ -1153,17 +1160,33 @@ private struct AddRemoteSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Add & Publish") {
+                Button(publishAfterAdding ? "Add & Publish" : "Add Remote") {
                     let name = remoteName.trimmingCharacters(in: .whitespacesAndNewlines)
                     let url = repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                    dismiss()
-                    model.addRemoteAndPublish(named: name, url: url, in: repositoryRootURL)
+                    if publishAfterAdding {
+                        dismiss()
+                        model.addRemoteAndPublish(named: name, url: url, in: repositoryRootURL)
+                    } else {
+                        isSubmitting = true
+                        Task {
+                            defer { isSubmitting = false }
+                            do {
+                                try await model.addRemote(named: name, url: url, in: repositoryRootURL)
+                                dismiss()
+                            } catch { errorMessage = error.localizedDescription }
+                        }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!canSubmit)
-                .accessibilityHint("Add this remote and publish the current branch without force")
+                .disabled(!canSubmit || isSubmitting || model.isLoading || model.isSyncing)
+                .accessibilityHint(publishAfterAdding ? "Add this remote and publish the current branch without force" : "Save this remote without fetching or pushing")
             }
         }
+        .disabled(isSubmitting)
+        .interactiveDismissDisabled(isSubmitting)
+        .alert("Couldn’t Add Remote", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
         .padding(24)
         .frame(width: 520)
         .onAppear {
@@ -1429,5 +1452,55 @@ private struct ChooseRemoteSheet: View {
                 : "Fetch only the selected Remote without changing the current branch or working tree"
         case .publish: "Publish without force and start tracking the selected Remote branch"
         }
+    }
+}
+
+private struct CreateTagSheet: View {
+    let model: AppModel
+    let repositoryRootURL: URL
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isNameFocused: Bool
+    @State private var name = ""
+    @State private var target = "HEAD"
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("New Tag", systemImage: "tag").font(.title2.bold())
+            Text("Create a local lightweight tag at a commit. This does not switch branches or push the tag.")
+                .foregroundStyle(.secondary)
+            Form {
+                TextField("Name", text: $name).focused($isNameFocused)
+                TextField("Target Commit", text: $target)
+                    .help("HEAD, a branch name, or a commit SHA")
+            }
+            .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create Tag") {
+                    isCreating = true
+                    Task {
+                        defer { isCreating = false }
+                        do {
+                            try await model.createTag(named: name, at: target, in: repositoryRootURL)
+                            dismiss()
+                        } catch { errorMessage = error.localizedDescription }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || model.isLoading || model.isSyncing)
+            }
+        }
+        .padding(24).frame(width: 440)
+        .disabled(isCreating)
+        .interactiveDismissDisabled(isCreating)
+        .onAppear { isNameFocused = true }
+        .alert("Couldn’t Create Tag", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
     }
 }

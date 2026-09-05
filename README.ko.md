@@ -28,6 +28,8 @@ History 배치와 diff 방식은 각각 선택할 수 있다. 이미지를 누�
 
 History는 기본으로 커밋 목록을 위에, 변경 검토를 아래에 배치한다. **Expand Review**로 검토 영역을 넓히거나, Appearance에서 **Side by Side**로 바꿀 수 있다. branch를 한 번 선택하면 전체 그래프에서 해당 커밋으로 이동하고, 두 번 클릭하면 branch를 전환하거나 연결된 Worktree를 연다.
 
+Branches·Remotes·Tags의 **⋯** 메뉴는 목록이 비어 있어도 사용할 수 있다. **Add Remote…**는 Fetch·Publish 없이 원격 주소만 등록하고, **New Tag…**는 지정한 커밋(기본 `HEAD`)에 로컬 lightweight tag를 만든다. branch 전환이나 자동 push는 하지 않는다. **Worktrees** 제목 옆의 화살표는 항상 표시되며 목록을 접거나 펼칠 수 있다.
+
 Appearance에서 시스템·라이트·다크 테마, 행 밀도, 앱 강조색과 History 그래프·배지 색을 고를 수 있다. 앱 강조색의 기본값은 macOS 설정을 따르는 **System**이다.
 
 ## 외부 앱 연동

@@ -1372,6 +1372,31 @@ struct RepositoryInspector: Sendable {
         }
     }
 
+    func addRemote(named name: String, url: String, in repository: RepositorySummary) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.addRemoteSynchronously(named: name, url: url, in: repository)
+            return try Self.inspectSynchronously(at: repository.rootURL)
+        }.value
+    }
+
+    func createTag(named name: String, at target: String, in repository: RepositorySummary) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        return try await Task.detached(priority: .userInitiated) {
+            let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !name.hasPrefix("-"), !target.isEmpty else {
+                throw RepositoryTagCreationError.failed("Enter a tag name and target commit.")
+            }
+            let resolved = try Self.runGit(["-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(target)^{commit}"])
+            guard resolved.status == 0 else { throw RepositoryTagCreationError.failed(resolved.standardError) }
+            // --no-sign explicitly creates a lightweight tag, including when tag.gpgSign is enabled.
+            let result = try Self.runGit(["-C", repository.rootURL.path, "tag", "--no-sign", "--", name, Self.line(from: resolved.standardOutput)])
+            guard result.status == 0 else { throw RepositoryTagCreationError.failed(result.standardError) }
+            return try Self.inspectSynchronously(at: repository.rootURL)
+        }.value
+    }
+
     func addRemoteAndPublish(
         named name: String,
         url: String,
@@ -3169,12 +3194,12 @@ struct RepositoryInspector: Sendable {
         )
     }
 
-    private static func addRemoteAndPublishSynchronously(
+    private static func addRemoteSynchronously(
         named name: String,
         url: String,
         in repository: RepositorySummary,
-        cancellation: GitProcessCancellation
-    ) throws -> RepositorySummary {
+        cancellation: GitProcessCancellation? = nil
+    ) throws {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !name.hasPrefix("-"), !url.isEmpty else {
@@ -3185,12 +3210,23 @@ struct RepositoryInspector: Sendable {
             "-C", repository.rootURL.path,
             "remote", "add", name, url
         ], cancellation: cancellation)
-        if cancellation.isCancelled {
+        if cancellation?.isCancelled == true {
             throw CancellationError()
         }
         guard addResult.status == 0 else {
             throw RepositoryRemoteSetupError.addFailed(addResult.standardError)
         }
+
+    }
+
+    private static func addRemoteAndPublishSynchronously(
+        named name: String,
+        url: String,
+        in repository: RepositorySummary,
+        cancellation: GitProcessCancellation
+    ) throws -> RepositorySummary {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        try addRemoteSynchronously(named: name, url: url, in: repository, cancellation: cancellation)
 
         do {
             return try publishSynchronously(
@@ -5238,5 +5274,15 @@ enum RepositoryInspectionError: LocalizedError, Equatable {
             return ""
         }
         return " Git said: \(line)"
+    }
+}
+
+enum RepositoryTagCreationError: LocalizedError {
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .failed(let message): message.isEmpty ? "Git couldn’t create this tag." : message
+        }
     }
 }

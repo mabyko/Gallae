@@ -128,7 +128,8 @@ extension RepositoryRemoteOperation {
 }
 
 enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
-    case addRemote(repositoryRootURL: URL)
+    case addRemote(repositoryRootURL: URL, publishAfterAdding: Bool = true)
+    case createTag(repositoryRootURL: URL)
     case createStash(repositoryRootURL: URL)
     case integrateBranch(repositoryRootURL: URL, branch: String?)
     case chooseFetchRemote(repositoryRootURL: URL, remotes: [String], pruning: Bool)
@@ -136,8 +137,10 @@ enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
 
     var id: String {
         switch self {
-        case .addRemote(let repositoryRootURL):
-            "add:\(repositoryRootURL.path)"
+        case .addRemote(let repositoryRootURL, let publishAfterAdding):
+            "add:\(repositoryRootURL.path):\(publishAfterAdding)"
+        case .createTag(let repositoryRootURL):
+            "create-tag:\(repositoryRootURL.path)"
         case .createStash(let repositoryRootURL):
             "create-stash:\(repositoryRootURL.path)"
         case .integrateBranch(let repositoryRootURL, _):
@@ -984,6 +987,40 @@ final class AppModel {
             }
             remotesState = .failed(Self.message(for: error))
         }
+    }
+
+    func addRemote(named name: String, url: String, in rootURL: URL) async throws {
+        guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
+            throw RepositoryRemoteError.unavailable
+        }
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
+        }
+        let updated = try await inspector.addRemote(named: name, url: url, in: repository)
+        guard generation == inspectionGeneration else { return }
+        apply(updated, showWorkspaceOnSuccess: false)
+        await loadRemotes(in: rootURL)
+    }
+
+    func createTag(named name: String, at target: String, in rootURL: URL) async throws {
+        guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
+            throw RepositoryTagCreationError.failed("This Repository is no longer available.")
+        }
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        defer {
+            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
+        }
+        let updated = try await inspector.createTag(named: name, at: target, in: repository)
+        guard generation == inspectionGeneration else { return }
+        apply(updated, showWorkspaceOnSuccess: false)
+        await loadTags()
     }
 
     func updateRemote(

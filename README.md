@@ -28,6 +28,8 @@ History layout and diff layout can be chosen independently. Click either screens
 
 History defaults to a **Top and Bottom** layout: commits above, review below. Use **Expand Review** for more room, or choose **Side by Side** in Appearance. Clicking a branch once jumps to its commit in the full graph; double-clicking switches branches or opens the linked worktree.
 
+The **⋯** menus beside Branches, Remotes, and Tags remain available when their lists are empty. **Add Remote…** saves a remote without fetching or publishing. **New Tag…** creates a local lightweight tag at a chosen commit (default: `HEAD`) without switching branches or pushing. The arrow beside **Worktrees** stays visible so you can expand or collapse the list.
+
 Appearance settings include system/light/dark themes, row density, the app accent color, and History graph and badge colors. The app accent defaults to **System**, following your macOS setting.
 
 ## External applications

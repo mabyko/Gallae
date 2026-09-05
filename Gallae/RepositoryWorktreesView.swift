@@ -30,32 +30,24 @@ struct RepositoryWorktreesSection: View {
 
     var body: some View {
         if model.worktrees.contains(where: { !$0.isPrimary && !$0.isBare }) {
-            Section(isExpanded: $isExpanded) {
-                if case .failed(let message) = model.localBranchesState {
-                    Label("Couldn’t Refresh Worktrees", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.secondary).help(message).selectionDisabled()
-                }
-                if visibleWorktrees.isEmpty {
-                    Text("No Matching Worktrees").foregroundStyle(.secondary).selectionDisabled()
-                }
-                ForEach(visibleWorktrees) { worktree in
-                    row(worktree)
+            Section {
+                if isExpanded {
+                    if case .failed(let message) = model.localBranchesState {
+                        Label("Couldn’t Refresh Worktrees", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.secondary).help(message).selectionDisabled()
+                    }
+                    if visibleWorktrees.isEmpty {
+                        Text("No Matching Worktrees").foregroundStyle(.secondary).selectionDisabled()
+                    }
+                    ForEach(visibleWorktrees) { worktree in
+                        row(worktree)
+                    }
                 }
             } header: {
-                HStack {
-                    Text("Worktrees")
-                    Spacer()
-                    Menu {
-                        Button("New Worktree…", systemImage: "folder.badge.plus", action: create)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 22, height: 22).contentShape(.rect)
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).controlSize(.small)
-                    .fixedSize().foregroundStyle(.secondary).padding(.trailing, 4)
-                    .help("Worktree Actions").accessibilityLabel("Worktree Actions")
-                    .disabled(model.isLoading || model.isSyncing)
+                RepositoryNavigatorSectionHeader(title: "Worktrees", actionsLabel: "Worktree Actions",
+                                                 isExpanded: $isExpanded,
+                                                 actionsDisabled: model.isLoading || model.isSyncing) {
+                    Button("New Worktree…", systemImage: "folder.badge.plus", action: create)
                 }
             }
             .confirmationDialog("Remove Worktree?", isPresented: Binding(
@@ -249,6 +241,50 @@ struct CreateWorktreeSheet: View {
             guard let url else { return }
             dismiss()
             if opensAfterCreation { _ = await model.openWorktree(at: url) }
+        }
+    }
+}
+
+/// Section controls keep the collapse toggle next to the title and actions at the trailing edge.
+struct RepositoryNavigatorSectionHeader<Actions: View>: View {
+    let title: String
+    let actionsLabel: String
+    var isExpanded: Binding<Bool>? = nil
+    var actionsDisabled = false
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let isExpanded {
+                Button {
+                    isExpanded.wrappedValue.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(title)
+                        // Keep the native header height: a taller first row shifts List's initial scroll position.
+                        Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .frame(width: 18)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("\(isExpanded.wrappedValue ? "Collapse" : "Expand") \(title)")
+                .accessibilityLabel("\(title) disclosure")
+                .accessibilityValue(isExpanded.wrappedValue ? "Expanded" : "Collapsed")
+            } else {
+                Text(title)
+            }
+            Spacer(minLength: 4)
+            Menu(content: actions) {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 22, height: 22).contentShape(.rect)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).controlSize(.small)
+            .fixedSize().foregroundStyle(.secondary).padding(.trailing, 4)
+            .help(actionsLabel).accessibilityLabel(actionsLabel)
+            .disabled(actionsDisabled)
         }
     }
 }

@@ -1171,43 +1171,41 @@ private struct RepositoryNavigatorView: View {
                 Section {
                     branchRows
                 } header: {
-                    HStack {
-                        Text("Branches")
-                        Spacer()
-                        Menu {
-                            Button("New Branch…", systemImage: "plus") {
-                                isCreatingBranch = true
-                            }
-                            Button("New Worktree…", systemImage: "folder.badge.plus") {
-                                worktreeCreation = .init()
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 11, weight: .semibold))
-                                .frame(width: 22, height: 22)
-                                .contentShape(.rect)
-                        }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .controlSize(.small)
-                        .fixedSize()
-                        .foregroundStyle(.secondary)
-                        .padding(.trailing, 4)
-                        .help("Branch Actions")
-                        .accessibilityLabel("Branch Actions")
-                        .disabled(model.isLoading || model.isSyncing || model.repository == nil)
+                    RepositoryNavigatorSectionHeader(title: "Branches", actionsLabel: "Branch Actions",
+                                                     actionsDisabled: model.isLoading || model.isSyncing || model.repository == nil) {
+                        Button("New Branch…", systemImage: "plus") { isCreatingBranch = true }
+                        Button("New Worktree…", systemImage: "folder.badge.plus") { worktreeCreation = .init() }
                     }
-                    .accessibilityElement(children: .contain)
                 }
 
-                Section("Remotes") {
+                Section {
                     remoteRows
+                } header: {
+                    RepositoryNavigatorSectionHeader(title: "Remotes", actionsLabel: "Remote Actions",
+                                                     actionsDisabled: model.isLoading || model.isSyncing || model.repository == nil) {
+                        Button("Add Remote…", systemImage: "plus") {
+                            guard let rootURL = model.repository?.rootURL else { return }
+                            model.repositorySheetRequest = .addRemote(repositoryRootURL: rootURL, publishAfterAdding: false)
+                        }
+                    }
                 }
 
-                Section("Tags") {
+                Section {
                     tagRows
+                } header: {
+                    RepositoryNavigatorSectionHeader(title: "Tags", actionsLabel: "Tag Actions",
+                                                     actionsDisabled: model.isLoading || model.isSyncing || model.repository == nil) {
+                        Button("New Tag…", systemImage: "plus") {
+                            guard let rootURL = model.repository?.rootURL else { return }
+                            model.repositorySheetRequest = .createTag(repositoryRootURL: rootURL)
+                        }
+                        .disabled(model.repository?.isUnborn != false)
+                    }
                 }
             }
+            // Inserting Worktrees above existing rows makes macOS preserve a stale scroll offset.
+            // Rebuild only when that section appears or disappears; ordinary refreshes keep their position.
+            .id(model.worktrees.contains { !$0.isPrimary && !$0.isBare })
             .listStyle(.sidebar)
             .focused($isReferenceListFocused)
             .scrollContentBackground(theme.materials.translucentChrome && !isFloating ? .automatic : .hidden)

@@ -4,6 +4,63 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    func testAddsRemoteWithoutFetchingOrPublishing() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let remote = root.appending(path: "remote.git")
+        try runGit(["init", "--bare", remote.path])
+        let local = root.appending(path: "local")
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
+        try initializeRepository(at: local)
+        try write("base\n", to: "file.txt", in: local)
+        try commitAll(in: local, message: "Base")
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: local)
+        let head = try gitOutput(["-C", local.path, "rev-parse", "HEAD"])
+        let updated = try await inspector.addRemote(named: " origin ", url: remote.path, in: repository)
+        XCTAssertNil(updated.upstream)
+        XCTAssertEqual(try gitOutput(["-C", local.path, "rev-parse", "HEAD"]), head)
+        XCTAssertEqual(try gitOutput(["-C", local.path, "remote", "get-url", "origin"]).trimmingCharacters(in: .whitespacesAndNewlines), remote.path)
+        XCTAssertTrue(try gitOutput(["-C", remote.path, "for-each-ref"]).isEmpty)
+        XCTAssertTrue(try gitOutput(["-C", local.path, "for-each-ref", "refs/remotes"]).isEmpty)
+        do {
+            _ = try await inspector.addRemote(named: "origin", url: "different", in: updated)
+            XCTFail("A duplicate remote must not replace its URL")
+        } catch { }
+        XCTAssertEqual(try gitOutput(["-C", local.path, "remote", "get-url", "origin"]).trimmingCharacters(in: .whitespacesAndNewlines), remote.path)
+    }
+
+    func testCreatesLocalLightweightTagWithoutChangingCheckout() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        let first = try gitOutput(["-C", root.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("next\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Next")
+        try write("work in progress\n", to: "file.txt", in: root)
+        try runGit(["-C", root.path, "config", "tag.gpgSign", "true"])
+        try runGit(["-C", root.path, "config", "tag.forceSignAnnotated", "true"])
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let updated = try await inspector.createTag(named: "release/한글-v1", at: first, in: repository)
+        XCTAssertEqual(updated.head, repository.head)
+        XCTAssertEqual(updated.changes, repository.changes)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "refs/tags/release/한글-v1"]).trimmingCharacters(in: .whitespacesAndNewlines), first)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "cat-file", "-t", "refs/tags/release/한글-v1"]).trimmingCharacters(in: .whitespacesAndNewlines), "commit")
+        for (name, target) in [("release/한글-v1", "HEAD"), ("bad tag", "HEAD"), ("--force", "HEAD"), ("missing", "unknown-ref")] {
+            do {
+                _ = try await inspector.createTag(named: name, at: target, in: updated)
+                XCTFail("Invalid or duplicate tags must be rejected: \(name)")
+            } catch { }
+        }
+        let tags = try await inspector.tags(in: updated)
+        XCTAssertEqual(tags, ["release/한글-v1"])
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "refs/tags/release/한글-v1"]).trimmingCharacters(in: .whitespacesAndNewlines), first)
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "work in progress\n")
+    }
+
     @MainActor
     func testEditorOpeningRejectsInvalidTargetsWithoutLaunching() async throws {
         let directory = try makeTemporaryDirectory()
