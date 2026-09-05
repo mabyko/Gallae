@@ -916,13 +916,18 @@ final class AppModel {
     }
 
     func loadTags() async {
+        guard !Task.isCancelled else { return }
         guard let repository else {
             tagsState = .notLoaded
             return
         }
         let rootURL = repository.rootURL
         let revision = repositoryRevision
-        tagsState = .loading
+        if case .loaded = tagsState {
+            // Keep the current rows while this Repository refreshes.
+        } else {
+            tagsState = .loading
+        }
 
         do {
             let tags = try await inspector.tags(in: repository)
@@ -957,15 +962,18 @@ final class AppModel {
     }
 
     func loadRemotes(in rootURL: URL) async {
-        guard
-            let repository,
-            sameFileLocation(repository.rootURL, rootURL)
-        else {
+        guard !Task.isCancelled else { return }
+        guard let repository else {
             remotesState = .notLoaded
             return
         }
+        guard sameFileLocation(repository.rootURL, rootURL) else { return }
         let revision = repositoryRevision
-        remotesState = .loading
+        if case .loaded = remotesState {
+            // Keep expanded remote branches mounted while this Repository refreshes.
+        } else {
+            remotesState = .loading
+        }
 
         do {
             let remotes = try await inspector.remotes(in: repository)
@@ -3149,8 +3157,10 @@ final class AppModel {
         reflogState = .notLoaded
         localBranchesState = .notLoaded
         if !isSameRepository { worktrees = []; selectedWorktreeURL = nil }
-        remotesState = .notLoaded
-        tagsState = .notLoaded
+        if !isSameRepository {
+            remotesState = .notLoaded
+            tagsState = .notLoaded
+        }
         let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)
         libraryRepositorySummaries[cacheID] = inspectedRepository
         libraryRepositorySummaryErrors[cacheID] = nil

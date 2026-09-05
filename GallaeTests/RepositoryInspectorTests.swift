@@ -290,6 +290,72 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testRefreshKeepsNavigatorReferencesUntilReplacementIsLoaded() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "remote", "add", "origin", root.path])
+        try runGit(["-C", root.path, "tag", "--no-sign", "v1"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        await model.loadRemotes(in: root)
+        await model.loadTags()
+        let remotes = model.remotesState
+        let tags = model.tagsState
+        guard case .loaded = remotes, case .loaded = tags else {
+            return XCTFail("The Navigator must have loaded references before refresh")
+        }
+
+        // Foreground activation uses this same refresh path. Keep the rows while its tasks reload.
+        await model.refreshRepository()
+        XCTAssertEqual(model.remotesState, remotes)
+        XCTAssertEqual(model.tagsState, tags)
+
+        // Keeping the displayed value must not skip the actual reload, including removals.
+        try runGit(["-C", root.path, "remote", "remove", "origin"])
+        try runGit(["-C", root.path, "tag", "-d", "v1"])
+        await model.loadRemotes(in: root)
+        await model.loadTags()
+        XCTAssertEqual(model.remotesState, .loaded([]))
+        XCTAssertEqual(model.tagsState, .loaded([]))
+        try runGit(["-C", root.path, "remote", "add", "replacement", root.path])
+        try runGit(["-C", root.path, "tag", "--no-sign", "v2"])
+        await model.loadRemotes(in: root)
+        await model.loadTags()
+        guard case .loaded(let updatedRemotes) = model.remotesState else {
+            return XCTFail("The updated remote list must load")
+        }
+        XCTAssertEqual(updatedRemotes.map(\.name), ["replacement"])
+        XCTAssertEqual(model.tagsState, .loaded(["v2"]))
+
+        let cancelledReload = Task { @MainActor in
+            await model.loadRemotes(in: root)
+            await model.loadTags()
+        }
+        cancelledReload.cancel()
+        await cancelledReload.value
+        XCTAssertEqual(model.remotesState, .loaded(updatedRemotes))
+        XCTAssertEqual(model.tagsState, .loaded(["v2"]))
+
+        let other = root.appending(path: "other")
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        try initializeRepository(at: other)
+        let openedOther = await model.openRepository(at: other)
+        XCTAssertTrue(openedOther)
+        XCTAssertEqual(model.remotesState, .notLoaded)
+        XCTAssertEqual(model.tagsState, .notLoaded)
+        await model.loadRemotes(in: other)
+        await model.loadRemotes(in: root)
+        XCTAssertEqual(model.remotesState, .loaded([]), "An old task must not clear the new Repository's rows")
+    }
+
+    @MainActor
     func testCancelledHistoryLoadKeepsBranchWorktreeIndicators() async throws {
         let fixture = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixture) }
