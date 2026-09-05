@@ -1154,7 +1154,7 @@ private struct RepositoryNavigatorView: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
-                        .padding(.trailing, 4)
+                        .padding(.trailing, 12)
                         .help("New Branch…")
                         .accessibilityLabel("New Branch")
                         .disabled(model.isLoading || model.isSyncing || model.repository == nil)
