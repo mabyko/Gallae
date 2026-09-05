@@ -1,29 +1,80 @@
 # Gallae for Git
 
-로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안전하게 Git 작업을 끝낼 수 있게 해 주는 macOS Git GUI다. 무료이고 오픈소스다.
+**English** | [한국어](README.ko.md)
 
-**시스템 Git만 사용한다.** 자체 Git 구현을 들고 다니지 않으므로 터미널에서 쓰는 것과 같은 Git이 같은 저장소를 다룬다.
+A free, open-source Git GUI for macOS. Inspect local repositories, understand changes, and complete everyday Git tasks with a native desktop interface.
 
-> **상태: 개발 중.** 아직 배포판이 없다. 직접 빌드해 쓸 수 있다.
+**Gallae uses the macOS system Git (`/usr/bin/git`).** It works with your existing local repositories and Git configuration without bundling a separate Git implementation.
 
-## 무엇을 할 수 있나
+> **Status: in development.** No public release is available yet. You can build the app from source.
 
-| | |
+![Gallae History with the commit graph above a split diff and Worktrees in the sidebar](docs/screenshots/history-top-and-bottom.png)
+
+History in the default **Top and Bottom** layout, with a split diff below the commit list.
+
+<details>
+<summary>View the Side by Side layout</summary>
+
+![Gallae History with the commit list beside commit details and a unified diff](docs/screenshots/history-side-by-side.png)
+
+The same history in **Side by Side**, with a unified diff. History layout and diff layout can be chosen independently.
+
+</details>
+
+## Features
+
+| Area | Features |
 | --- | --- |
-| **읽기** | Repository Library와 폴더 탐색, 마지막 Workspace 복원, 작업 트리 상태, Unified·Split diff |
-| **커밋** | 파일·hunk·**줄 단위** stage와 unstage, 커밋, amend, 확인을 거치는 discard |
-| **히스토리** | commit 목록과 그래프, 파일별 patch, Revert, soft·mixed·hard Reset |
-| **동기화** | Fetch, Fetch & Prune, 자동 Fetch, fast-forward Pull, Push, Publish, Remote 관리 |
-| **복구** | Stash 조회·생성·적용·삭제, HEAD Reflog와 복구 branch 생성 |
-| **분기 작업** | branch 생성·전환·Merge·Rebase, 충돌 파일의 Base·Ours·Theirs 검사와 해결, Interactive Rebase 계획 편집 |
+| **Repository Library** | Register folders, browse repositories within them, reopen recent repositories, and restore the last workspace |
+| **Review and commit** | Unified and split diffs, file/hunk/line staging and unstaging, commits, amend, and discard with confirmation |
+| **History** | Graph across branches and tags, search by message/author/SHA/ref, per-file patches, author and signature details, revert, and reset |
+| **Worktrees** | Browse primary and linked working folders, create worktrees with new or existing branches, open and remove worktrees |
+| **Sync** | Fetch, fetch and prune, automatic fetch, fast-forward pull, push, publish, and remote management |
+| **Merge and recovery** | Merge, rebase, conflict comparison, external merge tools, continue/abort, interactive rebase, stashes, and reflog |
+| **External apps** | Open working folders in Finder, terminals, or editors; copy paths; install the `gallae [path]` command |
 
-## 다른 점
+History defaults to a **Top and Bottom** layout: commits above, review below. Use **Expand Review** for more room, or choose **Side by Side** in Appearance. Clicking a branch once jumps to its commit in the full graph; double-clicking switches branches or opens the linked worktree.
 
-**당신의 `.gitconfig`가 diff를 깨뜨리지 않는다.** Git을 실행해 그 출력을 읽는 GUI는 사용자 설정에 취약하다. 외부 diff 도구를 걸었거나 색·접두사·문맥 설정을 바꿔 두면 diff가 깨지거나 부분 stage를 통째로 못 쓰게 되는 일이 여러 도구에서 보고돼 왔다. Gallae는 patch를 만들 때 형식을 고정하고, 파일의 내용을 정의하는 설정(`core.autocrlf`, `.gitattributes`)만 존중한다. → [무엇을 고정하고 무엇을 존중하는가](docs/git-configuration.md)
+Appearance settings include system/light/dark themes, row density, the app accent color, and History graph and badge colors. The app accent defaults to **System**, following your macOS setting.
 
-**설정 때문에 Git이 아예 실행되지 않으면 그 이유를 보여 준다.** 어느 설정의 어느 값이 문제인지 화면에서 읽고 고칠 수 있다.
+## External applications
 
-## 빌드
+Choose **Open in** from a branch’s context menu or the current working location menu at the top of the workspace. The current branch opens the current working folder; a branch checked out in another worktree opens that folder. Actions are disabled for branches without a checked-out folder. Opening an external app does not change your checkout.
+
+Select your default terminal and editor independently in **Settings → General**. The following presets are built in; terminal and editor pickers show installed apps.
+
+| Purpose | Built-in choices | Action |
+| --- | --- | --- |
+| Finder | macOS Finder | Reveal the working folder |
+| Terminal | Terminal, Ghostty, Warp, iTerm2, cmux, Kaku, WezTerm, kitty, Alacritty, Rio | Open a terminal in the selected working folder |
+| Editor | VS Code, Zed | Open the selected working folder |
+| Custom app | **Other…** in the terminal or editor picker | Select another macOS app that supports opening folders |
+
+Applications must be installed separately. Folder handling in custom apps depends on the application.
+
+### Conflict resolution and merge tools
+
+When a regular merge encounters conflicts, Gallae preserves the merge state and opens **Changes → Conflicts**. Compare **Base**, **Ours**, and **Theirs**, or choose **Open in Merge Tool**. Select the tool in **Settings → General → Merge Tool**.
+
+| Choice | Integration | After editing |
+| --- | --- | --- |
+| **Use Git Configuration** | Uses Git’s `merge.guitool`, falling back to `merge.tool` | Git may stage resolved files according to its configuration; Gallae refreshes the repository state. Tools requiring terminal input must be run in a terminal. |
+| **VS Code** | Opens the 3-way Merge Editor with the base, both sides, and result file | Close the merge editor, review the result, then choose **Mark Resolved…** in Gallae |
+| **Sublime Merge** | Opens its dedicated merge tool with the three versions and result file | Close the merge editor, review the result, then choose **Mark Resolved…** in Gallae |
+
+VS Code and Sublime Merge use the command-line tools included in their installed apps. **Zed is available as an Open in editor, but is not a Merge Tool preset.**
+
+External merging is available for regular files present on both sides. Direct VS Code and Sublime Merge integrations support UTF-8 text. Resolve deletion conflicts, symbolic links, and submodules using **Use Ours / Use Theirs** or a terminal. **Mark Resolved does not check for remaining conflict markers, so review the saved file first.** Once all conflicts are resolved, choose **Continue** to finish or **Abort…** to stop the merge.
+
+Pull is **fast-forward only**. If histories have diverged, it stops without automatically merging.
+
+## Git configuration
+
+**Patch formatting is controlled for diff review and partial staging.** External diff tools, colors, prefixes, and context settings do not alter the patch format Gallae parses. Settings that affect file content, such as `core.autocrlf` and `.gitattributes`, are respected. See [how Gallae handles Git configuration](docs/git-configuration.md).
+
+**Configuration errors are shown in the app.** If a setting prevents Git from running, Gallae surfaces the error so you can identify and fix it.
+
+## Build from source
 
 ```sh
 git clone <this repository>
@@ -31,38 +82,40 @@ cd Gallae
 open Gallae.xcodeproj
 ```
 
-서명이 필요하면 `Config/Local.xcconfig`를 만든다. 추적되지 않는 파일이라 개인 식별자가 저장소에 들어가지 않는다.
+For signing, create `Config/Local.xcconfig`. This file is ignored by Git so personal identifiers stay out of the repository.
 
-```
+```xcconfig
 GALLAE_BUNDLE_ID = <your-bundle-id>
 GALLAE_BUNDLE_ID[config=Debug] = <your-debug-bundle-id>
 DEVELOPMENT_TEAM = <your-team-id>
 ```
 
-명령줄에서:
+Run tests from the command line:
 
 ```sh
 xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS'
 ```
 
-**요구 사항** — macOS 15 이상, Xcode, 시스템 Git(Xcode Command Line Tools).
+**Requirements:** macOS 15 or later, Xcode, and system Git (Xcode Command Line Tools).
 
-## 문서
+## Documentation
 
-| | |
+The detailed project documentation is currently in Korean.
+
+| Document | Contents |
 | --- | --- |
-| [PRODUCT.md](PRODUCT.md) | 현재 제품 범위, UX·개발 기준, 클린룸 원칙 |
-| [CONTEXT.md](CONTEXT.md) | 도메인 용어 |
-| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | 재질·대비·밀도 응답 |
-| [docs/git-configuration.md](docs/git-configuration.md) | Gallae가 Git 설정을 다루는 방식 |
-| [docs/README.md](docs/README.md) | 유즈케이스 색인 |
+| [PRODUCT.md](PRODUCT.md) | Current scope, UX and development guidelines, and clean-room principles |
+| [CONTEXT.md](CONTEXT.md) | Domain terminology |
+| [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | Materials, contrast, and density |
+| [Git configuration](docs/git-configuration.md) | How Gallae handles Git settings |
+| [Use cases](docs/README.md) | User workflows and expected behavior |
 
-## 기여
+## Contributing
 
-구현의 근거는 공개된 Git 동작과 문서, Apple 공개 API와 Human Interface Guidelines다. 경쟁 앱의 코드·에셋·문구·수치는 가져오지 않는다. 자세한 기준은 [PRODUCT.md의 클린룸 원칙](PRODUCT.md#클린룸-원칙)에 있다.
+Implementation is based on documented Git behavior, public Apple APIs, and the Human Interface Guidelines. We do not reuse competing apps’ code, assets, wording, or exact design measurements. See the [clean-room principles in PRODUCT.md](PRODUCT.md#클린룸-원칙).
 
-분기나 반복이 있는 로직은 임시 저장소를 쓰는 작은 통합 테스트를 남긴다.
+Logic with branches or loops should include a small integration test using a temporary repository.
 
-## 라이선스
+## License
 
 [MIT License](LICENSE)

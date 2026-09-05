@@ -23,7 +23,8 @@
 - staged·unstaged·untracked 변경이 있으면 Merge commit 생성을 비활성화하고 먼저 commit하거나 stash하도록 안내한다.
 - 두 branch가 갈라지지 않았으면 merge commit을 만들지 않고 Fast-Forward를 사용하도록 안내한다.
 - Cancel 또는 Escape는 Repository를 바꾸지 않는다.
-- 충돌이나 Git 실패가 나면 merge를 자동으로 중단하고 original HEAD와 깨끗한 working tree 복원을 확인한다.
+- 충돌이 나면 Merge 상태와 working tree를 유지하고 Integrate 시트를 닫아 Changes의 충돌 파일을 보여 준다. 파일을 해결한 뒤 Continue로 완료하거나 Abort로 중단한다.
+- 충돌 외의 Git 실패는 merge를 자동으로 중단하고 original HEAD와 깨끗한 working tree 복원을 확인한다.
 - 복원이 끝나지 않으면 실제 Repository 상태를 다시 읽어 경고와 함께 보여 준다.
 
 ## 완료 확인
@@ -31,7 +32,7 @@
 - 새 commit의 parent는 실행 전 현재 HEAD와 선택한 source branch commit이다.
 - source branch와 Remote branch는 바뀌지 않는다.
 - merge message, identity, hook과 서명은 사용자의 Git 설정을 따른다.
-- 충돌 편집기는 제공하지 않는다.
+- 내장 비교는 읽기 전용이며 Open in Merge Tool에서 Git 설정·VS Code·Sublime Merge로 해결할 수 있다. [외부 도구 지원 범위](../../README.ko.md#충돌-해결과-merge-tool)를 따른다.
 - branch 선택과 두 동작, 취소는 키보드와 VoiceOver로 실행할 수 있다.
 
 [다른 local branch fast-forward Merge](uc-38-merge-local-branch.md) · [기존 local branch 전환](uc-13-switch-local-branch.md) · [사용자 흐름 문서로 돌아가기](../README.md)
