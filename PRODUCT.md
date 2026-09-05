@@ -88,6 +88,7 @@ Gallae는 저장소를 하나씩 기억하는 것에 더해, 사용자가 등록
 - 툴바 버튼은 hover 도움말로 이름과 동작, 있으면 단축키를 설명한다.
 - 툴바는 탐색(Library·Navigator 토글) · 동기화(Fetch·Pull·Push 또는 Publish) · 새로고침 묶음만 둔다. Pull·Push에는 behind·ahead 수를 붙이고 동기화 동작은 아이콘과 이름을 함께 표시한다. Remotes는 Navigator의 객체이고 Integrate는 branch 문맥 메뉴와 Repository 메뉴에 둔다. 720pt 최소 폭에서 동기화 세 동사가 직접 보이는 것이 완료 조건이다.
 - diff의 Unified·Split은 diff 헤더의 보기 토글이며 마지막 선택을 기억한다. 설정 항목이 아니다. 현재 표시 중인 구획이 비교 불가능하면 Unified로 표시하고 토글을 비활성화하되 저장된 취향은 유지한다. 선택기·스크롤·본문은 같은 레이아웃 판단을 쓴다.
+- 파일 목록의 상태 배지는 고정 너비의 한 글자(M 수정·A 추가·D 삭제·R 이름 변경·C 복사·T 유형 변경·? 미추적·! 충돌)로 표시한다. 전체 상태명과 Changes의 Staged/Working 구분은 툴팁·접근성 이름으로 제공한다.
 - Changes·History·Stashes의 diff 머리는 파일명과 폴더 위치를 구분하고 현재 표시 중인 구획의 추가·삭제 줄 수를 보여 준다. 색과 함께 `+`·`−` 기호를 쓰며, 문맥·패치 헤더는 집계하지 않는다. 루트 파일의 위치는 Repository root로 표시하고 전체 상대 경로는 도움말·Copy Relative Path로 제공한다.
 - diff 머리는 한 줄 배치를 우선하되 파일 식별과 조작이 함께 들어가지 않으면 조작 줄을 아래로 내린다. 파일 전체 동작은 Stage File·Unstage File로 표시하고 Discard Unstaged Changes는 File Actions 메뉴에서 기존 확인창을 거친다.
 - 깨끗한 Changes의 diff 칸은 존재하지 않는 파일 선택을 요구하지 않고 다음 편집 안내와 Show History를 제공한다.

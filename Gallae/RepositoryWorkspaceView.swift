@@ -1774,14 +1774,16 @@ private struct RepositoryChangeRow: View {
                         .help(change.path)
                     Spacer(minLength: 6)
                     ForEach(change.badges) { badge in
-                        Text(badge.label)
-                            .font(.caption2.weight(.medium))
+                        Text(badge.state?.shortLabel ?? "!")
+                            .font(.caption2.monospaced().weight(.medium))
                             .foregroundStyle(statusColor(for: badge.state))
                             .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, 5)
+                            .frame(width: 22)
                             .padding(.vertical, 1)
+                            .fixedSize()
                             .background(theme.colors.badgeBackground, in: .capsule)
+                            .help(badge.label)
+                            .accessibilityLabel(badge.label)
                     }
                 }
                 if showsParentPath, !change.parentPath.isEmpty {
@@ -4391,6 +4393,18 @@ private extension RepositorySummary.Change {
 
 
 extension RepositorySummary.Change.State {
+    var shortLabel: String {
+        switch self {
+        case .modified: "M"
+        case .typeChanged: "T"
+        case .added: "A"
+        case .deleted: "D"
+        case .renamed: "R"
+        case .copied: "C"
+        case .untracked: "?"
+        }
+    }
+
     var label: String {
         switch self {
         case .modified: "Modified"

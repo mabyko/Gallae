@@ -336,12 +336,16 @@ private struct RepositoryCommitFileRow: View {
 
             Spacer(minLength: 4)
 
-            Text(file.state.label)
-                .font(.caption2.weight(.medium))
+            Text(file.state.shortLabel)
+                .font(.caption2.monospaced().weight(.medium))
                 .foregroundStyle(statusColor)
-                .padding(.horizontal, 5)
+                .lineLimit(1)
+                .frame(width: 22)
                 .padding(.vertical, 1)
+                .fixedSize()
                 .background(theme.colors.badgeBackground, in: .capsule)
+                .help(file.state.label)
+                .accessibilityLabel(file.state.label)
         }
         .contentShape(.rect)
         .accessibilityElement(children: .combine)
