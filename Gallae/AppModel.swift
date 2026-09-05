@@ -173,6 +173,9 @@ struct RepositoryHistoryRequest: Equatable, Hashable, Sendable {
     let revision: Int
     /// Fully qualified ref that narrows History to one branch or tag; nil reads every ref.
     var reference: String? = nil
+    var focusReference: String? = nil
+    var navigationRevision: Int = 0
+    var limit: Int = RepositoryInspector.maximumHistoryCommits
 }
 
 struct RepositoryCommitPatchRequest: Equatable, Hashable, Sendable {
@@ -260,13 +263,29 @@ final class AppModel {
         }
     }
     var historyState: RepositoryHistoryLoadState = .notLoaded
-    /// Fully qualified ref the Navigator selected (`refs/heads/…`, `refs/tags/…`); nil shows every ref in History.
-    var historyReference: String? {
+    /// Explicit filtering is independent of the reference selected in the Navigator.
+    var historyScope: RepositoryHistoryScope? {
         didSet {
-            // Selecting another branch or tag starts at its tip instead of keeping an unrelated commit.
-            if historyReference != oldValue { selectedHistoryCommitID = nil }
+            guard historyScope != oldValue else { return }
+            historyLimit = RepositoryInspector.maximumHistoryCommits
+            selectedHistoryCommitID = nil
+            if let historyScope { historySelection = historyScope }
+            else { historyNavigationRevision += 1 }
         }
     }
+    var historySelection: RepositoryHistoryScope? {
+        didSet {
+            historyNavigationRevision += 1
+            historyNavigationMessage = nil
+        }
+    }
+    private(set) var historyNavigationRevision = 0
+    private var appliedHistoryNavigationRevision = -1
+    private var appliedHistoryReference: String?
+    private(set) var historyScrollRevision = 0
+    private(set) var historyNavigationMessage: String?
+    private var historyLimit = RepositoryInspector.maximumHistoryCommits
+    var historyReference: String? { historyScope?.historyReference }
     var tagsState: RepositoryTagsLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
     private(set) var localBranchWorktreeURLs: [String: URL] = [:]
@@ -397,7 +416,13 @@ final class AppModel {
 
     var historyRequest: RepositoryHistoryRequest? {
         guard let repository else { return nil }
-        return .init(rootURL: repository.rootURL, revision: repositoryRevision, reference: historyReference)
+        let focusReference: String?
+        if case .remote = historySelection { focusReference = nil }
+        else { focusReference = historySelection?.historyReference }
+        return .init(
+            rootURL: repository.rootURL, revision: repositoryRevision, reference: historyReference,
+            focusReference: focusReference, navigationRevision: historyNavigationRevision, limit: historyLimit
+        )
     }
 
     var selectedHistoryCommit: RepositoryHistory.Commit? {
@@ -777,6 +802,23 @@ final class AppModel {
             presentFailure: true,
             failureTitle: "Couldn’t Open Repository"
         )
+    }
+
+    func openWorktree(at url: URL) async -> Bool {
+        let opened = await inspect(
+            url,
+            rememberOnSuccess: true,
+            markCurrentStaleOnFailure: false,
+            showWorkspaceOnSuccess: true,
+            presentFailure: true,
+            failureTitle: "Couldn’t Open Worktree",
+            preservingHistoryScope: true
+        )
+        if opened {
+            if case .branch(let name) = repository?.head { historySelection = .branch(name) }
+            else { historySelection = nil }
+        }
+        return opened
     }
 
     func openOrAddFolder(at url: URL) async {
@@ -1249,6 +1291,7 @@ final class AppModel {
             guard generation == inspectionGeneration else { return false }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
+            historySelection = .branch(branch)
             let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
             libraryRepositoryActivities[cacheID] = nil
             libraryRepositoryActivityErrors[cacheID] = nil
@@ -2470,6 +2513,12 @@ final class AppModel {
         }
     }
 
+    func loadMoreHistory() {
+        if case .loaded(let history) = historyState {
+            historyLimit = history.commits.count + RepositoryInspector.maximumHistoryCommits
+        }
+    }
+
     func loadHistory() async {
         guard let request = historyRequest, let repository else {
             historyState = .notLoaded
@@ -2489,16 +2538,36 @@ final class AppModel {
         }
 
         do {
-            let history = try await inspector.history(in: repository, reference: request.reference)
+            let isNavigation = request.navigationRevision != appliedHistoryNavigationRevision
+            let previousCount: Int
+            if appliedHistoryReference == request.reference, case .loaded(let previous) = historyState {
+                previousCount = previous.commits.count
+            }
+            else { previousCount = 0 }
+            let history = try await inspector.history(
+                in: repository, reference: request.reference,
+                focusReference: isNavigation ? request.focusReference : nil,
+                limit: max(request.limit, previousCount)
+            )
             guard generation == historyGeneration, request == historyRequest else { return }
             historyState = .loaded(history)
             // A branch or tag scope may not contain HEAD; its tip comes first in topo order.
             let headID = history.headCommitID.flatMap { headID in
                 history.commits.contains(where: { $0.id == headID }) ? headID : nil
             }
-            selectedHistoryCommitID = selectedHistoryCommitID.flatMap { selectedID in
+            let focusedID = history.focusedCommitID.flatMap { id in
+                history.commits.contains(where: { $0.id == id }) ? id : nil
+            }
+            if isNavigation {
+                historyNavigationMessage = request.focusReference != nil && focusedID == nil
+                    ? "This reference is outside the current filter." : nil
+            }
+            selectedHistoryCommitID = focusedID ?? selectedHistoryCommitID.flatMap { selectedID in
                 history.commits.contains(where: { $0.id == selectedID }) ? selectedID : nil
             } ?? headID ?? history.commits.first?.id
+            appliedHistoryNavigationRevision = request.navigationRevision
+            appliedHistoryReference = request.reference
+            if isNavigation { historyScrollRevision += 1 }
         } catch is CancellationError {
             return
         } catch {
@@ -2855,7 +2924,8 @@ final class AppModel {
         showWorkspaceOnSuccess: Bool,
         presentFailure: Bool,
         failureTitle: String? = nil,
-        addLibraryFolderWhenNotWorkingTree: Bool = false
+        addLibraryFolderWhenNotWorkingTree: Bool = false,
+        preservingHistoryScope: Bool = false
     ) async -> Bool {
         inspectionGeneration += 1
         let generation = inspectionGeneration
@@ -2880,7 +2950,8 @@ final class AppModel {
                     selectedLibraryRepositoryID = inspectedRepository.rootURL
                 }
             }
-            apply(inspectedRepository, showWorkspaceOnSuccess: showWorkspaceOnSuccess)
+            apply(inspectedRepository, showWorkspaceOnSuccess: showWorkspaceOnSuccess,
+                  preservingHistoryScope: preservingHistoryScope)
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
@@ -2908,7 +2979,8 @@ final class AppModel {
 
     private func apply(
         _ inspectedRepository: RepositorySummary,
-        showWorkspaceOnSuccess: Bool
+        showWorkspaceOnSuccess: Bool,
+        preservingHistoryScope: Bool = false
     ) {
         let isSameRepository = repository.map {
             sameFileLocation($0.rootURL, inspectedRepository.rootURL)
@@ -2918,6 +2990,11 @@ final class AppModel {
             : nil
         // Refresh keeps the reader's context; opening another repository resets it.
         if !isSameRepository {
+            if !preservingHistoryScope {
+                historyScope = nil
+                historySelection = nil
+                historyLimit = RepositoryInspector.maximumHistoryCommits
+            }
             historyState = .notLoaded
             stashesState = .notLoaded
             reflogState = .notLoaded

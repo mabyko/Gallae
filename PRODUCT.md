@@ -54,9 +54,11 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 ### 정보 구조
 
 - Library는 Library Folder 탐색·Repository 목록·선택 요약으로 구성한다. Workspace는 Navigator·목록·내용의 역할을 구분한다.
-- Navigator의 Changes·History·Stashes·Reflog는 목적지이며, branch·remote·tag는 History의 조회 범위다. branch 한 번 클릭은 조회, 두 번 클릭은 전환이다. HEAD는 조회 선택과 별도로 표시한다.
+- Navigator의 Changes·History·Stashes·Reflog는 목적지다. branch·remote branch·tag 한 번 클릭은 History의 해당 commit으로 이동하며 전체 그래프를 좁히지 않는다. branch 두 번 클릭은 전환이다. HEAD는 탐색 선택과 별도로 표시한다.
+- 별도 Worktree가 있는 branch의 전환은 해당 폴더를 여는 동작이다. 브랜치 더블클릭·Open Worktree·상단 브랜치 메뉴·History 행 메뉴 모두 이동 전의 History 조회 범위를 유지한다. 일반적인 다른 Repository 열기는 범위를 초기화한다. 이동 성공 후 대상 HEAD를 선택한다. 작업 위치는 Working on, 명시적으로 좁힌 조회 범위는 Filter로 구분하며 좁은 창의 작업 위치는 브랜치 이름으로 줄인다.
 - History의 기본 배치는 **Top and Bottom**이다. 상단에 커밋 목록, 하단에 커밋 머리·파일 목록·diff를 둔다. Appearance → History Layout에서 기존 **Side by Side**도 선택할 수 있고 저장된 선택은 유지한다.
 - Expand Review는 History 목록을 가려 검토 영역을 넓힌다. Show History로 복귀하며 선택한 커밋·파일을 유지한다. 현재 범위와 순번을 표시하고 앞뒤 커밋 이동은 현재 검색·조회 범위 안으로 제한한다.
+- History는 전체 branch·tag 이력이 기본이며, 머리 메뉴의 명시적 필터로 특정 ref의 이력만 볼 수 있다. 필터는 Clear Filter로 해제하며, 필터 밖의 ref를 선택하면 전체 History에서 보는 동작을 안내한다. 브랜치 탐색 시 텍스트 검색은 해제한다. 최초 100개를 읽고 Load Older Commits 또는 오래된 ref 탐색으로 범위를 확장한다. 로컬 branch 칩의 기본색은 파랑, 원격 branch는 청록, tag는 보라다. Appearance → History Colors의 색상표에서 그래프 시작색과 세 종류의 배지색을 각각 바꾸고 초기화할 수 있다. 배지는 아이콘 영역과 이름 사이에 옅은 세로선을 둔다. 이름은 기본 글자색으로 읽기 쉽게 표시하고 종류별 색상은 아이콘·배경·테두리에만 적용한다. HEAD 칩 대신 현재 체크아웃한 커밋의 제목과 branch·tag 칩을 굵게 표시하고, 다른 커밋의 칩은 보통 굵기로 표시한다. 현재 위치 정보는 도움말·접근성 설명에 유지한다.
 - 상하 배치의 커밋 머리에는 제목, 아바타·작성자·이메일·시각, SHA·서명 상태가 보인다. 본문 미리보기는 공백·줄바꿈을 접어 가용 폭 안에서 두 줄로 보여 준다. Details…는 원문의 줄바꿈을 보존한 전체 메시지·메타데이터·커밋 작업을 제공한다.
 - 좁은 창에서는 Navigator부터 접고 창을 강제로 키우지 않는다. 접힌 Navigator에 닿는 방식은 Appearance의 Floating Navigator(기본)·Toolbar Menu·Location Menu 중에서 고른다.
 - 현재 branch와 조회 범위를 구분한다. Git의 upstream 관계는 화면에서 Tracking으로 표시하며, 축약된 이름의 전체 값은 도움말과 접근성 이름에 남긴다.
@@ -76,7 +78,6 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 ### 시각 언어와 조작
 
 - Appearance → Accent Color에서 앱 선택·컨트롤의 강조색을 고른다. 기본값은 macOS 강조색을 따르는 System이며, 색상표에서 고른 값은 재실행 후에도 유지된다. History 그래프·배지 색과 diff의 추가·삭제 색은 별도로 유지한다.
-- 로컬 branch 칩의 기본색은 파랑, 원격 branch는 청록, tag는 보라다. Appearance → History Colors의 색상표에서 그래프 시작색과 세 종류의 배지색을 각각 바꾸고 초기화할 수 있다. 배지는 아이콘 영역과 이름 사이에 옅은 세로선을 둔다. 이름은 기본 글자색으로 읽기 쉽게 표시하고 종류별 색상은 아이콘·배경·테두리에만 적용한다. HEAD 칩 대신 현재 체크아웃한 커밋의 제목과 branch·tag 칩을 굵게 표시하고, 다른 커밋의 칩은 보통 굵기로 표시한다. 현재 위치 정보는 도움말·접근성 설명에 유지한다.
 - 시스템 글꼴·색상·SF Symbols·표준 macOS 컨트롤을 우선한다. 재질·대비·밀도는 [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md)의 역할을 따른다.
 - 사이드바·툴바에는 시스템 재질을 사용하고 콘텐츠 패널은 불투명하게 둔다. System·Light·Dark, 반투명 여부, Compact Rows를 지원하며 시스템 접근성 설정에 응답한다.
 - 상태를 색만으로 전달하지 않는다. 라이트·다크 모드, 명확한 키보드 포커스, 충분한 대비와 Reduce Motion을 고려한다.

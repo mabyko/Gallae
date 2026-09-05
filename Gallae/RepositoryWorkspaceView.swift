@@ -33,7 +33,7 @@ enum RepositoryWorkspaceSection: Int, CaseIterable {
     }
 }
 
-/// What History is narrowed to: one branch, remote, remote branch, or tag chosen in the Navigator's scope list.
+/// A reference used either for Navigator selection or an explicit History filter.
 /// The screen (Changes, History, Stashes, Reflog) is the other axis and lives in `RepositoryWorkspaceSection`.
 enum RepositoryHistoryScope: Hashable {
     case branch(String)
@@ -117,7 +117,10 @@ struct RepositoryWorkspaceView: View {
     @State private var isNavigatorAutoCollapsed = false
     @State private var isCreatingBranch = false
     /// The Navigator's scope axis; the screen axis is `workspaceSection`. Choosing a scope shows History.
-    @State private var scope: RepositoryHistoryScope?
+    private var scope: RepositoryHistoryScope? {
+        get { model.historySelection }
+        nonmutating set { model.historySelection = newValue }
+    }
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigatorStyle = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
     /// The floating Navigator over the detail column in narrow windows.
     @State private var isNavigatorPanelPresented = false
@@ -158,7 +161,7 @@ struct RepositoryWorkspaceView: View {
                     case .changes:
                         changesContent(repository)
                     case .history:
-                        RepositoryHistoryView(model: model, scope: scope)
+                        RepositoryHistoryView(model: model, scope: $model.historyScope)
                     case .stashes:
                         RepositoryStashesView(model: model)
                     case .reflog:
@@ -227,8 +230,7 @@ struct RepositoryWorkspaceView: View {
             amendPrefill = nil
             isConfirmingOperationAbort = false
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
-            // The scope belonged to the previous Repository; the remembered screen stays.
-            scope = nil
+            // AppModel resets the scope for an ordinary open and retains it for Worktree navigation.
             if model.repository?.changes.isEmpty == true, workspaceSection == .changes {
                 workspaceSection = .history
             }
@@ -237,7 +239,6 @@ struct RepositoryWorkspaceView: View {
             isNavigatorPanelPresented = false
         }
         .onChange(of: scope, initial: true) { _, scope in
-            model.historyReference = scope?.historyReference
             isNavigatorPanelPresented = false
         }
         .onChange(of: model.repository?.changes) { _, changes in
@@ -330,14 +331,14 @@ struct RepositoryWorkspaceView: View {
                     Menu {
                         branchMenuItems(for: repository)
                     } label: {
-                        Label(repository.head.label, systemImage: repository.head.systemImage)
+                        Label(isWindowNarrow ? repository.head.label : "Working on: \(repository.head.label)", systemImage: repository.head.systemImage)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                     .font(.callout.weight(.medium))
-                    .help("Switch, create, or integrate local branches")
+                    .help("Working on: \(repository.head.label). Switch, create, or integrate local branches")
                     .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
                     .disabled(model.isLoading || model.isSyncing)
 
@@ -479,7 +480,7 @@ struct RepositoryWorkspaceView: View {
                     ForEach(otherBranches, id: \.self) { branch in
                         if let worktreeURL = model.localBranchWorktreeURLs[branch] {
                             Button(branch, systemImage: "folder") {
-                                Task { _ = await model.openRepository(at: worktreeURL) }
+                                Task { _ = await model.openWorktree(at: worktreeURL) }
                             }
                         } else {
                             Button(branch, systemImage: "arrow.triangle.branch") {
@@ -513,7 +514,7 @@ struct RepositoryWorkspaceView: View {
     }
 
     private var navigatorColumn: some View {
-        RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $scope)
+        RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection)
             .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: Self.navigatorMaximumWidth)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
                 guard columnVisibility != .detailOnly, width >= 180 else { return }
@@ -608,7 +609,7 @@ struct RepositoryWorkspaceView: View {
                 .onTapGesture { isNavigatorPanelPresented = false }
                 .accessibilityHidden(true)
 
-            RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $scope, isFloating: true)
+            RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection, isFloating: true)
                 .frame(width: 220)
                 .background(
                     theme.materials.translucentChrome
@@ -672,14 +673,13 @@ struct RepositoryWorkspaceView: View {
         }
     }
 
-    /// Choosing a screen drops the scope, so History from the screen list is always the whole Repository and the
-    /// scope list never shows a branch the body isn't about.
+    /// Switching screens clears the Navigator selection, not the History filter.
     private func show(_ section: RepositoryWorkspaceSection) {
         workspaceSection = section
         scope = nil
     }
 
-    /// Checked while History shows this scope; choosing it shows History.
+    /// Checked while this reference is selected in History.
     private func scopeMenuItem(_ target: RepositoryHistoryScope) -> some View {
         Toggle(
             isOn: Binding(
@@ -1391,7 +1391,7 @@ private struct RepositoryNavigatorView: View {
         .accessibilityLabel(badge > 0 ? "\(section.title), \(badge)" : section.title)
     }
 
-    /// Choosing a screen drops the scope: the two selections never disagree about what the body shows.
+    /// Switching screens clears the Navigator selection, not the History filter.
     private func show(_ section: RepositoryWorkspaceSection) {
         screen = section
         scope = nil
@@ -1399,7 +1399,7 @@ private struct RepositoryNavigatorView: View {
 
     // MARK: - Scope list
 
-    /// Setting a scope also shows History, the only screen that reads it.
+    /// Selecting a reference reveals it in History without changing the filter.
     private var scopeSelection: Binding<RepositoryHistoryScope?> {
         Binding(
             get: { scope },
@@ -1683,12 +1683,12 @@ private struct RepositoryNavigatorView: View {
         }
     }
 
-    /// Switching or opening a Worktree changes HEAD only; the screen and the scope stay where they were.
+    /// Switch in this folder, or navigate to an existing Worktree, retaining the History scope in either case.
     private func performPrimaryAction(for branch: String) {
         guard branch != currentBranch, !model.isLoading, !model.isSyncing else { return }
         Task {
             if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                _ = await model.openRepository(at: worktreeURL)
+                _ = await model.openWorktree(at: worktreeURL)
             } else {
                 _ = await model.switchBranch(to: branch)
             }
@@ -1990,8 +1990,8 @@ private struct WorktreeRemovalRequest {
 
 private struct RepositoryHistoryView: View {
     @Bindable var model: AppModel
-    /// History of every ref, or the log of the scope chosen in the Navigator.
-    var scope: RepositoryHistoryScope?
+    /// The explicit History filter; Navigator selection only moves the graph focus.
+    @Binding var scope: RepositoryHistoryScope?
     @AppStorage(GallaeAppearanceSettings.historyLayoutKey) private var historyLayout = GallaeAppearanceSettings.HistoryLayout.stacked
     @State private var isReviewExpanded = false
     @FocusState private var historyFocused: Bool
@@ -2010,10 +2010,7 @@ private struct RepositoryHistoryView: View {
                 VStack(spacing: 7) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(headerTitle)
-                                .font(.headline)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            historyScopeMenu
                             Text(headerSubtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -2030,6 +2027,22 @@ private struct RepositoryHistoryView: View {
                                 .padding(.vertical, 2)
                                 .background(theme.colors.badgeBackground, in: .capsule)
                         }
+                    }
+
+                    if scope != nil {
+                        HStack {
+                            Label("Filtered history", systemImage: "line.3.horizontal.decrease")
+                            Spacer()
+                            Button("Clear Filter") { scope = nil }
+                        }
+                        .font(.caption)
+                    }
+                    if let message = model.historyNavigationMessage {
+                        HStack {
+                            Text(message).foregroundStyle(.secondary)
+                            Button("Show in All History") { scope = nil }
+                        }
+                        .font(.caption)
                     }
 
                     if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
@@ -2059,6 +2072,7 @@ private struct RepositoryHistoryView: View {
         }
         .onChange(of: historyLayout) { isReviewExpanded = false }
         .onChange(of: model.repository?.rootURL) { isReviewExpanded = false }
+        .onChange(of: model.historyNavigationRevision) { searchText = "" }
         .task(id: model.historyRequest) {
             await model.loadHistory()
             await model.loadLocalBranches()
@@ -2137,7 +2151,7 @@ private struct RepositoryHistoryView: View {
             trackingRemoval: $pendingTrackingReferenceRemoval
         )
         .sheet(isPresented: $isCreatingBranch) {
-            switch scope {
+            switch model.historySelection {
             case .tag(let tag):
                 CreateBranchSheet(model: model, startPoint: "refs/tags/\(tag)", startPointLabel: tag)
             case .remoteBranch(let name):
@@ -2153,12 +2167,48 @@ private struct RepositoryHistoryView: View {
         }
     }
 
+    private var historyScopeMenu: some View {
+        Menu {
+            Toggle("All Branches & Tags", isOn: Binding(
+                get: { scope == nil },
+                set: { if $0 { scope = nil } }
+            ))
+            if let scope, scope != .branch(scope.name) {
+                Toggle("\(scope.kind) · \(scope.name)", isOn: .constant(true))
+            }
+            if let selected = model.historySelection, selected != scope {
+                Button("Only \(selected.name)") { scope = selected }
+                Divider()
+            }
+            if case .loaded(let branches) = model.localBranchesState, !branches.isEmpty {
+                Section("Filter by Branch") {
+                    ForEach(branches, id: \.self) { branch in
+                        Toggle(branch, isOn: Binding(
+                            get: { scope == .branch(branch) },
+                            set: { if $0 { scope = .branch(branch) } }
+                        ))
+                    }
+                }
+            }
+        } label: {
+            Text(scope.map { "History · Filter: \($0.name)" } ?? "History · All Branches & Tags")
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityLabel("History scope")
+        .accessibilityValue(scope.map { "\($0.kind) · \($0.name)" } ?? "All Branches & Tags")
+        .help("History · \(scope?.name ?? "All Branches & Tags"). Change which commits are shown; this does not switch branches.")
+    }
+
     private var headerTitle: String {
         scope?.name ?? "History"
     }
 
     private var headerSubtitle: String {
-        switch scope {
+        switch model.historySelection {
         case .branch(let name):
             if name == currentBranchName {
                 "Local branch · HEAD"
@@ -2178,7 +2228,7 @@ private struct RepositoryHistoryView: View {
         case .remoteBranch:
             "Remote branch"
         case nil:
-            "Branches & Tags · latest 100"
+            "All branches and tags · select a branch to jump to its tip"
         }
     }
 
@@ -2187,11 +2237,11 @@ private struct RepositoryHistoryView: View {
     @ViewBuilder
     private var headerTools: some View {
         let isBusy = model.isLoading || model.isSyncing
-        switch scope {
+        switch model.historySelection {
         case .branch(let name) where name != currentBranchName:
             if let worktreeURL = model.localBranchWorktreeURLs[name] {
                 Button("Open Worktree") {
-                    Task { _ = await model.openRepository(at: worktreeURL) }
+                    Task { _ = await model.openWorktree(at: worktreeURL) }
                 }
                 .help("Open the Worktree at \(worktreeURL.path)")
                 .disabled(isBusy)
@@ -2363,7 +2413,7 @@ private struct RepositoryHistoryView: View {
                                     Task { await model.switchBranch(to: branch) }
                                 },
                                 openWorktree: { url in
-                                    Task { await model.openRepository(at: url) }
+                                    Task { await model.openWorktree(at: url) }
                                 },
                                 requestWorktreeRemoval: { branch, url in
                                     Task {
@@ -2396,14 +2446,20 @@ private struct RepositoryHistoryView: View {
                         .onChange(of: historyLayout) {
                             if let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
                         }
+                        .onAppear {
+                            if let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
+                        }
+                        .onChange(of: model.historyScrollRevision) {
+                            if let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id, anchor: .center) }
+                        }
                         .onChange(of: model.selectedHistoryCommitID) {
-                            if isReviewExpanded, let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
+                            if let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
                         }
                     }
 
-                    if history.commits.count == RepositoryInspector.maximumHistoryCommits {
+                    if history.hasMoreCommits {
                         Divider()
-                        Text("Showing the latest \(history.commits.count) commits · older commits aren’t listed")
+                        Button("Load Older Commits · \(history.commits.count) shown") { model.loadMoreHistory() }
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -4,6 +4,116 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    @MainActor
+    func testHistoryNavigationRevealsOldTipsWithoutFilteringOrCheckingOut() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        let baseID = try gitOutput(["-C", root.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try runGit(["-C", root.path, "branch", "old"])
+        try runGit(["-C", root.path, "tag", "-a", "-m", "Old release", "old"])
+        try runGit(["-C", root.path, "update-ref", "refs/remotes/origin/old", baseID])
+        for index in 0..<110 {
+            try runGit(["-C", root.path, "commit", "--quiet", "--allow-empty", "-m", "Commit \(index)"])
+        }
+        let headID = try gitOutput(["-C", root.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        await model.loadHistory()
+        guard case .loaded(let initial) = model.historyState else { return XCTFail("Expected history") }
+        XCTAssertEqual(initial.commits.count, 100)
+        XCTAssertTrue(initial.hasMoreCommits)
+        XCTAssertFalse(initial.commits.contains { $0.id == baseID })
+
+        for target in [RepositoryHistoryScope.branch("old"), .tag("old"), .remoteBranch("origin/old")] {
+            model.selectedHistoryCommitID = headID
+            model.historySelection = target
+            await model.loadHistory()
+            XCTAssertNil(model.historyScope)
+            XCTAssertEqual(model.selectedHistoryCommitID, baseID)
+            XCTAssertEqual(model.repository?.head, .branch("main"))
+            guard case .loaded(let history) = model.historyState else { return XCTFail("Expected whole history") }
+            XCTAssertEqual(history.commits.count, 111)
+            XCTAssertTrue(history.commits.contains { $0.id == headID })
+            XCTAssertFalse(history.hasMoreCommits)
+        }
+        // Re-clicking the same reference restores focus after manually choosing another commit.
+        model.selectedHistoryCommitID = headID
+        model.historySelection = .remoteBranch("origin/old")
+        await model.loadHistory()
+        XCTAssertEqual(model.selectedHistoryCommitID, baseID)
+
+        model.historyScope = .branch("old")
+        await model.loadHistory()
+        model.historySelection = .branch("main")
+        await model.loadHistory()
+        XCTAssertEqual(model.historyScope, .branch("old"))
+        XCTAssertNotNil(model.historyNavigationMessage)
+        XCTAssertEqual(model.selectedHistoryCommitID, baseID)
+        model.historyScope = nil
+        await model.loadHistory()
+        XCTAssertEqual(model.selectedHistoryCommitID, headID)
+        XCTAssertNil(model.historyNavigationMessage)
+        model.loadMoreHistory()
+        await model.loadHistory()
+        guard case .loaded(let expanded) = model.historyState else { return XCTFail("Expected older history") }
+        XCTAssertEqual(expanded.commits.count, 111)
+    }
+
+    @MainActor
+    func testWorktreeNavigationPreservesHistoryScopeAndOrdinaryOpenClearsIt() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "main")
+        let linked = fixture.appending(path: "linked")
+        let unrelated = fixture.appending(path: "unrelated")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        try initializeRepository(at: root)
+        try write("initial\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try runGit(["-C", root.path, "worktree", "add", "-b", "feature/topic", linked.path])
+        try initializeRepository(at: unrelated)
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        model.historyScope = .branch("feature/topic")
+
+        let moved = await model.openWorktree(at: linked)
+        XCTAssertTrue(moved)
+        XCTAssertEqual(model.historyScope, .branch("feature/topic"))
+        XCTAssertEqual(model.historyRequest?.reference, "refs/heads/feature/topic")
+        XCTAssertEqual(model.repository?.head, .branch("feature/topic"))
+        await model.loadHistory()
+        guard case .loaded(let history) = model.historyState else { return XCTFail("Expected scoped history") }
+        XCTAssertEqual(history.commits.count, 1)
+
+        let failed = await model.openWorktree(at: fixture.appending(path: "missing"))
+        XCTAssertFalse(failed)
+        XCTAssertEqual(model.historyScope, .branch("feature/topic"))
+        XCTAssertEqual(model.repository?.rootURL, linked.standardizedFileURL)
+
+        model.historyScope = nil
+        let returned = await model.openWorktree(at: root)
+        XCTAssertTrue(returned)
+        XCTAssertNil(model.historyScope)
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        model.historyScope = .branch("main")
+        let openedUnrelated = await model.openRepository(at: unrelated)
+        XCTAssertTrue(openedUnrelated)
+        XCTAssertNil(model.historyScope)
+        XCTAssertNil(model.historyRequest?.reference)
+    }
+
     func testHistoryLayoutStaysWithinWindowAndPreservesHiddenHistorySize() {
         for size in [CGSize.zero, CGSize(width: 720, height: 640), CGSize(width: 1180.8, height: 760.5)] {
             for stacked in [false, true] {

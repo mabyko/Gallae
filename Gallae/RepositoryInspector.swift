@@ -170,10 +170,14 @@ struct RepositoryHistory: Equatable, Sendable {
     let headCommitID: String?
     let graphRows: [String: GraphRow]
     let graphLaneCount: Int
+    let focusedCommitID: String?
+    let hasMoreCommits: Bool
 
-    init(commits: [Commit], headCommitID: String? = nil) {
+    init(commits: [Commit], headCommitID: String? = nil, focusedCommitID: String? = nil, hasMoreCommits: Bool = false) {
         self.commits = commits
         self.headCommitID = headCommitID ?? commits.first?.id
+        self.focusedCommitID = focusedCommitID
+        self.hasMoreCommits = hasMoreCommits
         let layout = Self.makeGraphLayout(for: commits)
         graphRows = layout.rows
         graphLaneCount = layout.laneCount
@@ -668,11 +672,13 @@ struct RepositoryInspector: Sendable {
     /// `reference` narrows the log to one fully qualified ref (`refs/heads/main`, `refs/tags/v1`); nil reads every ref.
     func history(
         in repository: RepositorySummary,
-        reference: String? = nil
+        reference: String? = nil,
+        focusReference: String? = nil,
+        limit: Int = maximumHistoryCommits
     ) async throws -> RepositoryHistory {
         try Task.checkCancellation()
         let history = try await Task.detached(priority: .userInitiated) {
-            try Self.historySynchronously(in: repository, reference: reference)
+            try Self.historySynchronously(in: repository, reference: reference, focusReference: focusReference, limit: limit)
         }.value
         try Task.checkCancellation()
         return history
@@ -3173,15 +3179,34 @@ struct RepositoryInspector: Sendable {
 
     private static func historySynchronously(
         in repository: RepositorySummary,
-        reference: String?
+        reference: String?,
+        focusReference: String?,
+        limit: Int
     ) throws -> RepositoryHistory {
         guard !repository.isUnborn else { return .init(commits: []) }
 
+        let revisions = reference.map { [$0, "--"] } ?? ["--branches", "--remotes", "--tags", "HEAD", "--"]
+        var count = max(1, limit)
+        var focusedCommitID: String?
+        if let focusReference {
+            let resolved = try runGit([
+                "-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(focusReference)^{commit}"
+            ])
+            guard resolved.status == 0 else { throw RepositoryHistoryError.unreadable(resolved.standardError) }
+            let resolvedID = text(from: resolved.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines)
+            focusedCommitID = resolvedID
+            // Locate an older tip without reading every commit's message. Preserve the same graph ordering.
+            let ids = try runGit(["-C", repository.rootURL.path, "rev-list", "--topo-order"] + revisions)
+            guard ids.status == 0 else { throw RepositoryHistoryError.unreadable(ids.standardError) }
+            if let index = text(from: ids.standardOutput).split(separator: "\n").firstIndex(where: { $0 == resolvedID }) {
+                count = max(count, index + 1)
+            }
+        }
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "log", "-\(maximumHistoryCommits)", "--topo-order", "-z", "--no-show-signature",
+            "log", "-\(count + 1)", "--topo-order", "-z", "--no-show-signature",
             "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
-        ] + (reference.map { [$0, "--"] } ?? ["--branches", "--remotes", "--tags", "HEAD", "--"]))
+        ] + revisions)
         guard result.status == 0 else {
             throw RepositoryHistoryError.unreadable(result.standardError)
         }
@@ -3230,7 +3255,10 @@ struct RepositoryInspector: Sendable {
                 ] ?? []
             ))
         }
-        return .init(commits: commits, headCommitID: referenceSnapshot.headCommitID)
+        return .init(
+            commits: Array(commits.prefix(count)), headCommitID: referenceSnapshot.headCommitID,
+            focusedCommitID: focusedCommitID, hasMoreCommits: commits.count > count
+        )
     }
 
     private static func interactiveRebasePlanSynchronously(
