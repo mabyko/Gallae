@@ -2080,7 +2080,6 @@ private struct RepositoryHistoryView: View {
         .onChange(of: model.historyNavigationRevision) { searchText = "" }
         .task(id: model.historyRequest) {
             await model.loadHistory()
-            await model.loadLocalBranches()
         }
         .task(id: model.commitFilesRequest) {
             await model.loadSelectedCommitFiles()

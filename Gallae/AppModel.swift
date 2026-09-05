@@ -1229,6 +1229,7 @@ final class AppModel {
     }
 
     func loadLocalBranches() async {
+        guard !Task.isCancelled else { return }
         guard let repository else {
             localBranchesState = .notLoaded
             localBranchWorktreeURLs = [:]
@@ -1237,7 +1238,7 @@ final class AppModel {
         let rootURL = repository.rootURL
         let revision = repositoryRevision
         localBranchesState = .loading
-        localBranchWorktreeURLs = [:]
+        // Keep the last known Worktree indicators while this Repository reloads.
 
         do {
             async let branchesRequest = inspector.localBranches(in: repository)
@@ -3024,7 +3025,7 @@ final class AppModel {
         }
         reflogState = .notLoaded
         localBranchesState = .notLoaded
-        localBranchWorktreeURLs = [:]
+        if !isSameRepository { localBranchWorktreeURLs = [:] }
         remotesState = .notLoaded
         tagsState = .notLoaded
         let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)

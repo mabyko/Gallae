@@ -5,6 +5,51 @@ import XCTest
 
 final class RepositoryInspectorTests: XCTestCase {
     @MainActor
+    func testCancelledHistoryLoadKeepsBranchWorktreeIndicators() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "main")
+        let linked = fixture.appending(path: "linked")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try initializeRepository(at: root)
+        try write("initial\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try runGit(["-C", root.path, "worktree", "add", "-b", "topic", linked.path])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: linked)
+        XCTAssertTrue(opened)
+        await model.loadLocalBranches()
+        let worktrees = model.localBranchWorktreeURLs
+        let branches = model.localBranchesState
+        XCTAssertEqual(worktrees["main"]?.standardizedFileURL, root.standardizedFileURL)
+
+        // Leaving History cancels its task, including the branch reload after loadHistory returns.
+        let historyTask = Task { @MainActor in
+            await model.loadHistory()
+            await model.loadLocalBranches()
+        }
+        historyTask.cancel()
+        await historyTask.value
+        XCTAssertEqual(model.localBranchWorktreeURLs, worktrees)
+        XCTAssertEqual(model.localBranchesState, branches)
+
+        await model.refreshRepository()
+        XCTAssertEqual(model.localBranchWorktreeURLs, worktrees)
+        await model.loadLocalBranches()
+        XCTAssertEqual(model.localBranchWorktreeURLs, worktrees)
+
+        let unrelated = fixture.appending(path: "unrelated")
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        try initializeRepository(at: unrelated)
+        let openedUnrelated = await model.openRepository(at: unrelated)
+        XCTAssertTrue(openedUnrelated)
+        XCTAssertTrue(model.localBranchWorktreeURLs.isEmpty)
+    }
+
+    @MainActor
     func testHistoryNavigationRevealsOldTipsWithoutFilteringOrCheckingOut() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
