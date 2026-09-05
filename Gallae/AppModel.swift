@@ -153,11 +153,6 @@ enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
     }
 }
 
-enum RepositoryLibrarySource: Hashable, Sendable {
-    case recent
-    case folder(URL)
-}
-
 struct RepositoryDiffRequest: Equatable, Hashable, Sendable {
     let rootURL: URL
     let changeID: String
@@ -253,6 +248,7 @@ enum RepositoryCommitFilesLoadState: Equatable, Sendable {
 @MainActor
 @Observable
 final class AppModel {
+    let library: RepositoryLibraryModel
     var screen: AppScreen = .library
     var repository: RepositorySummary?
     var selectedChangeID: String?
@@ -292,6 +288,8 @@ final class AppModel {
     var historyReference: String? { historyScope?.historyReference }
     var tagsState: RepositoryTagsLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
+    private(set) var localBranches: [String] = []
+    private(set) var remoteBranchesByRemote: [String: [String]] = [:]
     private(set) var worktrees: [RepositoryWorktree] = []
     private(set) var selectedWorktreeURL: URL?
     var localBranchWorktreeURLs: [String: URL] { RepositoryWorktree.branchURLs(in: worktrees) }
@@ -348,16 +346,11 @@ final class AppModel {
     var isRepositoryStale = false
     var errorTitle: String?
     var errorMessage: String?
-    var libraryFolders: [RepositoryLibraryFolder] = []
-    var recentRepositories: [RepositoryLocation] = []
-    var selectedLibrarySource: RepositoryLibrarySource? = .recent
-    var selectedLibraryRepositoryID: URL?
     // ponytail: 임시 Worktree 추적은 세션 안에서만 유지한다. 재실행 뒤 남은
     // 임시 Worktree는 일반 Worktree로 취급해 기존 흐름에서 다룬다(명세 6D-3).
     private(set) var temporaryWorktrees: [URL: URL] = [:]
     var pendingTemporaryWorktreeRemovalURL: URL?
     private(set) var repositoryRevision = 0
-    private(set) var libraryRepositorySummaries: [URL: RepositorySummary] = [:]
 
     var pushTitle: String {
         guard let upstream = repository?.upstream else { return "Publish" }
@@ -382,18 +375,16 @@ final class AppModel {
         guard case .branch = repository.head else { return false }
         return true
     }
-    private(set) var libraryRepositorySummaryErrors: [URL: String] = [:]
-    private(set) var loadingLibraryRepositorySummaries: Set<URL> = []
-    private(set) var libraryRepositoryActivities: [URL: RepositoryActivity] = [:]
-    private(set) var libraryRepositoryActivityErrors: [URL: String] = [:]
-    private(set) var loadingLibraryRepositoryActivities: Set<URL> = []
 
     @ObservationIgnored private let inspector = RepositoryInspector()
-    @ObservationIgnored private let scanner = RepositoryScanner()
+    @ObservationIgnored private let inspectRepository: @Sendable (URL) async throws -> RepositorySummary
     @ObservationIgnored private let store: LibraryStore
     @ObservationIgnored private var didAttemptRestore = false
     @ObservationIgnored private var inspectionGeneration = 0
     @ObservationIgnored private var diffGeneration = 0
+    @ObservationIgnored private var localBranchesGeneration = 0
+    @ObservationIgnored private var remotesGeneration = 0
+    @ObservationIgnored private var tagsGeneration = 0
     @ObservationIgnored private var historyGeneration = 0
     @ObservationIgnored private var commitFilesGeneration = 0
     @ObservationIgnored private var commitSignatureGeneration = 0
@@ -402,13 +393,17 @@ final class AppModel {
     @ObservationIgnored private var reflogGeneration = 0
     @ObservationIgnored private var stashFilesGeneration = 0
     @ObservationIgnored private var stashPatchGeneration = 0
-    @ObservationIgnored private var scanGeneration = 0
-    @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var remoteTask: Task<Void, Never>?
-    @ObservationIgnored private var scanningFolderIDs: [URL] = []
 
-    init(store: LibraryStore = LibraryStore()) {
+    init(
+        store: LibraryStore = LibraryStore(),
+        inspectRepository: @escaping @Sendable (URL) async throws -> RepositorySummary = {
+            try await RepositoryInspector().inspect(at: $0)
+        }
+    ) {
         self.store = store
+        library = RepositoryLibraryModel(store: store)
+        self.inspectRepository = inspectRepository
         automaticFetchEnabled = store.restoreAutomaticFetchEnabled()
     }
 
@@ -602,216 +597,12 @@ final class AppModel {
         } ?? false
     }
 
-    var selectedLibraryFolder: RepositoryLibraryFolder? {
-        guard case .folder(let id) = selectedLibrarySource else { return nil }
-        return libraryFolders.first { sameFileLocation($0.id, id) }
-    }
-
-    var selectedLibraryFolderID: URL? {
-        selectedLibraryFolder?.id
-    }
-
-    var displayedLibraryRepositories: [RepositoryLocation] {
-        switch selectedLibrarySource {
-        case .recent:
-            recentRepositories
-        case .folder:
-            selectedLibraryFolder?.repositories ?? []
-        case nil:
-            []
-        }
-    }
-
-    var selectedLibraryRepository: RepositoryLocation? {
-        guard let selectedLibraryRepositoryID else { return nil }
-        return displayedLibraryRepositories.first {
-            sameFileLocation($0.id, selectedLibraryRepositoryID)
-        }
-    }
-
-    var selectedRepositoryIsRecent: Bool {
-        selectedLibrarySource == .recent
-            && selectedLibraryRepositoryID.map { id in
-                recentRepositories.contains { sameFileLocation($0.id, id) }
-            } == true
-    }
-
     func showLibrary() {
         screen = .library
     }
 
-    func addLibraryFolder(at url: URL) {
-        let folderURL = url.standardizedFileURL
-        do {
-            try store.addLibraryFolder(folderURL)
-            if !libraryFolders.contains(where: { sameFileLocation($0.id, folderURL) }) {
-                libraryFolders.append(.init(url: folderURL))
-                sortLibraryFolders()
-            }
-            selectLibrarySource(.folder(folderURL))
-            startLibraryScan(folderID: folderURL)
-        } catch {
-            present(error)
-        }
-    }
-
-    func reconnectLibraryFolder(_ oldURL: URL, to newURL: URL) {
-        let folderURL = newURL.standardizedFileURL
-        do {
-            try store.replaceLibraryFolder(oldURL, with: folderURL)
-            if scanTask != nil {
-                cancelLibraryScan()
-            }
-            let removedRepositories = libraryFolders
-                .filter {
-                    sameFileLocation($0.id, oldURL) || sameFileLocation($0.id, folderURL)
-                }
-                .flatMap(\.repositories)
-            libraryFolders.removeAll {
-                sameFileLocation($0.id, oldURL) || sameFileLocation($0.id, folderURL)
-            }
-            libraryFolders.append(.init(url: folderURL))
-            sortLibraryFolders()
-            discardUnusedCaches(for: removedRepositories)
-            selectLibrarySource(.folder(folderURL))
-            startLibraryScan(folderID: folderURL)
-        } catch {
-            present(error)
-        }
-    }
-
-    func removeLibraryFolder(_ url: URL) {
-        let wasSelected = selectedLibraryFolderID.map { sameFileLocation($0, url) } == true
-        if scanningFolderIDs.contains(where: { sameFileLocation($0, url) }) {
-            cancelLibraryScan()
-        }
-        let removedRepositories = libraryFolders
-            .first(where: { sameFileLocation($0.id, url) })?
-            .repositories ?? []
-        store.removeLibraryFolder(url)
-        libraryFolders.removeAll { sameFileLocation($0.id, url) }
-        discardUnusedCaches(for: removedRepositories)
-
-        if wasSelected {
-            if !recentRepositories.isEmpty {
-                selectLibrarySource(.recent)
-            } else if let firstFolder = libraryFolders.first {
-                selectLibrarySource(.folder(firstFolder.id))
-            } else {
-                selectLibrarySource(.recent)
-            }
-        }
-    }
-
-    func selectLibrarySource(_ source: RepositoryLibrarySource?) {
-        selectedLibrarySource = source
-        selectedLibraryRepositoryID = displayedLibraryRepositories.first?.id
-    }
-
-    func selectLibraryRepository(_ id: URL?) {
-        selectedLibraryRepositoryID = id
-    }
-
-    func rescanSelectedLibraryFolder() {
-        guard let selectedLibraryFolderID else { return }
-        do {
-            try store.addLibraryFolder(selectedLibraryFolderID)
-            startLibraryScan(folderID: selectedLibraryFolderID)
-        } catch {
-            present(error)
-        }
-    }
-
-    func cancelLibraryScan() {
-        guard scanTask != nil else { return }
-        scanGeneration += 1
-        scanTask?.cancel()
-        scanTask = nil
-        for folderID in scanningFolderIDs {
-            updateLibraryFolder(id: folderID) { folder in
-                if case .scanning = folder.scanState {
-                    folder.scanState = .cancelled
-                }
-            }
-        }
-        scanningFolderIDs = []
-    }
-
-    func loadLibraryRepositorySummary(at url: URL) async {
-        guard
-            libraryRepositorySummaries[url] == nil,
-            libraryRepositorySummaryErrors[url] == nil,
-            !loadingLibraryRepositorySummaries.contains(url)
-        else {
-            return
-        }
-
-        loadingLibraryRepositorySummaries.insert(url)
-        defer { loadingLibraryRepositorySummaries.remove(url) }
-
-        do {
-            let summary = try await inspector.inspect(at: url)
-            guard containsLibraryRepository(at: url) else { return }
-            libraryRepositorySummaries[url] = summary
-        } catch is CancellationError {
-            return
-        } catch {
-            guard containsLibraryRepository(at: url) else { return }
-            libraryRepositorySummaryErrors[url] = Self.message(for: error)
-        }
-    }
-
-    func retryLibraryRepositorySummary(at url: URL) async {
-        libraryRepositorySummaryErrors[url] = nil
-        libraryRepositorySummaries[url] = nil
-        libraryRepositoryActivityErrors[url] = nil
-        libraryRepositoryActivities[url] = nil
-        await loadLibraryRepositorySummary(at: url)
-    }
-
-    func loadLibraryRepositoryActivity(at url: URL) async {
-        guard
-            selectedLibraryRepositoryID.map({ sameFileLocation($0, url) }) == true,
-            let summary = libraryRepositorySummaries[url],
-            libraryRepositoryActivities[url] == nil,
-            libraryRepositoryActivityErrors[url] == nil,
-            !loadingLibraryRepositoryActivities.contains(url)
-        else {
-            return
-        }
-
-        loadingLibraryRepositoryActivities.insert(url)
-        defer { loadingLibraryRepositoryActivities.remove(url) }
-
-        do {
-            let activity = try await inspector.activity(in: summary)
-            guard selectedLibraryRepositoryID.map({ sameFileLocation($0, url) }) == true else {
-                return
-            }
-            libraryRepositoryActivities[url] = activity
-        } catch is CancellationError {
-            return
-        } catch {
-            guard selectedLibraryRepositoryID.map({ sameFileLocation($0, url) }) == true else {
-                return
-            }
-            libraryRepositoryActivityErrors[url] = Self.message(for: error)
-        }
-    }
-
-    func retryLibraryRepositoryActivity(at url: URL) async {
-        libraryRepositoryActivityErrors[url] = nil
-        libraryRepositoryActivities[url] = nil
-        await loadLibraryRepositoryActivity(at: url)
-    }
-
     func openLibraryRepository(at url: URL) async {
         await openRepository(at: url)
-    }
-
-    func openSelectedLibraryRepository() async {
-        guard let url = selectedLibraryRepository?.rootURL else { return }
-        await openLibraryRepository(at: url)
     }
 
     @discardableResult
@@ -823,7 +614,7 @@ final class AppModel {
             showWorkspaceOnSuccess: true,
             presentFailure: true,
             failureTitle: "Couldn’t Open Repository"
-        )
+        ) == .opened
     }
 
     func openWorktree(at url: URL) async -> Bool {
@@ -835,7 +626,7 @@ final class AppModel {
             presentFailure: true,
             failureTitle: "Couldn’t Open Worktree",
             preservingHistoryScope: true
-        )
+        ) == .opened
         if opened {
             if case .branch(let name) = repository?.head { historySelection = .branch(name) }
             else {
@@ -911,8 +702,17 @@ final class AppModel {
 
     func showIntegrateBranch(preselecting branch: String? = nil) {
         guard canIntegrateBranch, let repository else { return }
-        localBranchesState = .notLoaded
         repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL, branch: branch)
+    }
+
+    /// Workspace owns these reads even when its Navigator is hidden or shown as a floating panel.
+    func loadNavigator() async {
+        guard !Task.isCancelled, let rootURL = repository?.rootURL else { return }
+        async let branches: Void = loadLocalBranches()
+        async let remotes: Void = loadRemotes(in: rootURL)
+        async let tags: Void = loadTags()
+        async let stashes: Void = loadStashes()
+        _ = await (branches, remotes, tags, stashes)
     }
 
     func loadTags() async {
@@ -923,6 +723,8 @@ final class AppModel {
         }
         let rootURL = repository.rootURL
         let revision = repositoryRevision
+        tagsGeneration += 1
+        let generation = tagsGeneration
         if case .loaded = tagsState {
             // Keep the current rows while this Repository refreshes.
         } else {
@@ -932,16 +734,21 @@ final class AppModel {
         do {
             let tags = try await inspector.tags(in: repository)
             guard
+                generation == tagsGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
                 return
             }
             tagsState = .loaded(tags)
+            if case .tag(let name) = historySelection, !tags.contains(name) {
+                historySelection = nil
+            }
         } catch is CancellationError {
             return
         } catch {
             guard
+                generation == tagsGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
@@ -949,11 +756,6 @@ final class AppModel {
             }
             tagsState = .failed(Self.message(for: error))
         }
-    }
-
-    func remoteBranches(of remote: String) async throws -> [String] {
-        guard let repository else { return [] }
-        return try await inspector.remoteBranches(of: remote, in: repository)
     }
 
     func showCreateStash() {
@@ -969,6 +771,8 @@ final class AppModel {
         }
         guard sameFileLocation(repository.rootURL, rootURL) else { return }
         let revision = repositoryRevision
+        remotesGeneration += 1
+        let generation = remotesGeneration
         if case .loaded = remotesState {
             // Keep expanded remote branches mounted while this Repository refreshes.
         } else {
@@ -978,16 +782,44 @@ final class AppModel {
         do {
             let remotes = try await inspector.remotes(in: repository)
             guard
+                generation == remotesGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
                 return
             }
             remotesState = .loaded(remotes)
+            let names = Set(remotes.map(\.name))
+            remoteBranchesByRemote = remoteBranchesByRemote.filter { names.contains($0.key) }
+            if let selected = historySelection?.remoteName, !names.contains(selected) {
+                historySelection = nil
+            }
+            let inspector = inspector
+            let branches = await withTaskGroup(of: (String, [String]?).self) { group in
+                for remote in remotes {
+                    group.addTask {
+                        (remote.name, try? await inspector.remoteBranches(of: remote.name, in: repository))
+                    }
+                }
+                var result: [String: [String]] = [:]
+                for await (name, branches) in group {
+                    if let branches { result[name] = branches }
+                }
+                return result
+            }
+            guard !Task.isCancelled, generation == remotesGeneration, revision == repositoryRevision,
+                  self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true else { return }
+            remoteBranchesByRemote.merge(branches) { _, updated in updated }
+            if case .remoteBranch(let name) = historySelection,
+               let remote = historySelection?.remoteName, let loaded = branches[remote],
+               !loaded.contains(name) {
+                historySelection = .remote(remote)
+            }
         } catch is CancellationError {
             return
         } catch {
             guard
+                generation == remotesGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
@@ -1001,13 +833,8 @@ final class AppModel {
         guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
             throw RepositoryRemoteError.unavailable
         }
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
         let updated = try await inspector.addRemote(named: name, url: url, in: repository)
         guard generation == inspectionGeneration else { return }
         apply(updated, showWorkspaceOnSuccess: false)
@@ -1018,13 +845,8 @@ final class AppModel {
         guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
             throw RepositoryTagCreationError.failed("This Repository is no longer available.")
         }
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
         let updated = try await inspector.createTag(named: name, at: target, in: repository)
         guard generation == inspectionGeneration else { return }
         apply(updated, showWorkspaceOnSuccess: false)
@@ -1046,16 +868,8 @@ final class AppModel {
             throw RepositoryRemoteError.unavailable
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         let remotes = try await inspector.updateRemote(
             named: name,
@@ -1100,16 +914,8 @@ final class AppModel {
             throw RepositoryRemoteError.unavailable
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         let updatedRepository = try await inspector.removeRemote(named: name, in: repository)
         guard
@@ -1119,9 +925,7 @@ final class AppModel {
             throw CancellationError()
         }
         apply(updatedRepository, showWorkspaceOnSuccess: false)
-        let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-        libraryRepositoryActivities[cacheID] = nil
-        libraryRepositoryActivityErrors[cacheID] = nil
+        library.invalidateActivity(at: updatedRepository.rootURL)
         await loadRemotes(in: rootURL)
     }
 
@@ -1226,9 +1030,7 @@ final class AppModel {
                 }
                 showRemoteOperationResult(operation.successTitle(before: repository))
                 if operation.fetchesRemote { lastFetchDates[updatedRepository.rootURL] = .now }
-                let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-                libraryRepositoryActivities[cacheID] = nil
-                libraryRepositoryActivityErrors[cacheID] = nil
+                library.invalidateActivity(at: updatedRepository.rootURL)
             } catch is CancellationError {
                 return
             } catch let error as RepositoryFetchError {
@@ -1306,13 +1108,16 @@ final class AppModel {
         guard !Task.isCancelled else { return }
         guard let repository else {
             localBranchesState = .notLoaded
+            localBranches = []
             worktrees = []
             selectedWorktreeURL = nil
             return
         }
         let rootURL = repository.rootURL
         let revision = repositoryRevision
-        localBranchesState = .loading
+        localBranchesGeneration += 1
+        let generation = localBranchesGeneration
+        if case .loaded = localBranchesState {} else { localBranchesState = .loading }
         // Keep the last known Worktree indicators while this Repository reloads.
 
         do {
@@ -1320,6 +1125,7 @@ final class AppModel {
             async let worktreesRequest = inspector.worktrees(in: repository)
             let (branches, worktrees) = try await (branchesRequest, worktreesRequest)
             guard
+                !Task.isCancelled, generation == localBranchesGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
@@ -1332,11 +1138,16 @@ final class AppModel {
                 if updated == nil { self.selectedWorktreeURL = nil }
             }
             self.worktrees = worktrees
+            localBranches = branches
             localBranchesState = .loaded(branches)
+            if case .branch(let name) = historySelection, !branches.contains(name) {
+                historySelection = nil
+            }
         } catch is CancellationError {
             return
         } catch {
             guard
+                generation == localBranchesGeneration,
                 revision == repositoryRevision,
                 self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
             else {
@@ -1356,16 +1167,8 @@ final class AppModel {
             return false
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.switchBranch(to: branch, in: repository)
@@ -1373,9 +1176,7 @@ final class AppModel {
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
             historySelection = .branch(branch)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
@@ -1390,16 +1191,8 @@ final class AppModel {
             return false
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.createBranch(
@@ -1410,9 +1203,7 @@ final class AppModel {
             guard generation == inspectionGeneration else { return false }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
@@ -1423,13 +1214,8 @@ final class AppModel {
 
     func createWorktree(at destination: URL, branch: String, creatingBranch: Bool, startPoint: String) async -> URL? {
         guard !isLoading, !isSyncing, let repository else { return nil }
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
         do {
             let url = try await inspector.createWorktree(
                 at: destination, branch: branch.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1460,16 +1246,8 @@ final class AppModel {
             return false
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository: RepositorySummary
@@ -1490,9 +1268,7 @@ final class AppModel {
             guard generation == inspectionGeneration else { return false }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
@@ -1513,16 +1289,8 @@ final class AppModel {
     func fastForwardBranchToCurrent(_ branch: String) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let worktrees = try await inspector.localBranchWorktrees(in: repository)
@@ -1542,9 +1310,7 @@ final class AppModel {
             }
             guard generation == inspectionGeneration else { return false }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch is CancellationError {
             return false
@@ -1574,16 +1340,8 @@ final class AppModel {
     func mergeCurrentBranchIntoBranch(_ branch: String) async -> RepositoryMergeIntoBranchResult {
         guard !isLoading, let repository else { return .failed }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let worktrees = try await inspector.localBranchWorktrees(in: repository)
@@ -1603,9 +1361,7 @@ final class AppModel {
             }
             guard generation == inspectionGeneration else { return .failed }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return .completed
         } catch is CancellationError {
             return .failed
@@ -1622,16 +1378,8 @@ final class AppModel {
     func abortMergeInWorktree(at worktreeURL: URL) async {
         guard !isLoading, let repository else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.abortMerge(
@@ -1652,16 +1400,8 @@ final class AppModel {
         guard !isLoading, let repository else { return false }
         let originRootURL = repository.rootURL
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let worktreeURL = try await inspector.addTemporaryWorktree(for: branch, in: repository)
@@ -1680,9 +1420,7 @@ final class AppModel {
                 )
                 guard generation == inspectionGeneration else { return false }
                 apply(cleanedRepository, showWorkspaceOnSuccess: false)
-                let cacheID = repositoryCacheID(for: cleanedRepository.rootURL)
-                libraryRepositoryActivities[cacheID] = nil
-                libraryRepositoryActivityErrors[cacheID] = nil
+                library.invalidateActivity(at: cleanedRepository.rootURL)
                 return true
             } catch RepositoryBranchError.mergeInWorktreeConflicted {
                 guard generation == inspectionGeneration else { return false }
@@ -1694,7 +1432,7 @@ final class AppModel {
                     showWorkspaceOnSuccess: true,
                     presentFailure: true,
                     failureTitle: "Couldn’t Open Temporary Worktree"
-                )
+                ) == .opened
             }
         } catch is CancellationError {
             return false
@@ -1717,16 +1455,8 @@ final class AppModel {
     func removeTrackingReference(_ trackingRef: String) async {
         guard !isLoading, let repository else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.removeRemoteTrackingReference(
@@ -1763,16 +1493,8 @@ final class AppModel {
     func removeWorktree(at worktreeURL: URL) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.removeWorktree(
@@ -1796,16 +1518,8 @@ final class AppModel {
     func deleteBranch(_ branch: String) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.deleteBranch(named: branch, in: repository)
@@ -1832,20 +1546,12 @@ final class AppModel {
             showWorkspaceOnSuccess: true,
             presentFailure: true,
             failureTitle: "Couldn’t Open Repository"
-        ), let repository else {
+        ) == .opened, let repository else {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.removeWorktree(
@@ -1876,16 +1582,8 @@ final class AppModel {
             throw RepositoryStashError.unavailable
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         let updatedRepository = try await inspector.createStash(
             message: message,
@@ -1908,16 +1606,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.applyStash(stash, in: repository)
@@ -1944,16 +1634,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.dropStash(stash, in: repository)
@@ -1984,16 +1666,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.revertCommit(
@@ -2004,9 +1678,7 @@ final class AppModel {
             guard generation == inspectionGeneration else { return }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
         } catch is CancellationError {
             return
         } catch {
@@ -2031,16 +1703,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.resetCurrentBranch(
@@ -2050,9 +1714,7 @@ final class AppModel {
             )
             guard generation == inspectionGeneration else { return }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
         } catch is CancellationError {
             return
         } catch {
@@ -2089,24 +1751,8 @@ final class AppModel {
         }
         guard !changes.isEmpty else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
-
-        do {
-            let updatedRepository = try await inspector.stage(changes, in: repository)
-            guard generation == inspectionGeneration else { return }
-            apply(updatedRepository, showWorkspaceOnSuccess: false)
-        } catch {
-            guard generation == inspectionGeneration else { return }
-            present(error, title: "Couldn’t Stage Changes")
+        await performRepositoryWrite(in: repository, failureTitle: "Couldn’t Stage Changes") {
+            try await inspector.stage(changes, in: repository)
         }
     }
 
@@ -2128,24 +1774,8 @@ final class AppModel {
         }
         guard !changes.isEmpty else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
-
-        do {
-            let updatedRepository = try await inspector.unstage(changes, in: repository)
-            guard generation == inspectionGeneration else { return }
-            apply(updatedRepository, showWorkspaceOnSuccess: false)
-        } catch {
-            guard generation == inspectionGeneration else { return }
-            present(error, title: "Couldn’t Unstage Changes")
+        await performRepositoryWrite(in: repository, failureTitle: "Couldn’t Unstage Changes") {
+            try await inspector.unstage(changes, in: repository)
         }
     }
 
@@ -2159,24 +1789,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
-
-        do {
-            let updatedRepository = try await inspector.discard(change, in: repository)
-            guard generation == inspectionGeneration else { return }
-            apply(updatedRepository, showWorkspaceOnSuccess: false)
-        } catch {
-            guard generation == inspectionGeneration else { return }
-            present(error, title: "Couldn’t Discard Changes")
+        await performRepositoryWrite(in: repository, failureTitle: "Couldn’t Discard Changes") {
+            try await inspector.discard(change, in: repository)
         }
     }
 
@@ -2217,16 +1831,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.resolveConflict(
@@ -2258,16 +1864,8 @@ final class AppModel {
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.markConflictResolved(
@@ -2308,11 +1906,9 @@ final class AppModel {
 
         inspectionGeneration += 1
         let generation = inspectionGeneration
-        let cacheID = repositoryCacheID(for: repository.rootURL)
         isLoading = true
         isWritingRepository = true
-        libraryRepositoryActivities[cacheID] = nil
-        libraryRepositoryActivityErrors[cacheID] = nil
+        library.invalidateActivity(at: repository.rootURL)
         defer {
             if generation == inspectionGeneration {
                 isLoading = false
@@ -2350,16 +1946,8 @@ final class AppModel {
     func updateSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
         guard !isLoading, let repository, let change = selectedChange else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository: RepositorySummary
@@ -2386,16 +1974,8 @@ final class AppModel {
     func discardSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
         guard !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.discard(hunk, for: change, in: repository)
@@ -2420,16 +2000,8 @@ final class AppModel {
             return false
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.commit(
@@ -2440,9 +2012,7 @@ final class AppModel {
             )
             guard generation == inspectionGeneration else { return false }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
@@ -2475,15 +2045,7 @@ final class AppModel {
         do {
             let inspectedRepository = try await inspector.inspect(at: newURL)
             guard generation == inspectionGeneration else { return }
-            try store.replaceRecentRepository(oldURL, with: inspectedRepository.rootURL)
-            recentRepositories.removeAll {
-                sameFileLocation($0.id, oldURL)
-                    || sameFileLocation($0.id, inspectedRepository.rootURL)
-            }
-            recentRepositories.insert(.init(rootURL: inspectedRepository.rootURL), at: 0)
-            discardUnusedCaches(for: [.init(rootURL: oldURL)])
-            selectedLibrarySource = .recent
-            selectedLibraryRepositoryID = inspectedRepository.rootURL
+            try library.reconnectRecentRepository(oldURL, to: inspectedRepository)
             apply(inspectedRepository, showWorkspaceOnSuccess: true)
         } catch {
             guard generation == inspectionGeneration else { return }
@@ -2491,82 +2053,14 @@ final class AppModel {
         }
     }
 
-    func removeRecentRepository(_ url: URL) {
-        removeRecentRepositories([url])
-    }
-
-    func removeRecentRepositories(_ urls: Set<URL>) {
-        guard !urls.isEmpty else { return }
-        for url in urls {
-            store.removeRecentRepository(url)
-        }
-        let removedRepositories = recentRepositories.filter { repository in
-            urls.contains { sameFileLocation($0, repository.id) }
-        }
-        recentRepositories.removeAll { repository in
-            urls.contains { sameFileLocation($0, repository.id) }
-        }
-        discardUnusedCaches(for: removedRepositories)
-        if selectedLibrarySource == .recent,
-           selectedLibraryRepositoryID == nil
-            || selectedLibraryRepositoryID.map({ selectedID in
-                urls.contains { sameFileLocation($0, selectedID) }
-            }) == true {
-            selectedLibraryRepositoryID = recentRepositories.first?.id
-        }
-        if recentRepositories.isEmpty, selectedLibrarySource == .recent {
-            if let firstFolder = libraryFolders.first {
-                selectLibrarySource(.folder(firstFolder.id))
-            } else {
-                selectLibrarySource(.recent)
-            }
-        }
-    }
-
     func restoreState() async {
         guard !didAttemptRestore else { return }
         didAttemptRestore = true
 
-        let restoredFolders = store.restoreLibraryFolders()
-        libraryFolders = restoredFolders.map { location in
-            var folder = RepositoryLibraryFolder(url: location.url)
-            if let message = location.errorMessage {
-                folder.scanState = .failed(message)
-            }
-            return folder
-        }
-        sortLibraryFolders()
-
-        let restoredRecent = store.restoreRecentRepositories()
-        recentRepositories = restoredRecent.map { .init(rootURL: $0.url) }
-        for location in restoredRecent where location.errorMessage != nil {
-            libraryRepositorySummaryErrors[location.url] = location.errorMessage
-        }
-
-        if !recentRepositories.isEmpty {
-            selectLibrarySource(.recent)
-        } else if let firstFolder = libraryFolders.first {
-            selectLibrarySource(.folder(firstFolder.id))
-        } else {
-            selectLibrarySource(.recent)
-        }
-
-        let foldersToScan = restoredFolders.compactMap { location in
-            location.errorMessage == nil ? location.url : nil
-        }
-        if !foldersToScan.isEmpty {
-            startLibraryScans(folderIDs: foldersToScan)
-        }
-
-        guard let workspace = store.restoreLastWorkspace() else { return }
-        if !recentRepositories.contains(where: { sameFileLocation($0.id, workspace.url) }) {
-            recentRepositories.insert(.init(rootURL: workspace.url), at: 0)
-        }
-        selectedLibrarySource = .recent
-        selectedLibraryRepositoryID = workspace.url
+        guard let workspace = library.restore() else { return }
 
         if let message = workspace.errorMessage {
-            libraryRepositorySummaryErrors[workspace.url] = message
+            library.recordFailure(message, at: workspace.url)
             store.clearLastWorkspace()
             screen = .library
             return
@@ -2579,7 +2073,7 @@ final class AppModel {
             showWorkspaceOnSuccess: true,
             presentFailure: false
         )
-        if !restored {
+        if restored == .failed {
             store.clearLastWorkspace()
             screen = .library
         }
@@ -2730,16 +2224,8 @@ final class AppModel {
             throw RepositoryInteractiveRebasePlanError.unavailable
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
 
         do {
             let updatedRepository = try await inspector.executeInteractiveRebase(
@@ -2751,9 +2237,7 @@ final class AppModel {
             guard generation == inspectionGeneration else { throw CancellationError() }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
-            let cacheID = repositoryCacheID(for: updatedRepository.rootURL)
-            libraryRepositoryActivities[cacheID] = nil
-            libraryRepositoryActivityErrors[cacheID] = nil
+            library.invalidateActivity(at: updatedRepository.rootURL)
         } catch {
             guard generation == inspectionGeneration else { throw error }
             let rootURL = repository.rootURL
@@ -2897,6 +2381,7 @@ final class AppModel {
     }
 
     func loadStashes() async {
+        guard !Task.isCancelled else { return }
         guard let request = stashesRequest, let repository else {
             stashesState = .notLoaded
             selectedStashID = nil
@@ -3049,6 +2534,44 @@ final class AppModel {
         }
     }
 
+    private func beginRepositoryWrite() -> Int {
+        inspectionGeneration += 1
+        isLoading = true
+        isWritingRepository = true
+        return inspectionGeneration
+    }
+
+    private func finishRepositoryWrite(_ generation: Int) {
+        guard generation == inspectionGeneration else { return }
+        isLoading = false
+        isWritingRepository = false
+    }
+
+    /// Common completion for local file writes. Operations with conflict recovery keep their own completion.
+    private func performRepositoryWrite(
+        in repository: RepositorySummary,
+        failureTitle: String,
+        operation: () async throws -> RepositorySummary
+    ) async {
+        guard !isLoading, self.repository.map({ sameFileLocation($0.rootURL, repository.rootURL) }) == true else { return }
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
+        do {
+            let updated = try await operation()
+            guard generation == inspectionGeneration else { return }
+            apply(updated, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            present(error, title: failureTitle)
+        }
+    }
+
+    private enum InspectionOutcome {
+        case opened, failed, discarded
+    }
+
     private func inspect(
         _ url: URL,
         rememberOnSuccess: Bool,
@@ -3058,7 +2581,7 @@ final class AppModel {
         failureTitle: String? = nil,
         addLibraryFolderWhenNotWorkingTree: Bool = false,
         preservingHistoryScope: Bool = false
-    ) async -> Bool {
+    ) async -> InspectionOutcome {
         inspectionGeneration += 1
         let generation = inspectionGeneration
         isLoading = true
@@ -3070,42 +2593,36 @@ final class AppModel {
         }
 
         do {
-            let inspectedRepository = try await inspector.inspect(at: url)
-            guard generation == inspectionGeneration else { return false }
+            let inspectedRepository = try await inspectRepository(url)
+            guard !Task.isCancelled, generation == inspectionGeneration else { return .discarded }
             if rememberOnSuccess {
-                try store.rememberOpenedRepository(inspectedRepository.rootURL)
-                recentRepositories.removeAll {
-                    sameFileLocation($0.id, inspectedRepository.rootURL)
-                }
-                recentRepositories.insert(.init(rootURL: inspectedRepository.rootURL), at: 0)
-                if selectedLibrarySource == .recent {
-                    selectedLibraryRepositoryID = inspectedRepository.rootURL
-                }
+                try library.rememberOpenedRepository(inspectedRepository.rootURL)
             }
             apply(inspectedRepository, showWorkspaceOnSuccess: showWorkspaceOnSuccess,
                   preservingHistoryScope: preservingHistoryScope)
-            return true
+            return .opened
+        } catch is CancellationError {
+            return .discarded
         } catch {
-            guard generation == inspectionGeneration else { return false }
+            guard !Task.isCancelled, generation == inspectionGeneration else { return .discarded }
             if
                 addLibraryFolderWhenNotWorkingTree,
                 let inspectionError = error as? RepositoryInspectionError,
                 case .notWorkingTree = inspectionError,
                 !RepositoryScanner.hasRepositoryMarker(at: url)
             {
-                addLibraryFolder(at: url)
-                return false
+                library.addLibraryFolder(at: url)
+                return .failed
             }
             if markCurrentStaleOnFailure, repository != nil {
                 isRepositoryStale = true
             }
             if presentFailure {
                 present(error, title: failureTitle)
-            } else if !(error is CancellationError) {
-                libraryRepositorySummaries[url] = nil
-                libraryRepositorySummaryErrors[url] = Self.message(for: error)
+            } else {
+                library.recordFailure(Self.message(for: error), at: url)
             }
-            return false
+            return .failed
         }
     }
 
@@ -3155,172 +2672,22 @@ final class AppModel {
             diffState = .loading
         }
         reflogState = .notLoaded
-        localBranchesState = .notLoaded
-        if !isSameRepository { worktrees = []; selectedWorktreeURL = nil }
         if !isSameRepository {
+            localBranchesState = .notLoaded
+            localBranches = []
+            remoteBranchesByRemote = [:]
+            worktrees = []
+            selectedWorktreeURL = nil
             remotesState = .notLoaded
             tagsState = .notLoaded
         }
-        let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)
-        libraryRepositorySummaries[cacheID] = inspectedRepository
-        libraryRepositorySummaryErrors[cacheID] = nil
+        library.record(inspectedRepository)
         isRepositoryStale = false
         errorTitle = nil
         errorMessage = nil
         if showWorkspaceOnSuccess {
             screen = .workspace
         }
-    }
-
-    private func startLibraryScan(folderID: URL) {
-        startLibraryScans(folderIDs: [folderID])
-    }
-
-    private func startLibraryScans(folderIDs: [URL]) {
-        if scanTask != nil {
-            cancelLibraryScan()
-        }
-        let folderIDs = folderIDs.compactMap { requestedID in
-            libraryFolders.first { sameFileLocation($0.id, requestedID) }?.id
-        }
-        guard !folderIDs.isEmpty else { return }
-
-        for folderID in folderIDs {
-            updateLibraryFolder(id: folderID) { folder in
-                folder.scanState = .scanning
-                folder.firstFailure = nil
-            }
-        }
-
-        scanGeneration += 1
-        let generation = scanGeneration
-        scanningFolderIDs = folderIDs
-        scanTask = Task { [weak self] in
-            await self?.consumeScans(folderIDs: folderIDs, generation: generation)
-        }
-    }
-
-    private func consumeScans(folderIDs: [URL], generation: Int) async {
-        for folderID in folderIDs {
-            guard !Task.isCancelled, generation == scanGeneration else { return }
-            await consumeScan(folderID: folderID, generation: generation)
-        }
-        guard !Task.isCancelled, generation == scanGeneration else { return }
-        scanningFolderIDs = []
-        scanTask = nil
-    }
-
-    private func consumeScan(folderID: URL, generation: Int) async {
-        var partialFailureCount = 0
-        var rootFailureMessage: String?
-        var foundRepositories: [RepositoryLocation] = []
-
-        for await event in scanner.scan(in: folderID) {
-            guard !Task.isCancelled, generation == scanGeneration else { return }
-
-            switch event {
-            case .found(let repository):
-                if !foundRepositories.contains(where: {
-                    sameFileLocation($0.id, repository.id)
-                }) {
-                    foundRepositories.append(repository)
-                }
-                updateLibraryFolder(id: folderID) { folder in
-                    guard !folder.repositories.contains(where: {
-                        sameFileLocation($0.id, repository.id)
-                    }) else { return }
-                    folder.repositories.append(repository)
-                    folder.repositories.sort {
-                        $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
-                    }
-                }
-                if selectedLibraryFolderID == folderID, selectedLibraryRepositoryID == nil {
-                    selectedLibraryRepositoryID = repository.id
-                }
-            case .failed(let failure):
-                partialFailureCount += 1
-                if sameFileLocation(failure.url, folderID) {
-                    rootFailureMessage = failure.message
-                }
-                updateLibraryFolder(id: folderID) { folder in
-                    folder.firstFailure = folder.firstFailure ?? failure
-                }
-            }
-        }
-
-        guard !Task.isCancelled, generation == scanGeneration else { return }
-        let repositoriesBeforeReconciliation = libraryFolders
-            .first(where: { sameFileLocation($0.id, folderID) })?
-            .repositories ?? []
-        let shouldReconcile = rootFailureMessage == nil || !foundRepositories.isEmpty
-        if shouldReconcile {
-            foundRepositories.sort {
-                $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
-            }
-        }
-        updateLibraryFolder(id: folderID) { folder in
-            if shouldReconcile {
-                folder.repositories = foundRepositories
-            }
-            if let rootFailureMessage, foundRepositories.isEmpty {
-                folder.scanState = .failed(rootFailureMessage)
-            } else {
-                folder.scanState = .completed(partialFailureCount: partialFailureCount)
-            }
-        }
-        if shouldReconcile {
-            let removedRepositories = repositoriesBeforeReconciliation.filter { repository in
-                !foundRepositories.contains {
-                    sameFileLocation($0.id, repository.id)
-                }
-            }
-            discardUnusedCaches(for: removedRepositories)
-            if selectedLibraryFolderID.map({ sameFileLocation($0, folderID) }) == true,
-               selectedLibraryRepositoryID.map({ selectedID in
-                   !foundRepositories.contains {
-                       sameFileLocation($0.id, selectedID)
-                   }
-               }) != false {
-                selectedLibraryRepositoryID = foundRepositories.first?.id
-            }
-        }
-    }
-
-    private func updateLibraryFolder(
-        id: URL,
-        _ update: (inout RepositoryLibraryFolder) -> Void
-    ) {
-        guard let index = libraryFolders.firstIndex(where: { $0.id == id }) else { return }
-        update(&libraryFolders[index])
-    }
-
-    private func containsLibraryRepository(at url: URL) -> Bool {
-        recentRepositories.contains { sameFileLocation($0.id, url) } || libraryFolders.contains { folder in
-            folder.repositories.contains { sameFileLocation($0.id, url) }
-        }
-    }
-
-    private func repositoryCacheID(for url: URL) -> URL {
-        recentRepositories.first(where: { sameFileLocation($0.id, url) })?.id
-            ?? libraryFolders.lazy
-                .flatMap(\.repositories)
-                .first(where: { sameFileLocation($0.id, url) })?.id
-            ?? url
-    }
-
-    private func discardUnusedCaches(for repositories: [RepositoryLocation]) {
-        for repository in repositories where !containsLibraryRepository(at: repository.id) {
-            libraryRepositorySummaries[repository.id] = nil
-            libraryRepositorySummaryErrors[repository.id] = nil
-            loadingLibraryRepositorySummaries.remove(repository.id)
-            libraryRepositoryActivities[repository.id] = nil
-            libraryRepositoryActivityErrors[repository.id] = nil
-            loadingLibraryRepositoryActivities.remove(repository.id)
-        }
-    }
-
-    private func sortLibraryFolders() {
-        libraryFolders.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     private static func message(for error: Error) -> String {

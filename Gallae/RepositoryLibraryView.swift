@@ -4,7 +4,9 @@ import Observation
 import SwiftUI
 
 struct RepositoryLibraryView: View {
-    @Bindable var model: AppModel
+    @Bindable var model: RepositoryLibraryModel
+    let isOpeningRepository: Bool
+    let openRepository: (URL) async -> Void
     let chooseFolder: () -> Void
     let chooseLibraryFolder: () -> Void
     let reconnectLibraryFolder: (URL) -> Void
@@ -433,7 +435,7 @@ struct RepositoryLibraryView: View {
             }
         } primaryAction: { selection in
             guard selection.count == 1, let repositoryID = selection.first else { return }
-            Task { await model.openLibraryRepository(at: repositoryID) }
+            Task { await openRepository(repositoryID) }
         }
         .accessibilityLabel("Repositories, \(repositories.count)")
     }
@@ -471,13 +473,13 @@ struct RepositoryLibraryView: View {
                 let repository = repositories.first(where: { sameFileLocation($0.id, id) })
             {
                 Button("Open Repository", systemImage: "arrow.right.circle") {
-                    Task { await model.openLibraryRepository(at: repository.rootURL) }
+                    Task { await openRepository(repository.rootURL) }
                 }
             }
         } primaryAction: { selection in
             guard let id = selection.first else { return }
             if let repository = repositories.first(where: { sameFileLocation($0.id, id) }) {
-                Task { await model.openLibraryRepository(at: repository.rootURL) }
+                Task { await openRepository(repository.rootURL) }
             } else {
                 toggleHierarchyFolder(id)
             }
@@ -609,7 +611,7 @@ struct RepositoryLibraryView: View {
 
                 Divider()
                 Button {
-                    Task { await model.openSelectedLibraryRepository() }
+                    Task { await openRepository(repository.rootURL) }
                 } label: {
                     Label("Open Repository", systemImage: "arrow.right.circle.fill")
                         .frame(maxWidth: .infinity)
@@ -618,7 +620,7 @@ struct RepositoryLibraryView: View {
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
                 .disabled(
-                    model.isLoading
+                    isOpeningRepository
                         || model.libraryRepositorySummaryErrors[repository.id] != nil
                 )
                 .accessibilityHint("Open the selected Repository in this window")

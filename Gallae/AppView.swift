@@ -53,7 +53,9 @@ struct AppView: View {
                     .navigationDocument(repository.rootURL)
             } else {
                 RepositoryLibraryView(
-                    model: model,
+                    model: model.library,
+                    isOpeningRepository: model.isLoading,
+                    openRepository: { await model.openLibraryRepository(at: $0) },
                     chooseFolder: { chooseFolder() },
                     chooseLibraryFolder: { chooseLibraryFolder() },
                     reconnectLibraryFolder: { url in chooseLibraryFolder(replacing: url) },
@@ -232,9 +234,9 @@ struct AppView: View {
                     }
                 case .libraryFolder(let replacedID):
                     if let replacedID {
-                        model.reconnectLibraryFolder(replacedID, to: url)
+                        model.library.reconnectLibraryFolder(replacedID, to: url)
                     } else {
-                        model.addLibraryFolder(at: url)
+                        model.library.addLibraryFolder(at: url)
                     }
                 }
             case .failure(let error):
@@ -277,15 +279,15 @@ struct AppView: View {
             }
         }
         .alert(
-            model.errorTitle ?? "Couldn’t Complete the Request",
+            (model.errorMessage != nil ? model.errorTitle : nil) ?? "Couldn’t Complete the Request",
             isPresented: Binding(
-                get: { model.errorMessage != nil },
-                set: { if !$0 { model.errorMessage = nil } }
+                get: { model.errorMessage != nil || model.library.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil; model.library.errorMessage = nil } }
             )
         ) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text(model.errorMessage ?? "Unknown error")
+            Text(model.errorMessage ?? model.library.errorMessage ?? "Unknown error")
         }
         .task {
             await model.restoreState()
@@ -417,12 +419,6 @@ struct AppView: View {
         }
         return model.repository?.rootURL
     }
-}
-
-enum RepositoryBranchIntegrationAction: Sendable {
-    case fastForward
-    case mergeCommit
-    case rebase
 }
 
 private struct RepositoryIntegrateBranchSheet: View {

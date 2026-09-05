@@ -187,6 +187,7 @@ struct SidebarWidthClamp: NSViewRepresentable {
 
 /// With the system's always-visible scroll bars a list's rows end a scroller's width before the pane edge. Headers
 /// above a list take the same inset, and the list keeps its scroller shown so the two never drift apart.
+@MainActor
 private enum LegacyScrollerStyle {
     static var isLegacy: Bool { NSScroller.preferredScrollerStyle == .legacy }
     static var width: CGFloat { isLegacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0 }
@@ -217,7 +218,9 @@ private struct ListScrollerPolicy: NSViewRepresentable {
             apply()
             observer = observer ?? NotificationCenter.default.addObserver(
                 forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main
-            ) { [weak self] _ in self?.apply() }
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.apply() }
+            }
         }
 
         /// The list's scroll view is the smallest one under the window that contains this view's center.

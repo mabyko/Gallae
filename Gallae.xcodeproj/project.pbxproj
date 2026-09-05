@@ -22,6 +22,13 @@
 		110000000000000000000012 /* RepositoryDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000012 /* RepositoryDiffView.swift */; };
 		110000000000000000000013 /* ExternalApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000013 /* ExternalApplications.swift */; };
 		110000000000000000000014 /* RepositoryWorktreesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000014 /* RepositoryWorktreesView.swift */; };
+		BC259ADFB18B5B522CBDA16F /* RepositoryLibraryModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21187DF716E5728C5A0B8441 /* RepositoryLibraryModel.swift */; };
+		885622A33A16D4A7AF04A31D /* GitHubAvatarLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD6EFD263405C6B0E3F5A07C /* GitHubAvatarLookup.swift */; };
+		027B18EB3D34FB27AAE178C7 /* RepositoryAuthorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAB3EE439DF86A099E4F4A2B /* RepositoryAuthorView.swift */; };
+		D72CB0064409E224C900D2AC /* RepositoryHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9907E8A79E591525B4FE92C /* RepositoryHistoryView.swift */; };
+		2863B3BF0704FAF28045C4FD /* RepositoryNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BD29DFED6028923B6D939D9 /* RepositoryNavigation.swift */; };
+		5C809EC519D29BF4BF918D27 /* RepositoryNavigatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7B28AC93FA42FCFDDB4D09 /* RepositoryNavigatorView.swift */; };
+		441CE22BA96BE7F395E0BEDE /* RepositoryRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53A404902F3BDA31AA724A07 /* RepositoryRecoveryView.swift */; };
 		7B5CE7D4F5C85DA47C8EEB85 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FFFAEDD087A363960423C03 /* CommandRunner.swift */; };
 		B88AC58B07B9CC31D8F7F0A8 /* RepositoryErrors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A98483D43874ED562589A46 /* RepositoryErrors.swift */; };
 		7BB3D928F7F4172CDF1F65D8 /* RepositoryInspector+Diff.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */; };
@@ -60,6 +67,13 @@
 		120000000000000000000012 /* RepositoryDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDiffView.swift; sourceTree = "<group>"; };
 		120000000000000000000013 /* ExternalApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalApplications.swift; sourceTree = "<group>"; };
 		120000000000000000000014 /* RepositoryWorktreesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreesView.swift; sourceTree = "<group>"; };
+		21187DF716E5728C5A0B8441 /* RepositoryLibraryModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryLibraryModel.swift; sourceTree = "<group>"; };
+		CD6EFD263405C6B0E3F5A07C /* GitHubAvatarLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubAvatarLookup.swift; sourceTree = "<group>"; };
+		DAB3EE439DF86A099E4F4A2B /* RepositoryAuthorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryAuthorView.swift; sourceTree = "<group>"; };
+		D9907E8A79E591525B4FE92C /* RepositoryHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryHistoryView.swift; sourceTree = "<group>"; };
+		6BD29DFED6028923B6D939D9 /* RepositoryNavigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryNavigation.swift; sourceTree = "<group>"; };
+		BD7B28AC93FA42FCFDDB4D09 /* RepositoryNavigatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryNavigatorView.swift; sourceTree = "<group>"; };
+		53A404902F3BDA31AA724A07 /* RepositoryRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryRecoveryView.swift; sourceTree = "<group>"; };
 		0FFFAEDD087A363960423C03 /* CommandRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRunner.swift; sourceTree = "<group>"; };
 		1A98483D43874ED562589A46 /* RepositoryErrors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryErrors.swift; sourceTree = "<group>"; };
 		D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+Diff.swift"; sourceTree = "<group>"; };
@@ -105,6 +119,13 @@
 				D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */,
 				1A98483D43874ED562589A46 /* RepositoryErrors.swift */,
 				0FFFAEDD087A363960423C03 /* CommandRunner.swift */,
+				53A404902F3BDA31AA724A07 /* RepositoryRecoveryView.swift */,
+				BD7B28AC93FA42FCFDDB4D09 /* RepositoryNavigatorView.swift */,
+				6BD29DFED6028923B6D939D9 /* RepositoryNavigation.swift */,
+				D9907E8A79E591525B4FE92C /* RepositoryHistoryView.swift */,
+				DAB3EE439DF86A099E4F4A2B /* RepositoryAuthorView.swift */,
+				CD6EFD263405C6B0E3F5A07C /* GitHubAvatarLookup.swift */,
+				21187DF716E5728C5A0B8441 /* RepositoryLibraryModel.swift */,
 				12000000000000000000000D /* Info.plist */,
 				12000000000000000000000E /* Assets.xcassets */,
 				120000000000000000000001 /* GallaeApp.swift */,
@@ -254,6 +275,13 @@
 				7BB3D928F7F4172CDF1F65D8 /* RepositoryInspector+Diff.swift in Sources */,
 				B88AC58B07B9CC31D8F7F0A8 /* RepositoryErrors.swift in Sources */,
 				7B5CE7D4F5C85DA47C8EEB85 /* CommandRunner.swift in Sources */,
+				441CE22BA96BE7F395E0BEDE /* RepositoryRecoveryView.swift in Sources */,
+				5C809EC519D29BF4BF918D27 /* RepositoryNavigatorView.swift in Sources */,
+				2863B3BF0704FAF28045C4FD /* RepositoryNavigation.swift in Sources */,
+				D72CB0064409E224C900D2AC /* RepositoryHistoryView.swift in Sources */,
+				027B18EB3D34FB27AAE178C7 /* RepositoryAuthorView.swift in Sources */,
+				885622A33A16D4A7AF04A31D /* GitHubAvatarLookup.swift in Sources */,
+				BC259ADFB18B5B522CBDA16F /* RepositoryLibraryModel.swift in Sources */,
 				110000000000000000000001 /* GallaeApp.swift in Sources */,
 				110000000000000000000002 /* AppView.swift in Sources */,
 				110000000000000000000012 /* RepositoryDiffView.swift in Sources */,

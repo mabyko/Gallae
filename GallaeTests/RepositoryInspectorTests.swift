@@ -31,6 +31,97 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(capped.status, 7)
     }
 
+    @MainActor
+    func testLateRepositoryReadCannotReplaceNewWorkspace() async throws {
+        for restoring in [false, true] {
+            let root = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let first = root.appending(path: "first")
+            let second = root.appending(path: "second")
+            try initializeRepository(at: first)
+            try initializeRepository(at: second)
+            let gate = RepositoryReadGate()
+            let started = expectation(description: "First Repository is read but not delivered")
+            let suite = "GallaeTests-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let store = LibraryStore(defaults: defaults)
+            if restoring { try store.rememberOpenedRepository(first) }
+            let model = AppModel(store: store) { url in
+                let result = try await RepositoryInspector().inspect(at: url)
+                if sameFileLocation(url, first) {
+                    started.fulfill()
+                    await gate.wait()
+                }
+                return result
+            }
+            let oldRead = Task {
+                if restoring {
+                    await model.restoreState()
+                    return false
+                }
+                return await model.openRepository(at: first)
+            }
+            await fulfillment(of: [started], timeout: 5)
+            let openedSecond = await model.openRepository(at: second)
+            XCTAssertTrue(openedSecond)
+            await model.loadNavigator()
+            let revision = model.repositoryRevision
+            await gate.release()
+            let openedFirst = await oldRead.value
+            XCTAssertFalse(openedFirst)
+            XCTAssertEqual(model.repository?.rootURL.standardizedFileURL, second.standardizedFileURL)
+            XCTAssertEqual(model.repositoryRevision, revision)
+            XCTAssertEqual(model.screen, .workspace)
+            XCTAssertEqual(store.restoreLastWorkspace()?.url.standardizedFileURL, second.standardizedFileURL)
+            XCTAssertFalse(model.isLoading)
+            XCTAssertFalse(model.isWritingRepository)
+            if !restoring {
+                XCTAssertFalse(model.library.recentRepositories.contains { $0.rootURL == first })
+            }
+        }
+    }
+
+    @MainActor
+    func testNavigatorReloadReconcilesSelectionsWithoutMountedViews() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "branch", "topic"])
+        try runGit(["-C", root.path, "tag", "--no-sign", "v1"])
+        try runGit(["-C", root.path, "remote", "add", "origin", root.path])
+        try runGit(["-C", root.path, "update-ref", "refs/remotes/origin/topic", "HEAD"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        await model.loadNavigator()
+        XCTAssertEqual(model.localBranches, ["main", "topic"])
+        XCTAssertEqual(model.remoteBranchesByRemote, ["origin": ["origin/topic"]])
+
+        model.historySelection = .branch("topic")
+        try runGit(["-C", root.path, "branch", "-d", "topic"])
+        await model.loadLocalBranches()
+        XCTAssertNil(model.historySelection)
+
+        model.historySelection = .tag("v1")
+        try runGit(["-C", root.path, "tag", "-d", "v1"])
+        await model.loadTags()
+        XCTAssertNil(model.historySelection)
+
+        model.historySelection = .remoteBranch("origin/topic")
+        try runGit(["-C", root.path, "update-ref", "-d", "refs/remotes/origin/topic"])
+        await model.loadRemotes(in: root)
+        XCTAssertEqual(model.historySelection, .remote("origin"))
+        try runGit(["-C", root.path, "remote", "remove", "origin"])
+        await model.loadRemotes(in: root)
+        XCTAssertNil(model.historySelection)
+    }
+
     func testAddsRemoteWithoutFetchingOrPublishing() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -4163,23 +4254,23 @@ final class RepositoryInspectorTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let model = AppModel(store: LibraryStore(defaults: defaults))
-        defer { model.cancelLibraryScan() }
+        defer { model.library.cancelLibraryScan() }
 
         await model.openOrAddFolder(at: repositoryURL)
         XCTAssertEqual(model.screen, .workspace)
         XCTAssertEqual(model.repository?.rootURL, repositoryURL.standardizedFileURL)
-        XCTAssertEqual(model.recentRepositories.map(\.rootURL), [repositoryURL.standardizedFileURL])
-        XCTAssertTrue(model.libraryFolders.isEmpty)
+        XCTAssertEqual(model.library.recentRepositories.map(\.rootURL), [repositoryURL.standardizedFileURL])
+        XCTAssertTrue(model.library.libraryFolders.isEmpty)
 
         model.showLibrary()
         await model.openOrAddFolder(at: libraryURL)
         XCTAssertEqual(model.screen, .library)
-        XCTAssertEqual(model.selectedLibrarySource, .folder(libraryURL.standardizedFileURL))
-        XCTAssertTrue(model.libraryFolders.contains { $0.id == libraryURL.standardizedFileURL })
+        XCTAssertEqual(model.library.selectedLibrarySource, .folder(libraryURL.standardizedFileURL))
+        XCTAssertTrue(model.library.libraryFolders.contains { $0.id == libraryURL.standardizedFileURL })
 
         await model.openOrAddFolder(at: invalidRepositoryURL)
         XCTAssertNotNil(model.errorMessage)
-        XCTAssertFalse(model.libraryFolders.contains {
+        XCTAssertFalse(model.library.libraryFolders.contains {
             $0.id == invalidRepositoryURL.standardizedFileURL
         })
     }
@@ -4198,33 +4289,33 @@ final class RepositoryInspectorTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let model = AppModel(store: LibraryStore(defaults: defaults))
-        defer { model.cancelLibraryScan() }
+        defer { model.library.cancelLibraryScan() }
 
-        model.addLibraryFolder(at: libraryURL)
+        model.library.addLibraryFolder(at: libraryURL)
         guard await waitForLibraryScan(in: model) else {
             return XCTFail("Initial Library scan timed out")
         }
         XCTAssertEqual(
-            Set(model.selectedLibraryFolder?.repositories.map(\.rootURL) ?? []),
+            Set(model.library.selectedLibraryFolder?.repositories.map(\.rootURL) ?? []),
             Set([firstRepositoryURL, removedRepositoryURL].map(\.standardizedFileURL))
         )
 
-        model.selectLibraryRepository(removedRepositoryURL)
+        model.library.selectLibraryRepository(removedRepositoryURL)
         try FileManager.default.removeItem(at: removedRepositoryURL)
-        model.rescanSelectedLibraryFolder()
+        model.library.rescanSelectedLibraryFolder()
 
-        XCTAssertEqual(model.selectedLibraryFolder?.scanState, .scanning)
-        XCTAssertEqual(model.selectedLibraryFolder?.repositories.count, 2)
-        XCTAssertEqual(model.selectedLibraryRepositoryID, removedRepositoryURL.standardizedFileURL)
+        XCTAssertEqual(model.library.selectedLibraryFolder?.scanState, .scanning)
+        XCTAssertEqual(model.library.selectedLibraryFolder?.repositories.count, 2)
+        XCTAssertEqual(model.library.selectedLibraryRepositoryID, removedRepositoryURL.standardizedFileURL)
 
         guard await waitForLibraryScan(in: model) else {
             return XCTFail("Repeated Library scan timed out")
         }
         XCTAssertEqual(
-            model.selectedLibraryFolder?.repositories.map(\.rootURL),
+            model.library.selectedLibraryFolder?.repositories.map(\.rootURL),
             [firstRepositoryURL.standardizedFileURL]
         )
-        XCTAssertEqual(model.selectedLibraryRepositoryID, firstRepositoryURL.standardizedFileURL)
+        XCTAssertEqual(model.library.selectedLibraryRepositoryID, firstRepositoryURL.standardizedFileURL)
     }
 
     @MainActor
@@ -4248,9 +4339,9 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(model.screen, .workspace)
         XCTAssertEqual(model.repository?.rootURL, repositoryURL.standardizedFileURL)
         XCTAssertEqual(model.repository?.changes.map(\.path), ["after-save.txt"])
-        XCTAssertTrue(model.libraryFolders.contains { $0.id == fixtureURL.standardizedFileURL })
-        XCTAssertEqual(model.recentRepositories.map(\.rootURL), [repositoryURL.standardizedFileURL])
-        model.cancelLibraryScan()
+        XCTAssertTrue(model.library.libraryFolders.contains { $0.id == fixtureURL.standardizedFileURL })
+        XCTAssertEqual(model.library.recentRepositories.map(\.rootURL), [repositoryURL.standardizedFileURL])
+        model.library.cancelLibraryScan()
     }
 
     @MainActor
@@ -4276,13 +4367,13 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(failedRestore.screen, .library)
         XCTAssertNil(failedRestore.errorMessage)
         XCTAssertEqual(
-            Set(failedRestore.recentRepositories.map(\.rootURL.path)),
+            Set(failedRestore.library.recentRepositories.map(\.rootURL.path)),
             Set([missingURL.path, replacementURL.path])
         )
         let failedID = try XCTUnwrap(
-            failedRestore.recentRepositories.first { $0.rootURL.path == missingURL.path }?.id
+            failedRestore.library.recentRepositories.first { $0.rootURL.path == missingURL.path }?.id
         )
-        XCTAssertNotNil(failedRestore.libraryRepositorySummaryErrors[failedID])
+        XCTAssertNotNil(failedRestore.library.libraryRepositorySummaryErrors[failedID])
         XCTAssertNil(store.restoreLastWorkspace())
 
         let nextLaunch = AppModel(store: store)
@@ -4290,7 +4381,7 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(nextLaunch.screen, .library)
         XCTAssertNil(nextLaunch.repository)
         XCTAssertEqual(
-            Set(nextLaunch.recentRepositories.map(\.rootURL.path)),
+            Set(nextLaunch.library.recentRepositories.map(\.rootURL.path)),
             Set([missingURL.path, replacementURL.path])
         )
 
@@ -4299,7 +4390,7 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(store.restoreLastWorkspace()?.url.path, replacementURL.path)
 
         nextLaunch.showLibrary()
-        nextLaunch.removeRecentRepository(try XCTUnwrap(nextLaunch.recentRepositories.first?.id))
+        nextLaunch.library.removeRecentRepository(try XCTUnwrap(nextLaunch.library.recentRepositories.first?.id))
         XCTAssertTrue(store.restoreRecentRepositories().isEmpty)
         XCTAssertNil(store.restoreLastWorkspace())
     }
@@ -4326,11 +4417,11 @@ final class RepositoryInspectorTests: XCTestCase {
         let model = AppModel(store: store)
         await model.restoreState()
         model.showLibrary()
-        model.selectLibrarySource(.recent)
-        model.removeRecentRepositories(Set([firstURL, thirdURL].map(\.standardizedFileURL)))
+        model.library.selectLibrarySource(.recent)
+        model.library.removeRecentRepositories(Set([firstURL, thirdURL].map(\.standardizedFileURL)))
 
-        XCTAssertEqual(model.recentRepositories.map(\.rootURL), [secondURL.standardizedFileURL])
-        XCTAssertEqual(model.selectedLibraryRepositoryID, secondURL.standardizedFileURL)
+        XCTAssertEqual(model.library.recentRepositories.map(\.rootURL), [secondURL.standardizedFileURL])
+        XCTAssertEqual(model.library.selectedLibraryRepositoryID, secondURL.standardizedFileURL)
         XCTAssertEqual(store.restoreRecentRepositories().map(\.url), [secondURL.standardizedFileURL])
         XCTAssertNil(store.restoreLastWorkspace())
         XCTAssertTrue(FileManager.default.fileExists(atPath: firstURL.path))
@@ -4349,18 +4440,18 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let model = AppModel()
         let repository = RepositoryLocation(rootURL: repositoryURL)
-        model.libraryFolders = [.init(url: fixtureURL, repositories: [repository])]
-        model.selectLibrarySource(.folder(fixtureURL))
-        await model.loadLibraryRepositorySummary(at: repositoryURL)
+        model.library.libraryFolders = [.init(url: fixtureURL, repositories: [repository])]
+        model.library.selectLibrarySource(.folder(fixtureURL))
+        await model.library.loadLibraryRepositorySummary(at: repositoryURL)
 
         try FileManager.default.moveItem(at: repositoryURL, to: movedURL)
-        await model.loadLibraryRepositoryActivity(at: repositoryURL)
-        XCTAssertNotNil(model.libraryRepositoryActivityErrors[repositoryURL])
+        await model.library.loadLibraryRepositoryActivity(at: repositoryURL)
+        XCTAssertNotNil(model.library.libraryRepositoryActivityErrors[repositoryURL])
 
         try FileManager.default.moveItem(at: movedURL, to: repositoryURL)
-        await model.retryLibraryRepositoryActivity(at: repositoryURL)
-        XCTAssertNil(model.libraryRepositoryActivityErrors[repositoryURL])
-        XCTAssertEqual(model.libraryRepositoryActivities[repositoryURL]?.commitCount, 1)
+        await model.library.retryLibraryRepositoryActivity(at: repositoryURL)
+        XCTAssertNil(model.library.libraryRepositoryActivityErrors[repositoryURL])
+        XCTAssertEqual(model.library.libraryRepositoryActivities[repositoryURL]?.commitCount, 1)
     }
 
     @MainActor
@@ -5948,7 +6039,7 @@ final class RepositoryInspectorTests: XCTestCase {
     @MainActor
     private func waitForLibraryScan(in model: AppModel) async -> Bool {
         for _ in 0..<500 {
-            guard let folder = model.selectedLibraryFolder else { return false }
+            guard let folder = model.library.selectedLibraryFolder else { return false }
             if case .completed = folder.scanState {
                 return true
             }
@@ -6049,5 +6140,21 @@ private enum GitFixtureError: LocalizedError {
         case .unexpectedDiffContent:
             "expected text diff content"
         }
+    }
+}
+
+private actor RepositoryReadGate {
+    private var isReleased = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        isReleased = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
     }
 }
