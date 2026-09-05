@@ -1143,22 +1143,27 @@ private struct RepositoryNavigatorView: View {
                     HStack {
                         Text("Branches")
                         Spacer()
-                        // A 22pt target a little in from the edge; the glyph alone was too small to hit.
-                        Button {
-                            isCreatingBranch = true
+                        Menu {
+                            Button("New Branch…", systemImage: "plus") {
+                                isCreatingBranch = true
+                            }
                         } label: {
-                            Image(systemName: "plus")
+                            Image(systemName: "ellipsis")
                                 .font(.system(size: 11, weight: .semibold))
                                 .frame(width: 22, height: 22)
                                 .contentShape(.rect)
                         }
-                        .buttonStyle(.plain)
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .controlSize(.small)
+                        .fixedSize()
                         .foregroundStyle(.secondary)
-                        .padding(.trailing, 12)
-                        .help("New Branch…")
-                        .accessibilityLabel("New Branch")
+                        .padding(.trailing, 4)
+                        .help("Branch Actions")
+                        .accessibilityLabel("Branch Actions")
                         .disabled(model.isLoading || model.isSyncing || model.repository == nil)
                     }
+                    .accessibilityElement(children: .contain)
                 }
 
                 Section("Remotes") {
