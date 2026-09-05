@@ -1,9 +1,9 @@
 # Gallae 사용자 흐름 문서
 
-> 상태: 구현 기준 · 2026-09-02
-> 범위: Navigator·문맥 바 Workspace 구조와 branch·remote·tag 선택 문맥, 좁은 창의 Navigator 세 방식, 재질·접근성 응답과 Appearance 설정, Unified·Split diff, Open & Inspect, Commit, Repository ref History·파일별 patch와 Revert·soft·mixed·hard Reset, local branch 생성·전환·fast-forward Merge·divergent Merge commit·Rebase, Sync, Stash 조회·생성·적용·삭제, HEAD Reflog 조회·복구 branch 생성, 충돌 파일 Base·Ours·Theirs 검사와 한쪽 전체 버전·현재 working tree 내용으로 해결, 진행 중인 Merge·Rebase 상태 검사·Continue·Abort, Interactive Rebase 계획 검사·편집·검토·실행
+> 상태: 구현 기준 · 2026-09-05
+> 범위: Navigator·문맥 바 Workspace 구조와 branch·remote·tag 선택 문맥, 좁은 창의 Navigator 세 방식, 재질·접근성 응답과 Appearance 설정, Unified·Split diff, Open & Inspect, Commit, Repository ref History(상하·좌우 배치와 검토 확장)·파일별 patch와 Revert·soft·mixed·hard Reset, local branch 생성·전환·fast-forward Merge·divergent Merge commit·Rebase, Sync, Stash 조회·생성·적용·삭제, HEAD Reflog 조회·복구 branch 생성, 충돌 파일 Base·Ours·Theirs 검사와 한쪽 전체 버전·현재 working tree 내용으로 해결, 진행 중인 Merge·Rebase 상태 검사·Continue·Abort, Interactive Rebase 계획 검사·편집·검토·실행
 
-제품 범위와 용어는 [PRODUCT.md](../PRODUCT.md)와 [CONTEXT.md](../CONTEXT.md), 구현 순서와 공통 상태는 [구현 계획](IMPLEMENTATION_PLAN.md)을 따른다.
+제품 범위·현재 UX 기준은 [PRODUCT.md](../PRODUCT.md), 도메인 용어는 [CONTEXT.md](../CONTEXT.md), 시각 규칙은 [DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md)을 따른다. 아래 문서는 각 작업의 정상·예외 흐름과 완료 조건을 설명한다.
 
 ## P0 유즈케이스
 

@@ -51,13 +51,11 @@ xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=
 
 | | |
 | --- | --- |
-| [PRODUCT.md](PRODUCT.md) | 제품 기준, 방향, 클린룸 원칙, 디자인 결정 |
+| [PRODUCT.md](PRODUCT.md) | 현재 제품 범위, UX·개발 기준, 클린룸 원칙 |
 | [CONTEXT.md](CONTEXT.md) | 도메인 용어 |
 | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) | 재질·대비·밀도 응답 |
 | [docs/git-configuration.md](docs/git-configuration.md) | Gallae가 Git 설정을 다루는 방식 |
-| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | 구현 순서와 단계별 완료 조건 |
 | [docs/README.md](docs/README.md) | 유즈케이스 색인 |
-| [docs/research/](docs/research/) | 근거를 남긴 조사 기록 |
 
 ## 기여
 

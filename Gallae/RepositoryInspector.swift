@@ -630,7 +630,7 @@ struct RepositoryInspector: Sendable {
     /// Git's patch output is what Gallae parses, and for the working tree it is fed straight back to
     /// `git apply`. A user's diff configuration can change that text enough to break both, so every patch is
     /// produced with the format pinned. Settings that define what a file's content *is* — `core.autocrlf`,
-    /// `.gitattributes` — are deliberately left alone. See `docs/research/git-diff-config.md`.
+    /// `.gitattributes` — are deliberately left alone. See `docs/git-configuration.md`.
     private static let pinnedDiffConfiguration = [
         // Escapes non-ASCII paths as octal, which only ever reaches the reader as noise.
         "-c", "core.quotepath=false",

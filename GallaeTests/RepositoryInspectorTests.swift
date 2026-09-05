@@ -4042,7 +4042,7 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     /// Every setting here is one that changed Git's patch text enough to break parsing or `git apply`
-    /// before the format was pinned. See `docs/research/git-diff-config.md`.
+    /// before the format was pinned. See `docs/git-configuration.md`.
     func testHostileDiffConfigurationCannotBreakParsingOrStaging() async throws {
         let hostileSettings = [
             ("color.diff", "always"),

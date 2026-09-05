@@ -58,4 +58,4 @@ Gallae는 이 경우 Git이 알려 준 첫 줄을 화면 문구에 실어 준다
 
 ## 근거
 
-실험 기록과 다른 도구들의 사례는 [research/git-diff-config.md](research/git-diff-config.md)에 있다.
+설정과 patch 옵션은 [Git config 문서](https://git-scm.com/docs/git-config)와 [Git diff 문서](https://git-scm.com/docs/git-diff)를 참고한다. Gallae의 설정 격리와 patch 적용 호환은 [RepositoryInspectorTests](../GallaeTests/RepositoryInspectorTests.swift)에서 검증한다.
