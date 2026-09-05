@@ -22,6 +22,12 @@
 		110000000000000000000012 /* RepositoryDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000012 /* RepositoryDiffView.swift */; };
 		110000000000000000000013 /* ExternalApplications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000013 /* ExternalApplications.swift */; };
 		110000000000000000000014 /* RepositoryWorktreesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000014 /* RepositoryWorktreesView.swift */; };
+		7B5CE7D4F5C85DA47C8EEB85 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FFFAEDD087A363960423C03 /* CommandRunner.swift */; };
+		B88AC58B07B9CC31D8F7F0A8 /* RepositoryErrors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A98483D43874ED562589A46 /* RepositoryErrors.swift */; };
+		7BB3D928F7F4172CDF1F65D8 /* RepositoryInspector+Diff.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */; };
+		65A6E2EB6303F3E5221D4BE8 /* RepositoryInspector+History.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749EF0DEC73FAE0C9D442B23 /* RepositoryInspector+History.swift */; };
+		884E18412063CF963F544175 /* RepositoryInspector+Worktrees.swift in Sources */ = {isa = PBXBuildFile; fileRef = 909FDBE1A1ABFC0BA1F3CD44 /* RepositoryInspector+Worktrees.swift */; };
+		4FDADBF2138B593824A427FA /* RepositoryTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55C22129483913AB039AB7BD /* RepositoryTypes.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,6 +60,12 @@
 		120000000000000000000012 /* RepositoryDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryDiffView.swift; sourceTree = "<group>"; };
 		120000000000000000000013 /* ExternalApplications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalApplications.swift; sourceTree = "<group>"; };
 		120000000000000000000014 /* RepositoryWorktreesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryWorktreesView.swift; sourceTree = "<group>"; };
+		0FFFAEDD087A363960423C03 /* CommandRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRunner.swift; sourceTree = "<group>"; };
+		1A98483D43874ED562589A46 /* RepositoryErrors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryErrors.swift; sourceTree = "<group>"; };
+		D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+Diff.swift"; sourceTree = "<group>"; };
+		749EF0DEC73FAE0C9D442B23 /* RepositoryInspector+History.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+History.swift"; sourceTree = "<group>"; };
+		909FDBE1A1ABFC0BA1F3CD44 /* RepositoryInspector+Worktrees.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+Worktrees.swift"; sourceTree = "<group>"; };
+		55C22129483913AB039AB7BD /* RepositoryTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTypes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +99,12 @@
 		150000000000000000000002 /* Gallae */ = {
 			isa = PBXGroup;
 			children = (
+				55C22129483913AB039AB7BD /* RepositoryTypes.swift */,
+				909FDBE1A1ABFC0BA1F3CD44 /* RepositoryInspector+Worktrees.swift */,
+				749EF0DEC73FAE0C9D442B23 /* RepositoryInspector+History.swift */,
+				D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */,
+				1A98483D43874ED562589A46 /* RepositoryErrors.swift */,
+				0FFFAEDD087A363960423C03 /* CommandRunner.swift */,
 				12000000000000000000000D /* Info.plist */,
 				12000000000000000000000E /* Assets.xcassets */,
 				120000000000000000000001 /* GallaeApp.swift */,
@@ -230,6 +248,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4FDADBF2138B593824A427FA /* RepositoryTypes.swift in Sources */,
+				884E18412063CF963F544175 /* RepositoryInspector+Worktrees.swift in Sources */,
+				65A6E2EB6303F3E5221D4BE8 /* RepositoryInspector+History.swift in Sources */,
+				7BB3D928F7F4172CDF1F65D8 /* RepositoryInspector+Diff.swift in Sources */,
+				B88AC58B07B9CC31D8F7F0A8 /* RepositoryErrors.swift in Sources */,
+				7B5CE7D4F5C85DA47C8EEB85 /* CommandRunner.swift in Sources */,
 				110000000000000000000001 /* GallaeApp.swift in Sources */,
 				110000000000000000000002 /* AppView.swift in Sources */,
 				110000000000000000000012 /* RepositoryDiffView.swift in Sources */,

@@ -4,6 +4,33 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    func testCommandRunnerPreservesInputAndCapturesBothLargeOutputStreams() throws {
+        let literal = "폴더 'quoted' \"double\" $HOME $(not-a-command)"
+        let input = Data("input\n\0tail".utf8)
+        let script = """
+        import os, sys
+        sys.stderr.write('e' * 131072)
+        sys.stderr.flush()
+        sys.stdout.buffer.write(sys.argv[1].encode() + b'\\0' + sys.stdin.buffer.read() + b'o' * 131072)
+        sys.exit(7)
+        """
+        let python = URL(fileURLWithPath: "/usr/bin/python3")
+        let result = try CommandRunner.run(["-c", script, literal], executableURL: python, standardInput: input)
+        XCTAssertEqual(result.status, 7)
+        XCTAssertEqual(result.standardError, String(repeating: "e", count: 131072))
+        let argumentEnd = try XCTUnwrap(result.standardOutput.firstIndex(of: 0))
+        let argument = String(decoding: result.standardOutput[..<argumentEnd], as: UTF8.self)
+        XCTAssertEqual(argument.precomposedStringWithCanonicalMapping, literal)
+        XCTAssertEqual(Data(result.standardOutput.dropFirst(argumentEnd + 1)), input + Data(repeating: 111, count: 131072))
+        XCTAssertFalse(result.standardOutputExceededLimit)
+        let capped = try CommandRunner.run(["-c", script, literal], executableURL: python,
+                                          maximumOutputBytes: 1024, standardInput: input)
+        XCTAssertTrue(capped.standardOutputExceededLimit)
+        XCTAssertTrue(capped.standardOutput.isEmpty)
+        XCTAssertEqual(capped.standardError, result.standardError)
+        XCTAssertEqual(capped.status, 7)
+    }
+
     func testAddsRemoteWithoutFetchingOrPublishing() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -323,27 +323,16 @@ enum CommitSigningConfiguration {
     }
 
     private nonisolated static func run(_ executable: String, _ arguments: [String]) -> RunResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
         do {
-            try process.run()
+            let result = try CommandRunner.run(arguments, executableURL: URL(fileURLWithPath: executable))
+            return .init(
+                status: result.status,
+                output: String(decoding: result.standardOutput, as: UTF8.self),
+                error: result.standardError
+            )
         } catch {
             return .init(status: -1, output: "", error: error.localizedDescription)
         }
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return .init(
-            status: process.terminationStatus,
-            output: String(decoding: outputData, as: UTF8.self),
-            error: String(decoding: errorData, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        )
     }
 }
 
