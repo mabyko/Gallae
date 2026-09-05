@@ -1056,6 +1056,7 @@ struct RepositoryWorkspaceView: View {
                 .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
             }
             .tag(change.id)
+            .gallaeSelectionBackground(isSelected: selectedChangeIDs.contains(change.id), isFocused: isChangeListFocused)
     }
 
     private func contextChangeIDs(
@@ -1109,7 +1110,9 @@ private struct RepositoryNavigatorView: View {
     /// Inside the floating panel the panel paints the background, so the list stays transparent.
     var isFloating = false
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.controlActiveState) private var controlActiveState
     @FocusState private var isScreenListFocused: Bool
+    @FocusState private var isReferenceListFocused: Bool
     @State private var filterText = ""
     @State private var branches: [String] = []
     @State private var remoteBranches: [String: [String]] = [:]
@@ -1167,6 +1170,7 @@ private struct RepositoryNavigatorView: View {
                 }
             }
             .listStyle(.sidebar)
+            .focused($isReferenceListFocused)
             .scrollContentBackground(theme.materials.translucentChrome && !isFloating ? .automatic : .hidden)
             .accessibilityLabel("Navigator")
 
@@ -1355,7 +1359,7 @@ private struct RepositoryNavigatorView: View {
 
     private func screenRow(_ section: RepositoryWorkspaceSection, badge: Int) -> some View {
         let isSelected = screen == section
-        let isActive = isSelected && isScreenListFocused
+        let isActive = isSelected && isScreenListFocused && controlActiveState == .key
         return Button {
             show(section)
             isScreenListFocused = true
@@ -1376,7 +1380,7 @@ private struct RepositoryNavigatorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isActive ? Color.accentColor : isSelected ? Color.secondary.opacity(0.25) : .clear)
+                    .fill(isActive ? theme.colors.accent : isSelected ? Color.secondary.opacity(0.25) : .clear)
             )
             .foregroundStyle(isActive ? .white : .primary)
             .contentShape(.rect)
@@ -1460,7 +1464,8 @@ private struct RepositoryNavigatorView: View {
             if isCurrent {
                 Text("HEAD")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(scope == .branch(branch) && isReferenceListFocused && controlActiveState == .key
+                                     ? Color.white : theme.colors.accent)
                     .fixedSize()
             } else if let worktreeURL {
                 Image(systemName: "folder")
@@ -1471,6 +1476,7 @@ private struct RepositoryNavigatorView: View {
         }
         .contentShape(.rect)
         .tag(RepositoryHistoryScope.branch(branch))
+        .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.branch(branch), isFocused: isReferenceListFocused, sidebar: true)
         .accessibilityElement(children: .combine)
         .accessibilityValue(accessibilityValue(for: branch))
         .accessibilityHint(isCurrent ? "Current branch" : "Double-click to switch, or open the context menu")
@@ -1566,6 +1572,7 @@ private struct RepositoryNavigatorView: View {
                     .help(branch)
                     .contentShape(.rect)
                     .tag(RepositoryHistoryScope.remoteBranch(branch))
+                    .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remoteBranch(branch), isFocused: isReferenceListFocused, sidebar: true)
                     .accessibilityLabel("Remote branch \(branch)")
                     .contextMenu {
                         Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
@@ -1586,6 +1593,7 @@ private struct RepositoryNavigatorView: View {
                 .help(fetchURL)
                 .contentShape(.rect)
                 .tag(RepositoryHistoryScope.remote(name))
+                .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remote(name), isFocused: isReferenceListFocused, sidebar: true)
                 .contextMenu {
                     Button("Fetch", systemImage: "arrow.down.circle") {
                         fetch(from: name, pruning: false)
@@ -1636,6 +1644,7 @@ private struct RepositoryNavigatorView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .tag(RepositoryHistoryScope.tag(tag))
+                        .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.tag(tag), isFocused: isReferenceListFocused, sidebar: true)
                 }
             }
         }
@@ -2377,6 +2386,7 @@ private struct RepositoryHistoryView: View {
                                 }
                             )
                             .tag(commit.id)
+                            .gallaeSelectionBackground(isSelected: model.selectedHistoryCommitID == commit.id, isFocused: historyFocused)
                             .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
                         }
                         .listStyle(.plain)
@@ -2506,6 +2516,7 @@ private extension View {
 
 private struct RepositoryStashesView: View {
     @Bindable var model: AppModel
+    @FocusState private var isListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -2589,9 +2600,11 @@ private struct RepositoryStashesView: View {
             List(stashes, selection: $model.selectedStashID) { stash in
                 RepositoryStashRow(stash: stash)
                     .tag(stash.id)
+                    .gallaeSelectionBackground(isSelected: model.selectedStashID == stash.id, isFocused: isListFocused)
                     .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
             }
             .listStyle(.plain)
+            .focused($isListFocused)
                 .legacyScrollerAware()
             .accessibilityLabel("Stashes, \(stashes.count) items")
         }
@@ -2600,6 +2613,7 @@ private struct RepositoryStashesView: View {
 
 private struct RepositoryReflogView: View {
     @Bindable var model: AppModel
+    @FocusState private var isListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
     @State private var recoveryEntry: RepositoryReflogEntry?
 
@@ -2679,9 +2693,11 @@ private struct RepositoryReflogView: View {
             List(entries, selection: $model.selectedReflogEntryID) { entry in
                 RepositoryReflogRow(entry: entry)
                     .tag(entry.id)
+                    .gallaeSelectionBackground(isSelected: model.selectedReflogEntryID == entry.id, isFocused: isListFocused)
                     .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
             }
             .listStyle(.plain)
+            .focused($isListFocused)
                 .legacyScrollerAware()
             .accessibilityLabel("Reflog, \(entries.count) recovery points")
         }
@@ -3119,19 +3135,11 @@ private struct RepositoryHistoryRow: View {
                 .frame(width: theme.metrics.historyGraphWidth)
 
             VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    if isHEAD {
-                        Text("HEAD")
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.quaternary, in: .capsule)
-                    }
-                    Text(commit.subject)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                Text(commit.subject)
+                    .font(.callout.weight(isHEAD ? .bold : .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(isHEAD ? "Current checkout (HEAD)\n\(commit.subject)" : commit.subject)
 
                 if !usesWideRow {
                     HStack(spacing: 4) {
@@ -3147,12 +3155,7 @@ private struct RepositoryHistoryRow: View {
                 if !commit.references.isEmpty {
                     HStack(spacing: 4) {
                         ForEach(commit.references.prefix(2)) { reference in
-                            Label(reference.name, systemImage: reference.kind.systemImage)
-                                .font(.caption2)
-                                .lineLimit(1)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(.quaternary, in: .capsule)
+                            referenceChip(reference)
                         }
                         if commit.references.count > 2 {
                             Text("+\(commit.references.count - 2)")
@@ -3234,6 +3237,40 @@ private struct RepositoryHistoryRow: View {
                 }
             }
         }
+    }
+
+    private func referenceChip(_ reference: RepositoryHistory.Reference) -> some View {
+        let color: Color = switch reference.kind {
+        case .branch: theme.colors.historyLocalBranch
+        case .remoteBranch: theme.colors.historyRemoteBranch
+        case .tag: theme.colors.historyTag
+        }
+        let highContrast = theme.materials.response == .increasedContrast
+        return HStack(spacing: 0) {
+            Image(systemName: reference.kind.systemImage)
+                .frame(width: 20, height: 18)
+                .overlay(alignment: .trailing) {
+                    Rectangle().fill(color.opacity(highContrast ? 0.6 : 0.35))
+                        .frame(width: 1)
+                        .padding(.vertical, 3)
+                }
+                .accessibilityHidden(true)
+            Text(reference.name)
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.horizontal, 5)
+                .frame(minHeight: 18)
+        }
+        .font(.caption2.weight(isHEAD ? .bold : .regular))
+        .foregroundStyle(color)
+        .background(color.opacity(highContrast ? 0.22 : 0.12), in: .rect(cornerRadius: 4))
+        .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 4))
+        .overlay {
+            RoundedRectangle(cornerRadius: 4)
+                .strokeBorder(color.opacity(highContrast ? 1 : 0.7), lineWidth: 1)
+        }
+        .help("\(reference.kind.accessibilityName) · \(reference.name)")
     }
 
     @ViewBuilder

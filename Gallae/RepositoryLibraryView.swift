@@ -14,6 +14,7 @@ struct RepositoryLibraryView: View {
     @State private var selectedRecentRepositoryIDs: Set<URL> = []
     @State private var selectAllEventMonitor: Any?
     @FocusState private var isRepositoryListFocused: Bool
+    @FocusState private var isSourceListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -120,6 +121,7 @@ struct RepositoryLibraryView: View {
                             .foregroundStyle(.secondary)
                     }
                     .tag(RepositoryLibrarySource.recent)
+                    .gallaeSelectionBackground(isSelected: model.selectedLibrarySource == .recent, isFocused: isSourceListFocused, sidebar: true)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Recent Repositories, \(model.recentRepositories.count)")
                 }
@@ -128,6 +130,7 @@ struct RepositoryLibraryView: View {
                     ForEach(model.libraryFolders) { folder in
                         LibraryFolderRow(folder: folder)
                             .tag(RepositoryLibrarySource.folder(folder.id))
+                            .gallaeSelectionBackground(isSelected: model.selectedLibrarySource == .folder(folder.id), isFocused: isSourceListFocused, sidebar: true)
                             .contextMenu {
                                 Button(
                                     "Remove \(folder.name) from Library",
@@ -144,6 +147,7 @@ struct RepositoryLibraryView: View {
                 }
             }
             .listStyle(.sidebar)
+            .focused($isSourceListFocused)
             .accessibilityLabel(
                 "Repository Library, \(model.recentRepositories.count) recent Repositories, \(model.libraryFolders.count) folders"
             )
@@ -400,6 +404,7 @@ struct RepositoryLibraryView: View {
                 showsPath: true
             )
             .tag(repository.id)
+            .gallaeSelectionBackground(isSelected: selectedRecentRepositoryIDs.contains(repository.id), isFocused: isRepositoryListFocused)
             .contentShape(.rect)
             .accessibilityAction(named: "Remove from Recent") {
                 removeRecentRepositories([repository.id])
@@ -502,6 +507,7 @@ struct RepositoryLibraryView: View {
                     RepositoryHierarchyFolderRow(node: node)
                 }
                 .tag(node.id)
+                .gallaeSelectionBackground(isSelected: selectedHierarchyNodeID == node.id, isFocused: isRepositoryListFocused)
                 .listRowInsets(.init(top: 7, leading: 12, bottom: 7, trailing: 12))
             )
         }
@@ -531,6 +537,7 @@ struct RepositoryLibraryView: View {
                 showsPath: false
             )
             .tag(repository.id)
+            .gallaeSelectionBackground(isSelected: selectedHierarchyNodeID == repository.id, isFocused: isRepositoryListFocused)
             .contentShape(.rect)
             .task(id: repository.id) {
                 guard model.selectedLibraryRepositoryID.map({

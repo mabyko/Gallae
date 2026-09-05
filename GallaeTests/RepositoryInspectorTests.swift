@@ -2721,6 +2721,15 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertGreaterThan(contrast.metrics.diffChangeBarWidth, 0)
         XCTAssertLessThan(contrast.metrics.rowVerticalPadding, standard.metrics.rowVerticalPadding)
         XCTAssertLessThan(contrast.metrics.diffFontSize, standard.metrics.diffFontSize)
+        let customized = GallaeTheme.resolve(
+            response: .increasedContrast, compactRows: false, graphColor: .orange,
+            localBranchColor: .green, remoteBranchColor: .pink, tagColor: .indigo
+        )
+        XCTAssertEqual(customized.colors.historyGraphLanes.first, GallaeHistoryColor.orange.color)
+        XCTAssertEqual(Set(customized.colors.historyGraphLanes).count, GallaeHistoryColor.allCases.count)
+        XCTAssertEqual(customized.colors.historyLocalBranch, GallaeHistoryColor.green.color)
+        XCTAssertEqual(customized.colors.historyRemoteBranch, GallaeHistoryColor.pink.color)
+        XCTAssertEqual(customized.colors.historyTag, GallaeHistoryColor.indigo.color)
     }
 
     func testFiltersHistoryByMessageAuthorAndSHA() {

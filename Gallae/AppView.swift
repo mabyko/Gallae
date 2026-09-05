@@ -32,6 +32,11 @@ struct AppView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
     @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
+    @AppStorage(GallaeAppearanceSettings.accentColorKey) private var accentColor = "system"
+    @AppStorage(GallaeAppearanceSettings.historyGraphColorKey) private var historyGraphColor = GallaeHistoryColor.blue
+    @AppStorage(GallaeAppearanceSettings.historyLocalColorKey) private var historyLocalColor = GallaeHistoryColor.blue
+    @AppStorage(GallaeAppearanceSettings.historyRemoteColorKey) private var historyRemoteColor = GallaeHistoryColor.teal
+    @AppStorage(GallaeAppearanceSettings.historyTagColorKey) private var historyTagColor = GallaeHistoryColor.purple
     @State private var model = AppModel()
     @State private var folderSelection: FolderSelection?
     @State private var isFolderImporterPresented = false
@@ -309,7 +314,10 @@ struct AppView: View {
                 increasedContrast: colorSchemeContrast == .increased,
                 translucentChrome: translucentChrome
             ),
-            compactRows: compactRows
+            compactRows: compactRows,
+            graphColor: historyGraphColor, localBranchColor: historyLocalColor,
+            remoteBranchColor: historyRemoteColor, tagColor: historyTagColor,
+            accentColor: GallaeHistoryColor(rawValue: accentColor)
         )
     }
 

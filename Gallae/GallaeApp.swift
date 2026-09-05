@@ -350,10 +350,15 @@ enum CommitSigningConfiguration {
 /// Keys and values of the Appearance settings; the theme itself is resolved in `AppView`.
 enum GallaeAppearanceSettings {
     static let appearanceKey = "appearance"
+    static let accentColorKey = "appAccentColor"
     static let translucentChromeKey = "translucentSidebarAndToolbar"
     static let compactRowsKey = "compactRows"
     static let narrowNavigatorKey = "narrowNavigatorStyle"
     static let historyLayoutKey = "historyLayout"
+    static let historyGraphColorKey = "historyGraphColor"
+    static let historyLocalColorKey = "historyLocalBranchColor"
+    static let historyRemoteColorKey = "historyRemoteBranchColor"
+    static let historyTagColorKey = "historyTagColor"
 
     enum HistoryLayout: String, CaseIterable, Identifiable {
         case sideBySide
@@ -438,10 +443,15 @@ private struct GallaeSettingsView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("loadsGitHubAvatars") private var loadsGitHubAvatars = true
     @AppStorage(GallaeAppearanceSettings.appearanceKey) private var appearance = GallaeAppearanceSettings.Appearance.system
+    @AppStorage(GallaeAppearanceSettings.accentColorKey) private var accentColor = "system"
     @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
     @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigator = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
     @AppStorage(GallaeAppearanceSettings.historyLayoutKey) private var historyLayout = GallaeAppearanceSettings.HistoryLayout.stacked
+    @AppStorage(GallaeAppearanceSettings.historyGraphColorKey) private var historyGraphColor = GallaeHistoryColor.blue
+    @AppStorage(GallaeAppearanceSettings.historyLocalColorKey) private var historyLocalColor = GallaeHistoryColor.blue
+    @AppStorage(GallaeAppearanceSettings.historyRemoteColorKey) private var historyRemoteColor = GallaeHistoryColor.teal
+    @AppStorage(GallaeAppearanceSettings.historyTagColorKey) private var historyTagColor = GallaeHistoryColor.purple
     @State private var installedURL: URL?
     @State private var errorMessage: String?
     @State private var signingState: CommitSigningState = .loading
@@ -555,6 +565,20 @@ private struct GallaeSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Accent Color") {
+                colorRow("App Accent", selection: Binding(
+                    get: { GallaeHistoryColor(rawValue: accentColor) ?? .blue },
+                    set: { accentColor = $0.rawValue }
+                ), showsSelection: GallaeHistoryColor(rawValue: accentColor) != nil)
+                Button("Use System Accent Color") { accentColor = "system" }
+                    .disabled(GallaeHistoryColor(rawValue: accentColor) == nil)
+                Text(accentColor == "system"
+                     ? "Following the macOS accent color."
+                     : "Used for selections and controls throughout the app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section {
                 Toggle("Translucent Sidebar and Toolbar", isOn: $translucentChrome)
                     .disabled(reduceTransparency)
@@ -588,6 +612,22 @@ private struct GallaeSettingsView: View {
                 Text(historyLayout.summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("History Colors") {
+                colorRow("Graph Starting Color", selection: $historyGraphColor)
+                colorRow("Local Branches", selection: $historyLocalColor)
+                colorRow("Remote Branches", selection: $historyRemoteColor)
+                colorRow("Tags", selection: $historyTagColor)
+                Text("The graph uses the remaining colors for other lanes. Badge text keeps its readable system color.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Reset History Colors") {
+                    historyGraphColor = .blue
+                    historyLocalColor = .blue
+                    historyRemoteColor = .teal
+                    historyTagColor = .purple
+                }
             }
 
             Section {
@@ -628,6 +668,33 @@ private struct GallaeSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func colorRow(_ title: String, selection: Binding<GallaeHistoryColor>, showsSelection: Bool = true) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 4) {
+                ForEach(GallaeHistoryColor.allCases) { color in
+                    Button {
+                        selection.wrappedValue = color
+                    } label: {
+                        Circle().fill(color.color)
+                            .frame(width: 16, height: 16)
+                            .frame(width: 24, height: 24)
+                            .overlay {
+                                if showsSelection && selection.wrappedValue == color {
+                                    Circle().strokeBorder(.primary, lineWidth: 2)
+                                }
+                            }
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .help(color.title)
+                    .accessibilityLabel("\(title): \(color.title)")
+                    .accessibilityValue(showsSelection && selection.wrappedValue == color ? "Selected" : "")
+                    .accessibilityAddTraits(showsSelection && selection.wrappedValue == color ? .isSelected : [])
+                }
+            }
+        }
     }
 
     private var commandLineSettings: some View {
@@ -711,9 +778,15 @@ private struct GallaeSettingsView: View {
 
 @main
 struct GallaeApp: App {
+    @AppStorage(GallaeAppearanceSettings.accentColorKey) private var accentColor = "system"
+
+    private var customAccentColor: Color? { GallaeHistoryColor(rawValue: accentColor)?.color }
+
     var body: some Scene {
         Window("Gallae for Git", id: "main") {
             AppView()
+                .tint(customAccentColor)
+                .accentColor(customAccentColor)
         }
         .defaultSize(width: 960, height: 640)
         .commands {
@@ -722,6 +795,8 @@ struct GallaeApp: App {
 
         Settings {
             GallaeSettingsView()
+                .tint(customAccentColor)
+                .accentColor(customAccentColor)
         }
     }
 }

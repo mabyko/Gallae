@@ -96,6 +96,7 @@ struct RepositoryRevisionChangesView: View {
     let retryPatch: () -> Void
     let loadExpandedPatch: () -> Void
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
+    @FocusState private var isFileListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
 
     @ViewBuilder
@@ -175,6 +176,7 @@ struct RepositoryRevisionChangesView: View {
                 List(files, selection: $selectedFileID) { file in
                     RepositoryCommitFileRow(file: file)
                         .tag(file.id)
+                        .gallaeSelectionBackground(isSelected: selectedFileID == file.id, isFocused: isFileListFocused)
                         .listRowInsets(.init(
                             top: theme.metrics.rowVerticalPadding,
                             leading: 12,
@@ -183,6 +185,7 @@ struct RepositoryRevisionChangesView: View {
                         ))
                 }
                 .listStyle(.plain)
+                .focused($isFileListFocused)
                 .legacyScrollerAware()
                 .accessibilityLabel("Changed Files, \(files.count) files")
             }
