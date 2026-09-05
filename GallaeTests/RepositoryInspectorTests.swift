@@ -2452,6 +2452,22 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.text.contains("other after") })
     }
 
+    func testDiffLineCountsExcludeHeadersAndContext() throws {
+        let lines: [RepositoryDiff.Line] = [
+            .init(id: 0, kind: .metadata, oldLineNumber: nil, newLineNumber: nil, text: "+++ b/file.txt"),
+            .init(id: 1, kind: .hunk, oldLineNumber: nil, newLineNumber: nil, text: "@@ -1,2 +1,3 @@"),
+            .init(id: 2, kind: .context, oldLineNumber: 1, newLineNumber: 1, text: " unchanged"),
+            .init(id: 3, kind: .deletion, oldLineNumber: 2, newLineNumber: nil, text: "-old"),
+            .init(id: 4, kind: .addition, oldLineNumber: nil, newLineNumber: 2, text: "+new"),
+            .init(id: 5, kind: .addition, oldLineNumber: nil, newLineNumber: 3, text: "+more")
+        ]
+        let counts = try XCTUnwrap(RepositoryDiff.Section.Content.text(lines).lineChangeCounts)
+        XCTAssertEqual(counts.added, 2)
+        XCTAssertEqual(counts.removed, 1)
+        XCTAssertNil(RepositoryDiff.Section.Content.binary.lineChangeCounts)
+        XCTAssertEqual(RepositoryDiff.Section.Content.text([]).lineChangeCounts?.added, 0)
+    }
+
     func testDiffPresentationUsesVisibleContentWithoutChangingPreference() {
         let addition = RepositoryDiff.Line(id: 0, kind: .addition, oldLineNumber: nil, newLineNumber: 1, text: "+new")
         let context = RepositoryDiff.Line(id: 1, kind: .context, oldLineNumber: 1, newLineNumber: 1, text: " old")

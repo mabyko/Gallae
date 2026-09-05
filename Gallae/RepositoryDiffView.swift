@@ -1,6 +1,92 @@
 import AppKit
 import SwiftUI
 
+/// File identity stays readable; actions move below it when the pane cannot fit both.
+private struct RepositoryDiffHeader<Actions: View>: View {
+    let path: String
+    let originalPath: String?
+    let content: RepositoryDiff.Section.Content?
+    let actions: Actions
+    @Environment(\.gallaeTheme) private var theme
+
+    init(
+        path: String,
+        originalPath: String? = nil,
+        content: RepositoryDiff.Section.Content?,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.path = path
+        self.originalPath = originalPath
+        self.content = content
+        self.actions = actions()
+    }
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                fileIdentity.frame(minWidth: 180)
+                Spacer(minLength: 0)
+                actions.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                fileIdentity
+                HStack {
+                    Spacer(minLength: 0)
+                    actions
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .controlSize(.small)
+    }
+
+    private var fileIdentity: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(path.split(separator: "/").last.map(String.init) ?? path)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            HStack(spacing: 8) {
+                let directory = (path as NSString).deletingLastPathComponent
+                Text(directory.isEmpty ? "Repository root" : directory)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let counts = content?.lineChangeCounts, counts.added + counts.removed > 0 {
+                    HStack(spacing: 6) {
+                        Text("+\(counts.added)").foregroundStyle(theme.colors.statusAdded)
+                        Text("−\(counts.removed)").foregroundStyle(theme.colors.statusDeleted)
+                    }
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .fixedSize()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Line changes: \(counts.added) added, \(counts.removed) deleted")
+                    .help("Line changes in the displayed diff")
+                }
+            }
+            if let originalPath {
+                Text("From \(originalPath)")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(originalPath)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .help(path)
+        .textSelection(.enabled)
+        .contextMenu {
+            Button("Copy Relative Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(path, forType: .string)
+            }
+        }
+    }
+}
+
 struct RepositoryRevisionChangesView: View {
     let filesState: RepositoryCommitFilesLoadState
     @Binding var selectedFileID: String?
@@ -105,26 +191,9 @@ struct RepositoryRevisionChangesView: View {
     private var revisionDetail: some View {
             VStack(spacing: 0) {
                 if let file = selectedFile {
-                    HStack(alignment: .center, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(file.fileName)
-                                .font(.headline)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .help(file.path)
-                            Text(file.path)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
+                    RepositoryDiffHeader(path: file.path, originalPath: file.originalPath, content: selectedContent) {
                         RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
 
                     Divider()
                 }
@@ -133,10 +202,13 @@ struct RepositoryRevisionChangesView: View {
             }
     }
 
+    private var selectedContent: RepositoryDiff.Section.Content? {
+        guard case .loaded(let patch) = patchState else { return nil }
+        return patch.content
+    }
+
     private var presentation: RepositoryDiffPresentation {
-        let content: RepositoryDiff.Section.Content?
-        if case .loaded(let patch) = patchState { content = patch.content } else { content = nil }
-        return .init(content: content, preferred: layout)
+        .init(content: selectedContent, preferred: layout)
     }
 
     @ViewBuilder
@@ -462,85 +534,71 @@ struct RepositoryDiffView: View {
         )
         let effectiveLayout = presentation.layout
         return VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(diff.fileName)
-                        .font(.headline)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(diff.path)
-                    Text(diff.path)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
-                    if let originalPath = diff.originalPath {
-                        Text("From \(originalPath)")
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
+            RepositoryDiffHeader(
+                path: diff.path,
+                originalPath: diff.originalPath,
+                content: diff.sections.first { $0.scope == shown }?.content
+            ) {
+                HStack(spacing: 8) {
+                    if !diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                        RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
                     }
-                }
 
-                Spacer()
-
-                RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
-
-                if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
-                    Button("Mark Resolved…") {
-                        pendingConflictResolution = .workingTree
-                    }
-                    .disabled(isBusy)
-                    .help("Stage this file’s current working tree state as resolved")
-                    .accessibilityHint("Shows a confirmation before staging the file as resolved")
-
-                    Button("Use Ours…") {
-                        pendingConflictResolution = .side(.ours)
-                    }
-                    .disabled(isBusy)
-                    .help("Resolve this file using the Ours version")
-                    .accessibilityHint("Shows a confirmation before replacing and staging this file")
-
-                    Button("Use Theirs…") {
-                        pendingConflictResolution = .side(.theirs)
-                    }
-                    .disabled(isBusy)
-                    .help("Resolve this file using the Theirs version")
-                    .accessibilityHint("Shows a confirmation before replacing and staging this file")
-                }
-
-                if canDiscard {
-                    Button("Discard…", role: .destructive) {
-                        isConfirmingDiscard = true
-                    }
-                    .disabled(isBusy)
-                    .help("Discard this file’s unstaged changes")
-                    .accessibilityHint(
-                        "Shows a confirmation before replacing the working tree file"
-                    )
-                }
-                if canUnstage {
-                    Button("Unstage", action: unstage)
+                    if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                        Button("Mark Resolved…") {
+                            pendingConflictResolution = .workingTree
+                        }
                         .disabled(isBusy)
-                        .help("Remove this file from the next commit without changing it on disk")
-                        .accessibilityHint(
-                            "Remove this file from the next commit without changing its working tree content"
-                        )
-                }
-                if canStage {
-                    Button("Stage", action: stage)
-                        .buttonStyle(.borderedProminent)
+                        .help("Stage this file’s current working tree state as resolved")
+                        .accessibilityHint("Shows a confirmation before staging the file as resolved")
+
+                        Button("Use Ours…") {
+                            pendingConflictResolution = .side(.ours)
+                        }
                         .disabled(isBusy)
-                        .help("Add this file to the next commit")
-                        .accessibilityHint("Add this file’s current changes to the next commit")
+                        .help("Resolve this file using the Ours version")
+                        .accessibilityHint("Shows a confirmation before replacing and staging this file")
+
+                        Button("Use Theirs…") {
+                            pendingConflictResolution = .side(.theirs)
+                        }
+                        .disabled(isBusy)
+                        .help("Resolve this file using the Theirs version")
+                        .accessibilityHint("Shows a confirmation before replacing and staging this file")
+                    }
+
+                    if canUnstage {
+                        Button("Unstage File", action: unstage)
+                            .disabled(isBusy)
+                            .help("Remove this file from the next commit without changing it on disk")
+                            .accessibilityHint(
+                                "Remove this file from the next commit without changing its working tree content"
+                            )
+                    }
+                    if canStage {
+                        Button("Stage File", action: stage)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isBusy)
+                            .help("Add this file to the next commit")
+                            .accessibilityHint("Add this file’s current changes to the next commit")
+                    }
+                    if canDiscard {
+                        Menu {
+                            Button("Discard Unstaged Changes…", role: .destructive) {
+                                isConfirmingDiscard = true
+                            }
+                            .disabled(isBusy)
+                        } label: {
+                            Label("File Actions", systemImage: "ellipsis")
+                        }
+                        .labelStyle(.iconOnly)
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help("More actions for this file")
+                        .accessibilityLabel("File Actions")
+                    }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            // One height for everything on this bar: the layout picker was already small while the buttons
-            // beside it stayed regular, so the row had two control heights. `controlSize` is an environment
-            // value, so setting it here covers every control the bar grows later.
-            .controlSize(.small)
 
             Divider()
 

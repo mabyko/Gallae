@@ -706,40 +706,50 @@ struct RepositoryWorkspaceView: View {
             ) {
                 changeList(repository)
             } trailing: {
-                RepositoryDiffView(
-                    state: model.diffState,
-                    fileURL: selectedFileURL(in: repository),
-                    canStage: model.canStageSelectedChange,
-                    canUnstage: model.canUnstageSelectedChange,
-                    canDiscard: model.canDiscardSelectedChange,
-                    canResolveConflict: model.canResolveSelectedConflict,
-                    canStageHunks: model.canStageSelectedHunks,
-                    canUnstageHunks: model.canUnstageSelectedHunks,
-                    isBusy: model.isLoading,
-                    stage: { Task { await model.stageSelectedChange() } },
-                    unstage: { Task { await model.unstageSelectedChange() } },
-                    discard: { id in Task { await model.discardChange(id: id) } },
-                    resolveConflict: { side in
-                        Task { await model.resolveSelectedConflict(using: side) }
-                    },
-                    markConflictResolved: {
-                        Task { await model.markSelectedConflictResolved() }
-                    },
-                    updateHunk: { hunk in
-                        Task { await model.updateSelectedHunk(hunk) }
-                    },
-                    discardHunk: { hunk in
-                        Task { await model.discardSelectedHunk(hunk) }
-                    },
-                    retry: { Task { await model.loadSelectedDiff() } },
-                    loadExpanded: {
-                        Task {
-                            await model.loadSelectedDiff(
-                                maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
-                            )
-                        }
+                if repository.changes.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Changes to Review", systemImage: "checkmark.circle")
+                    } description: {
+                        Text("New edits will appear here. You can review earlier commits in History.")
+                    } actions: {
+                        Button("Show History") { show(.history) }
                     }
-                )
+                } else {
+                    RepositoryDiffView(
+                        state: model.diffState,
+                        fileURL: selectedFileURL(in: repository),
+                        canStage: model.canStageSelectedChange,
+                        canUnstage: model.canUnstageSelectedChange,
+                        canDiscard: model.canDiscardSelectedChange,
+                        canResolveConflict: model.canResolveSelectedConflict,
+                        canStageHunks: model.canStageSelectedHunks,
+                        canUnstageHunks: model.canUnstageSelectedHunks,
+                        isBusy: model.isLoading,
+                        stage: { Task { await model.stageSelectedChange() } },
+                        unstage: { Task { await model.unstageSelectedChange() } },
+                        discard: { id in Task { await model.discardChange(id: id) } },
+                        resolveConflict: { side in
+                            Task { await model.resolveSelectedConflict(using: side) }
+                        },
+                        markConflictResolved: {
+                            Task { await model.markSelectedConflictResolved() }
+                        },
+                        updateHunk: { hunk in
+                            Task { await model.updateSelectedHunk(hunk) }
+                        },
+                        discardHunk: { hunk in
+                            Task { await model.discardSelectedHunk(hunk) }
+                        },
+                        retry: { Task { await model.loadSelectedDiff() } },
+                        loadExpanded: {
+                            Task {
+                                await model.loadSelectedDiff(
+                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                                )
+                            }
+                        }
+                    )
+                }
             }
     }
 

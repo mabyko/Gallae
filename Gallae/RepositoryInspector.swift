@@ -433,6 +433,15 @@ struct RepositoryDiff: Equatable, Sendable {
 }
 
 extension RepositoryDiff.Section.Content {
+    /// Counts only changed content, never patch headers or unchanged context.
+    var lineChangeCounts: (added: Int, removed: Int)? {
+        guard case .text(let lines) = self else { return nil }
+        return lines.reduce(into: (added: 0, removed: 0)) { counts, line in
+            if line.kind == .addition { counts.added += 1 }
+            if line.kind == .deletion { counts.removed += 1 }
+        }
+    }
+
     /// A file with no opposite version at all: every line added, or every line removed, and no context
     /// between them. An ordinary edit that happens to only add lines is *not* one-sided — its context lines
     /// are what the two columns line up against, which is the whole point of reading it side by side.
@@ -457,8 +466,8 @@ extension RepositoryDiff.Section.Content {
 extension RepositoryDiff.Section {
     /// Additions and deletions — what a reader counts as changed. Context and headers are not changes.
     var changedLineCount: Int {
-        guard case .text(let lines) = content else { return 0 }
-        return lines.count { $0.kind == .addition || $0.kind == .deletion }
+        guard let counts = content.lineChangeCounts else { return 0 }
+        return counts.added + counts.removed
     }
 
     /// New or deleted content without context uses one column; ordinary edits keep their comparison.
