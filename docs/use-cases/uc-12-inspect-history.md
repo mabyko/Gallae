@@ -14,15 +14,17 @@
 1. 사용자가 Navigator에서 `History`를 선택한다. branch나 tag를 선택하면 같은 화면이 그 ref 하나의 log로 좁혀지고, 헤더에 ref 이름과 종류(Local branch·HEAD·Worktree 위치·Tag)가 뜬다.
 2. Gallae가 현재 HEAD, local·remote-tracking branch와 tag에서 도달 가능한 최신 commit을 합쳐 최대 100개까지 topology 순서로 읽는다. ref 하나를 골랐으면 `refs/heads/…`·`refs/tags/…`로 정확히 그 ref만 읽는다.
 3. Gallae가 정확한 현재 HEAD commit을 처음 선택하고(ref 하나면 그 ref의 끝 commit), 사용자가 필요하면 목록에서 다른 commit을 선택한다.
-4. Gallae가 선택한 commit의 메타데이터와 first-parent 기준 변경 파일을 읽고 첫 파일을 선택한다.
+4. Gallae가 선택한 commit의 메타데이터와 first-parent 기준 변경 파일을 읽고 첫 파일을 선택한다. 기본 상하 배치는 커밋 머리에 작성자·서명과 짧은 본문을 표시하고, Details…에서 원문·전체 SHA·parent·커밋 작업을 제공한다.
 5. Gallae가 선택한 파일의 patch를 읽는다.
 6. 사용자는 방향키로 다른 commit이나 파일을 선택해 같은 화면에서 검토를 이어 간다.
 7. 필요하면 메시지·작성자·이메일·SHA·ref를 입력해 이미 읽은 목록을 좁힌다.
 8. commit에 닿은 branch와 tag가 있으면 행에서 이름과 종류를 확인한다.
 9. 목록 왼쪽 graph에서 일반 commit과 merge의 부모 관계를 확인한다.
+10. 상하 배치에서 Expand Review로 검토 영역을 넓히고 Show History로 목록에 돌아온다. 현재 검색·조회 범위 안에서 이전/다음 commit을 고를 수 있다.
 
 ## 대안 흐름
 
+- Appearance → History Layout에서 기본 Top and Bottom과 Side by Side를 고른다. 배치 전환과 검토 확장·복귀는 선택한 commit·파일을 유지한다.
 - 아직 commit이 없으면 오류 대신 `No Commits Yet` 빈 상태를 표시한다.
 - root commit은 빈 tree와 비교한 변경 파일과 patch를 표시한다.
 - merge commit은 first parent와 비교한 변경 파일과 patch를 표시한다.
@@ -39,7 +41,8 @@
 
 - History 진입과 commit 선택은 Repository나 index, working tree를 바꾸지 않는다.
 - commit 행은 제목·작성자·시간·축약 SHA를 색 외의 텍스트로 식별할 수 있다.
-- 선택 상세에는 제목·본문·작성자 이메일·전체 SHA·parent가 표시된다.
+- 선택 상세에서 제목·작성자 이메일·서명 상태를 확인할 수 있고, 상하 배치의 Details…에서 전체 SHA·parent와 줄바꿈을 보존한 원문을 읽을 수 있다.
+- 상하 배치의 본문 미리보기는 공백·줄바꿈을 접어 가용 폭 안에서 두 줄로 표시한다. 이전/다음 commit 이동은 현재 검색·조회 범위를 벗어나지 않는다.
 - 변경 파일은 상태와 경로를 색 외의 텍스트로 식별할 수 있고, 파일 선택은 해당 파일의 patch만 갱신한다.
 - graph는 현재 HEAD와 local·remote-tracking branch, tag에서 도달 가능한 목록의 분기·합류를 표시하고 VoiceOver 이름은 root와 merge commit을 구분한다.
 - 검색은 추가 Git 실행 없이 현재 읽은 최대 100개 commit 안에서 ref 이름까지 대상으로 수행한다.

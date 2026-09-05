@@ -4,6 +4,53 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    func testHistoryLayoutStaysWithinWindowAndPreservesHiddenHistorySize() {
+        for size in [CGSize.zero, CGSize(width: 720, height: 640), CGSize(width: 1180.8, height: 760.5)] {
+            for stacked in [false, true] {
+                for preferred in [CGFloat(0), 260, 2000] {
+                    let browsing = RepositoryHistoryFrames(
+                        size: size, stacked: stacked, expanded: false,
+                        preferredWidth: preferred, preferredHeight: preferred
+                    )
+                    let expanded = RepositoryHistoryFrames(
+                        size: size, stacked: stacked, expanded: true,
+                        preferredWidth: preferred, preferredHeight: preferred
+                    )
+                    for frame in [browsing.history, browsing.divider, browsing.review, expanded.review] {
+                        XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                        XCTAssertGreaterThanOrEqual(frame.minY, 0)
+                        XCTAssertGreaterThanOrEqual(frame.width, 0)
+                        XCTAssertGreaterThanOrEqual(frame.height, 0)
+                        XCTAssertLessThanOrEqual(frame.maxX, size.width)
+                        XCTAssertLessThanOrEqual(frame.maxY, size.height)
+                    }
+                    XCTAssertEqual(expanded.history, browsing.history)
+                    if stacked {
+                        XCTAssertEqual(browsing.history.maxY, browsing.divider.minY)
+                        XCTAssertEqual(browsing.divider.maxY, browsing.review.minY)
+                        XCTAssertEqual(expanded.review, CGRect(x: 0, y: 0, width: size.width.rounded(.down), height: size.height.rounded(.down)))
+                    } else {
+                        XCTAssertEqual(browsing.history.maxX, browsing.divider.minX)
+                        XCTAssertEqual(browsing.divider.maxX, browsing.review.minX)
+                        XCTAssertEqual(expanded.review, browsing.review)
+                    }
+                }
+            }
+        }
+    }
+
+    func testHistoryReviewNavigationUsesOnlyVisibleCommits() {
+        let filtered = ["newest", "older", "oldest"]
+        XCTAssertEqual(RepositoryHistoryNavigation.adjacent(to: "newest", offset: 1, in: filtered), "older")
+        XCTAssertEqual(RepositoryHistoryNavigation.adjacent(to: "older", offset: -1, in: filtered), "newest")
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: "newest", offset: -1, in: filtered))
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: "oldest", offset: 1, in: filtered))
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: "excluded", offset: 1, in: filtered))
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: nil, offset: 1, in: filtered))
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: "newest", offset: 2, in: filtered))
+        XCTAssertNil(RepositoryHistoryNavigation.adjacent(to: "newest", offset: 1, in: []))
+    }
+
     func testInspectsUnbornRepositoryWithoutChangingHead() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

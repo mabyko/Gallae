@@ -1983,6 +1983,9 @@ private struct RepositoryHistoryView: View {
     @Bindable var model: AppModel
     /// History of every ref, or the log of the scope chosen in the Navigator.
     var scope: RepositoryHistoryScope?
+    @AppStorage(GallaeAppearanceSettings.historyLayoutKey) private var historyLayout = GallaeAppearanceSettings.HistoryLayout.stacked
+    @State private var isReviewExpanded = false
+    @FocusState private var historyFocused: Bool
     @State private var editedRemote: RepositoryRemote?
     @Environment(\.gallaeTheme) private var theme
     @State private var searchText = ""
@@ -1993,12 +1996,7 @@ private struct RepositoryHistoryView: View {
     @State private var pendingTrackingReferenceRemoval: String?
 
     var body: some View {
-        ResizableHSplit(
-            leadingMinimum: theme.metrics.changeListMinimumWidth,
-            leadingIdeal: theme.metrics.changeListIdealWidth,
-            trailingMinimum: 400,
-            storageKey: "history"
-        ) {
+        RepositoryHistorySplit(layout: historyLayout, isReviewExpanded: isReviewExpanded) {
             VStack(spacing: 0) {
                 VStack(spacing: 7) {
                     HStack {
@@ -2041,9 +2039,17 @@ private struct RepositoryHistoryView: View {
                 historyList
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        } trailing: {
-            RepositoryCommitDetailView(model: model)
+        } review: {
+            VStack(spacing: 0) {
+                if historyLayout == .stacked {
+                    reviewControls
+                    Divider()
+                }
+                RepositoryCommitDetailView(model: model, compactHeader: historyLayout == .stacked)
+            }
         }
+        .onChange(of: historyLayout) { isReviewExpanded = false }
+        .onChange(of: model.repository?.rootURL) { isReviewExpanded = false }
         .task(id: model.historyRequest) {
             await model.loadHistory()
             await model.loadLocalBranches()
@@ -2226,6 +2232,51 @@ private struct RepositoryHistoryView: View {
         model.fetch(from: remote, pruning: pruning, in: rootURL)
     }
 
+    private var reviewControls: some View {
+        HStack(spacing: 8) {
+            Text(searchText.isEmpty ? headerTitle : "\(headerTitle) · Filtered")
+                .font(.caption.weight(.medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(searchText.isEmpty ? headerTitle : "\(headerTitle) · Search: \(searchText)")
+            if let selected = model.selectedHistoryCommitID,
+               let index = visibleHistoryCommitIDs.firstIndex(of: selected) {
+                Text("\(index + 1) of \(visibleHistoryCommitIDs.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+            Spacer(minLength: 4)
+            Button("Previous Commit", systemImage: "chevron.up") { moveReview(by: -1) }
+                .labelStyle(.iconOnly)
+                .disabled(adjacentCommit(-1) == nil)
+                .help("Previous commit in this History view")
+            Button("Next Commit", systemImage: "chevron.down") { moveReview(by: 1) }
+                .labelStyle(.iconOnly)
+                .disabled(adjacentCommit(1) == nil)
+                .help("Next commit in this History view")
+            Button(isReviewExpanded ? "Show History" : "Expand Review",
+                   systemImage: isReviewExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
+                isReviewExpanded.toggle()
+                if !isReviewExpanded { historyFocused = true }
+            }
+            .disabled(model.selectedHistoryCommitID == nil && !isReviewExpanded)
+            .accessibilityHint("Keep the selected commit and file when changing review size")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+
+    private func adjacentCommit(_ offset: Int) -> String? {
+        RepositoryHistoryNavigation.adjacent(to: model.selectedHistoryCommitID, offset: offset, in: visibleHistoryCommitIDs)
+    }
+
+    private func moveReview(by offset: Int) {
+        guard let id = adjacentCommit(offset) else { return }
+        model.selectedHistoryCommitID = id
+    }
+
     private var visibleHistoryCommitIDs: [String] {
         guard case .loaded(let history) = model.historyState else { return [] }
         return visibleCommits(in: history).map(\.id)
@@ -2272,63 +2323,73 @@ private struct RepositoryHistoryView: View {
                 let reachableCommitIDs = history.headReachableCommitIDs()
                 let descendantCommitIDs = history.headDescendantCommitIDs()
                 VStack(spacing: 0) {
-                    List(commits, selection: $model.selectedHistoryCommitID) { commit in
-                        RepositoryHistoryRow(
-                            commit: commit,
-                            isHEAD: commit.id == history.headCommitID,
-                            graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
-                            graphLaneCount: history.graphLaneCount,
-                            currentBranchName: currentBranchName,
-                            canFastForwardBranchRefs: commit.id != history.headCommitID
-                                && reachableCommitIDs.contains(commit.id),
-                            canFastForwardCurrentHere: commit.id != history.headCommitID
-                                && descendantCommitIDs.contains(commit.id),
-                            worktreeURLs: model.localBranchWorktreeURLs,
-                            fastForward: { branch in
-                                Task { await model.fastForwardBranchToCurrent(branch) }
-                            },
-                            fastForwardCurrent: { branch in
-                                Task {
-                                    guard let rootURL = model.repository?.rootURL else { return }
-                                    _ = await model.integrateBranch(
-                                        branch,
-                                        action: .fastForward,
-                                        in: rootURL
-                                    )
+                    ScrollViewReader { scrollProxy in
+                        List(commits, selection: $model.selectedHistoryCommitID) { commit in
+                            RepositoryHistoryRow(
+                                commit: commit,
+                                isHEAD: commit.id == history.headCommitID,
+                                usesWideRow: historyLayout == .stacked,
+                                graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
+                                graphLaneCount: history.graphLaneCount,
+                                currentBranchName: currentBranchName,
+                                canFastForwardBranchRefs: commit.id != history.headCommitID
+                                    && reachableCommitIDs.contains(commit.id),
+                                canFastForwardCurrentHere: commit.id != history.headCommitID
+                                    && descendantCommitIDs.contains(commit.id),
+                                worktreeURLs: model.localBranchWorktreeURLs,
+                                fastForward: { branch in
+                                    Task { await model.fastForwardBranchToCurrent(branch) }
+                                },
+                                fastForwardCurrent: { branch in
+                                    Task {
+                                        guard let rootURL = model.repository?.rootURL else { return }
+                                        _ = await model.integrateBranch(
+                                            branch,
+                                            action: .fastForward,
+                                            in: rootURL
+                                        )
+                                    }
+                                },
+                                switchToBranch: { branch in
+                                    Task { await model.switchBranch(to: branch) }
+                                },
+                                openWorktree: { url in
+                                    Task { await model.openRepository(at: url) }
+                                },
+                                requestWorktreeRemoval: { branch, url in
+                                    Task {
+                                        let trackingRef = await model.trackingRemoteBranch(for: branch)
+                                        pendingWorktreeRemoval = .init(
+                                            branch: branch,
+                                            worktreeURL: url,
+                                            trackingRef: trackingRef
+                                        )
+                                    }
+                                },
+                                requestBranchDeletion: { branch in
+                                    pendingBranchDeletion = branch
+                                },
+                                requestRemoteBranchDeletion: { trackingRef in
+                                    pendingRemoteBranchDeletion = trackingRef
+                                },
+                                requestTrackingReferenceRemoval: { trackingRef in
+                                    pendingTrackingReferenceRemoval = trackingRef
                                 }
-                            },
-                            switchToBranch: { branch in
-                                Task { await model.switchBranch(to: branch) }
-                            },
-                            openWorktree: { url in
-                                Task { await model.openRepository(at: url) }
-                            },
-                            requestWorktreeRemoval: { branch, url in
-                                Task {
-                                    let trackingRef = await model.trackingRemoteBranch(for: branch)
-                                    pendingWorktreeRemoval = .init(
-                                        branch: branch,
-                                        worktreeURL: url,
-                                        trackingRef: trackingRef
-                                    )
-                                }
-                            },
-                            requestBranchDeletion: { branch in
-                                pendingBranchDeletion = branch
-                            },
-                            requestRemoteBranchDeletion: { trackingRef in
-                                pendingRemoteBranchDeletion = trackingRef
-                            },
-                            requestTrackingReferenceRemoval: { trackingRef in
-                                pendingTrackingReferenceRemoval = trackingRef
-                            }
-                        )
-                        .tag(commit.id)
-                        .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+                            )
+                            .tag(commit.id)
+                            .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+                        }
+                        .listStyle(.plain)
+                        .legacyScrollerAware()
+                        .accessibilityLabel("Commit History, \(commits.count) commits")
+                        .focused($historyFocused)
+                        .onChange(of: historyLayout) {
+                            if let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
+                        }
+                        .onChange(of: model.selectedHistoryCommitID) {
+                            if isReviewExpanded, let id = model.selectedHistoryCommitID { scrollProxy.scrollTo(id) }
+                        }
                     }
-                    .listStyle(.plain)
-                .legacyScrollerAware()
-                    .accessibilityLabel("Commit History, \(commits.count) commits")
 
                     if history.commits.count == RepositoryInspector.maximumHistoryCommits {
                         Divider()
@@ -3036,6 +3097,7 @@ private struct RepositoryHistoryRow: View {
     @Environment(\.gallaeTheme) private var theme
     let commit: RepositoryHistory.Commit
     let isHEAD: Bool
+    var usesWideRow = false
     let graphRow: RepositoryHistory.GraphRow?
     let graphLaneCount: Int
     var currentBranchName: String? = nil
@@ -3071,14 +3133,16 @@ private struct RepositoryHistoryRow: View {
                         .truncationMode(.tail)
                 }
 
-                HStack(spacing: 4) {
-                    Text(commit.authorName)
-                    Text("·")
-                    Text(RelativeTimeLabel.string(for: commit.committedAt))
+                if !usesWideRow {
+                    HStack(spacing: 4) {
+                        Text(commit.authorName)
+                        Text("·")
+                        Text(RelativeTimeLabel.string(for: commit.committedAt))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
 
                 if !commit.references.isEmpty {
                     HStack(spacing: 4) {
@@ -3102,6 +3166,18 @@ private struct RepositoryHistoryRow: View {
 
             Spacer(minLength: 8)
 
+            if usesWideRow {
+                Text(commit.authorName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 110, alignment: .leading)
+                Text(RelativeTimeLabel.string(for: commit.committedAt))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 64, alignment: .trailing)
+            }
             Text(commit.id.prefix(8))
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)
@@ -3351,6 +3427,8 @@ private extension RepositoryHistory.Reference.Kind {
 
 private struct RepositoryCommitDetailView: View {
     @Bindable var model: AppModel
+    var compactHeader = false
+    @State private var showsCommitDetails = false
     @Environment(\.gallaeTheme) private var theme
     @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
     @State private var commitPendingReset: RepositoryHistory.Commit?
@@ -3362,7 +3440,8 @@ private struct RepositoryCommitDetailView: View {
         Group {
             if let commit = model.selectedHistoryCommit {
                 VStack(spacing: 0) {
-                    commitHeader(commit)
+                    if compactHeader { compactCommitHeader(commit) }
+                    else { commitHeader(commit) }
                     Divider()
                     RepositoryRevisionChangesView(
                         filesState: model.commitFilesState,
@@ -3388,7 +3467,11 @@ private struct RepositoryCommitDetailView: View {
                 )
             }
         }
-        .onChange(of: model.selectedHistoryCommitID) { showsFullMessage = false }
+        .onChange(of: model.selectedHistoryCommitID) {
+            showsFullMessage = false
+            showsCommitDetails = false
+        }
+        .onChange(of: compactHeader) { showsCommitDetails = false }
         .sheet(item: $mergeCommitPendingRevert) { commit in
             RevertMergeCommitSheet(model: model, commit: commit)
         }
@@ -3400,27 +3483,54 @@ private struct RepositoryCommitDetailView: View {
         }
     }
 
+    private func compactCommitHeader(_ commit: RepositoryHistory.Commit) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 12) {
+                Text(commit.subject)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(commit.subject)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                Button("Details…", systemImage: "info.circle") { showsCommitDetails = true }
+                    .controlSize(.small)
+                    .help("Full message, signature, and commit actions")
+                    .popover(isPresented: $showsCommitDetails) {
+                        ScrollView { commitHeader(commit) }
+                            .frame(width: 640, height: 320)
+                    }
+            }
+            HStack(spacing: 12) {
+                commitAuthor(commit)
+                Spacer(minLength: 0)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(commit.id.prefix(8))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .help(commit.id)
+                        .textSelection(.enabled)
+                    commitSignature
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            if !commit.body.isEmpty {
+                Text(commit.body.split(whereSeparator: \.isWhitespace).joined(separator: " "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
     private func commitHeader(_ commit: RepositoryHistory.Commit) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 12) {
-                HStack(spacing: 9) {
-                    RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(commit.authorName)
-                            .font(.callout.weight(.medium))
-                            .lineLimit(1)
-                        Text("\(commit.authorEmail) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    "Author \(commit.authorName), \(commit.authorEmail), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
-                )
+                commitAuthor(commit)
 
                 Spacer(minLength: 12)
 
@@ -3525,18 +3635,45 @@ private struct RepositoryCommitDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if let signatureBadge {
-                    Label(signatureBadge.text, systemImage: signatureBadge.systemImage)
-                        .font(.caption)
-                        .foregroundStyle(signatureBadge.color)
-                        .help(signatureBadge.help)
-                        .accessibilityLabel("Commit signature: \(signatureBadge.text)")
-                }
+                commitSignature
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private func commitAuthor(_ commit: RepositoryHistory.Commit) -> some View {
+        HStack(spacing: 9) {
+            RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(commit.authorName)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text("\(commit.authorEmail) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "Author \(commit.authorName), \(commit.authorEmail), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))"
+        )
+        .help("Author \(commit.authorName), \(commit.authorEmail)")
+    }
+
+    @ViewBuilder
+    private var commitSignature: some View {
+        if let signatureBadge {
+            Label(signatureBadge.text, systemImage: signatureBadge.systemImage)
+                .font(.caption)
+                .foregroundStyle(signatureBadge.color)
+                .help("\(signatureBadge.text)\n\(signatureBadge.help)")
+                .accessibilityLabel("Commit signature: \(signatureBadge.text)")
+        }
     }
 
     private var signatureBadge: (text: String, systemImage: String, color: Color, help: String)? {

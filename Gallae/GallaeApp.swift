@@ -353,6 +353,26 @@ enum GallaeAppearanceSettings {
     static let translucentChromeKey = "translucentSidebarAndToolbar"
     static let compactRowsKey = "compactRows"
     static let narrowNavigatorKey = "narrowNavigatorStyle"
+    static let historyLayoutKey = "historyLayout"
+
+    enum HistoryLayout: String, CaseIterable, Identifiable {
+        case sideBySide
+        case stacked
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .sideBySide: "Side by Side"
+            case .stacked: "Top and Bottom"
+            }
+        }
+        var summary: String {
+            switch self {
+            case .sideBySide: "History on the left, changes on the right. The original layout."
+            case .stacked: "History above changes. Expand the review area to focus on the diff."
+            }
+        }
+    }
 
     /// How the folded Navigator is reached when the window is narrower than the fold width. One case, one view;
     /// every case must open from the toolbar button, close on selection and Escape, and never resize the window.
@@ -421,6 +441,7 @@ private struct GallaeSettingsView: View {
     @AppStorage(GallaeAppearanceSettings.translucentChromeKey) private var translucentChrome = true
     @AppStorage(GallaeAppearanceSettings.compactRowsKey) private var compactRows = false
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigator = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
+    @AppStorage(GallaeAppearanceSettings.historyLayoutKey) private var historyLayout = GallaeAppearanceSettings.HistoryLayout.stacked
     @State private var installedURL: URL?
     @State private var errorMessage: String?
     @State private var signingState: CommitSigningState = .loading
@@ -553,6 +574,18 @@ private struct GallaeSettingsView: View {
                 Toggle("Compact Rows", isOn: $compactRows)
                     .accessibilityHint("Shorter rows in Changes, History, Stashes, and Reflog")
                 Text("Shorter rows in Changes, History, Stashes, and Reflog.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("History Layout", selection: $historyLayout) {
+                    ForEach(GallaeAppearanceSettings.HistoryLayout.allCases) { layout in
+                        Text(layout.title).tag(layout)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text(historyLayout.summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
