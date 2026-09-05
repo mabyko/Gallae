@@ -993,7 +993,8 @@ private struct RepositoryDiffSectionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // A section can contain thousands of rows; the outer lazy stack sees it as a single child.
+        LazyVStack(alignment: .leading, spacing: 0) {
             if showsHeader {
                 Label(section.scope.label, systemImage: section.scope.systemImage)
                     .font(.caption.weight(.semibold))
