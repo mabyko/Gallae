@@ -659,6 +659,7 @@ private struct GallaeSettingsView: View {
             Section("External Applications") {
                 TerminalApplicationPicker()
                 EditorApplicationPicker()
+                MergeToolPicker()
             }
 
             Section("Author Avatars") {

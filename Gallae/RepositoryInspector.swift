@@ -1580,6 +1580,19 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
+    func openMergeTool(
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary,
+        tool: MergeTool,
+        executableURL: URL? = nil
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        // Keep exported versions alive until the external editor has closed them.
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.openMergeToolSynchronously(for: change, in: repository, tool: tool, executableURL: executableURL)
+        }.value
+    }
+
     func markConflictResolved(
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
@@ -1784,6 +1797,89 @@ struct RepositoryInspector: Sendable {
         }
         guard result.status == 0 else {
             throw RepositoryConflictResolutionError.gitFailed(result.standardError)
+        }
+        return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func openMergeToolSynchronously(
+        for change: RepositorySummary.Change,
+        in repository: RepositorySummary,
+        tool: MergeTool,
+        executableURL: URL?
+    ) throws -> RepositorySummary {
+        let current = try inspectSynchronously(at: repository.rootURL)
+        guard current.changes.contains(where: { $0.path == change.path && $0.isConflicted }) else {
+            throw RepositoryConflictResolutionError.unavailable
+        }
+        let merged = repository.rootURL.appending(path: change.path)
+        let root = repository.rootURL.resolvingSymlinksInPath().path + "/"
+        let attributes = try? FileManager.default.attributesOfItem(atPath: merged.path)
+        guard merged.resolvingSymlinksInPath().path.hasPrefix(root),
+              attributes?[.type] as? FileAttributeType == .typeRegular else {
+            throw RepositoryConflictResolutionError.gitFailed("This conflict has no regular working file. Use Ours, Use Theirs, or resolve it in a terminal.")
+        }
+        let entries = try runGit(["-C", repository.rootURL.path, "ls-files", "--stage", "-z", "--", literalPathspec(change.path)])
+        guard entries.status == 0 else { throw RepositoryConflictResolutionError.gitFailed(entries.standardError) }
+        let records = entries.standardOutput.split(separator: 0)
+        let objectIDs = conflictStageObjectIDs(from: entries.standardOutput)
+        guard objectIDs[2] != nil, objectIDs[3] != nil,
+              records.allSatisfy({ $0.starts(with: Data("100644 ".utf8)) || $0.starts(with: Data("100755 ".utf8)) }) else {
+            throw RepositoryConflictResolutionError.gitFailed("External merging supports regular files present on both sides. Resolve deletions, symbolic links, and submodules with the file actions or in a terminal.")
+        }
+
+        if tool == .git {
+            // Do not let Git guess a terminal tool in an app with no interactive stdin.
+            var name = ""
+            for key in ["merge.guitool", "merge.tool"] {
+                let config = try runGit(["-C", repository.rootURL.path, "config", "--get", key])
+                guard config.status == 0 || config.status == 1 else {
+                    throw RepositoryConflictResolutionError.gitFailed(config.standardError)
+                }
+                name = line(from: config.standardOutput)
+                if !name.isEmpty { break }
+            }
+            guard !name.isEmpty else {
+                throw RepositoryConflictResolutionError.gitFailed("No Git merge tool is configured. Choose VS Code or Sublime Merge in Settings → General, or configure merge.guitool / merge.tool in Git.")
+            }
+            let result = try runGit([
+                "-C", repository.rootURL.path, "mergetool", "--no-prompt", "--tool=\(name)", "--", literalPathspec(change.path)
+            ], standardInput: Data())
+            guard result.status == 0 else {
+                throw RepositoryConflictResolutionError.gitFailed("The Git merge tool did not complete. If it requires terminal input, run it in a terminal.\n\n\(result.standardError)")
+            }
+        } else {
+            guard let executableURL, executableURL.isFileURL,
+                  FileManager.default.isExecutableFile(atPath: executableURL.path) else {
+                throw RepositoryConflictResolutionError.gitFailed("\(tool.title) is not installed. Choose another Merge Tool in Settings → General.")
+            }
+            let temporary = FileManager.default.temporaryDirectory.appending(path: "Gallae-Merge-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true,
+                                                    attributes: [.posixPermissions: 0o700])
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            var versions: [URL] = []
+            for (stage, label) in [(1, "Base"), (2, "Ours"), (3, "Theirs")] {
+                let directory = temporary.appending(path: label)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+                let url = directory.appending(path: merged.lastPathComponent)
+                var data = Data()
+                if let objectID = objectIDs[stage] {
+                    let result = try runGit(["-C", repository.rootURL.path, "cat-file", "--filters", "--path=\(change.path)", objectID])
+                    guard result.status == 0 else { throw RepositoryConflictResolutionError.gitFailed(result.standardError) }
+                    data = result.standardOutput
+                }
+                guard !data.contains(0), String(data: data, encoding: .utf8) != nil else {
+                    throw RepositoryConflictResolutionError.gitFailed("This merge tool integration supports UTF-8 text files. Resolve this file using the file actions or in a terminal.")
+                }
+                try data.write(to: url)
+                versions.append(url)
+            }
+            let result = try runProcess(
+                tool.arguments(base: versions[0], ours: versions[1], theirs: versions[2], merged: merged),
+                executableURL: executableURL, currentDirectoryURL: repository.rootURL, standardInput: Data()
+            )
+            guard result.status == 0 else {
+                throw RepositoryConflictResolutionError.gitFailed("\(tool.title) closed without reporting success. Review the file before marking it resolved.\n\n\(result.standardError)")
+            }
         }
         return try inspectSynchronously(at: repository.rootURL)
     }
@@ -2834,6 +2930,9 @@ struct RepositoryInspector: Sendable {
         else {
             throw RepositoryBranchError.mergeUnavailable
         }
+        guard currentRepository.operation == nil else {
+            throw RepositoryBranchError.mergeUnavailable
+        }
         guard currentRepository.changes.isEmpty else {
             throw RepositoryBranchError.mergeCommitRequiresCleanRepository
         }
@@ -2864,6 +2963,12 @@ struct RepositoryInspector: Sendable {
             "merge", "--quiet", "--no-ff", "--no-edit", "--", branch
         ])
         guard result.status == 0 else {
+            // A normal conflict is an unfinished merge, not a failed operation to roll back.
+            if let conflicted = try? inspectSynchronously(at: repository.rootURL),
+               conflicted.operation?.kind == .merge,
+               conflicted.changes.contains(where: \.isConflicted) {
+                return conflicted
+            }
             let abort = try? runGit([
                 "-C", repository.rootURL.path,
                 "merge", "--abort"
@@ -4264,6 +4369,19 @@ struct RepositoryInspector: Sendable {
         cancellation: GitProcessCancellation? = nil,
         additionalEnvironment: [String: String] = [:]
     ) throws -> GitResult {
+        try runProcess(arguments, executableURL: gitURL, maximumOutputBytes: maximumOutputBytes,
+                       standardInput: standardInput, cancellation: cancellation, additionalEnvironment: additionalEnvironment)
+    }
+
+    private static func runProcess(
+        _ arguments: [String],
+        executableURL: URL,
+        currentDirectoryURL: URL? = nil,
+        maximumOutputBytes: Int? = nil,
+        standardInput: Data? = nil,
+        cancellation: GitProcessCancellation? = nil,
+        additionalEnvironment: [String: String] = [:]
+    ) throws -> GitResult {
         let process = Process()
         let captureDirectory = FileManager.default.temporaryDirectory
             .appending(path: "Gallae-Git-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -4291,7 +4409,8 @@ struct RepositoryInspector: Sendable {
             try? standardInputHandle?.close()
         }
 
-        process.executableURL = gitURL
+        process.executableURL = executableURL
+        process.currentDirectoryURL = currentDirectoryURL
         process.arguments = arguments
         process.standardInput = standardInputHandle
         process.standardOutput = standardOutput
@@ -4307,7 +4426,8 @@ struct RepositoryInspector: Sendable {
         do {
             try process.run()
         } catch {
-            throw RepositoryInspectionError.gitUnavailable
+            if executableURL == gitURL { throw RepositoryInspectionError.gitUnavailable }
+            throw error
         }
 
         cancellation?.register(process)

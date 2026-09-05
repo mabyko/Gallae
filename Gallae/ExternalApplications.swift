@@ -78,6 +78,63 @@ enum EditorApplication: String, CaseIterable, Identifiable {
     }
 }
 
+enum MergeTool: String, CaseIterable, Identifiable, Sendable {
+    case git, vscode, sublimeMerge
+
+    static let storageKey = "mergeTool"
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .git: "Use Git Configuration"
+        case .vscode: "VS Code"
+        case .sublimeMerge: "Sublime Merge"
+        }
+    }
+
+    @MainActor var executableURL: URL? {
+        let identifier: String
+        let binary: String
+        switch self {
+        case .git: return nil
+        case .vscode:
+            identifier = "com.microsoft.VSCode"
+            binary = "Contents/Resources/app/bin/code"
+        case .sublimeMerge:
+            identifier = "com.sublimemerge"
+            binary = "Contents/SharedSupport/bin/smerge"
+        }
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) else { return nil }
+        let url = app.appending(path: binary)
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+    }
+
+    func arguments(base: URL, ours: URL, theirs: URL, merged: URL) -> [String] {
+        switch self {
+        case .git: []
+        case .vscode: ["--wait", "--merge", theirs.path, ours.path, base.path, merged.path]
+        case .sublimeMerge: ["mergetool", base.path, ours.path, theirs.path, "-o", merged.path]
+        }
+    }
+}
+
+struct MergeToolPicker: View {
+    @AppStorage(MergeTool.storageKey) private var tool = MergeTool.git
+
+    var body: some View {
+        Picker("Merge Tool", selection: $tool) {
+            ForEach(MergeTool.allCases) { item in
+                let available = item == .git || item.executableURL != nil
+                Text(available ? item.title : "\(item.title) (Not Installed)")
+                    .tag(item).disabled(!available)
+            }
+        }
+        Text(tool == .git
+             ? "Uses merge.guitool or merge.tool from Git. The configured tool may stage resolved files. Tools requiring terminal input must be run in a terminal."
+             : "Close the merge editor when finished, then review and Mark Resolved in Gallae. Opening the tool does not stage or commit the file.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+}
+
 enum FolderOpening {
     enum Failure: LocalizedError {
         case notDirectory(URL)

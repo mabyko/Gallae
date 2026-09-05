@@ -881,7 +881,7 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
-    func testAbortsConflictingMergeCommitAndRestoresCurrentBranch() async throws {
+    func testConflictingMergeCommitPreservesConflictsUntilAbort() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
 
@@ -905,14 +905,11 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let inspector = RepositoryInspector()
         let repository = try await inspector.inspect(at: repositoryURL)
-        do {
-            _ = try await inspector.mergeBranchCreatingCommit("feature", in: repository)
-            XCTFail("A conflicting merge should be aborted")
-        } catch let error as RepositoryBranchError {
-            guard case .mergeCommitFailed = error else {
-                return XCTFail("Expected an aborted merge failure, got \(error)")
-            }
-        }
+        let conflicted = try await inspector.mergeBranchCreatingCommit("feature", in: repository)
+        XCTAssertEqual(conflicted.operation?.kind, .merge)
+        XCTAssertEqual(conflicted.changes.filter(\.isConflicted).count, 1)
+        XCTAssertTrue(try String(contentsOf: repositoryURL.appending(path: "shared.txt"), encoding: .utf8).contains("<<<<<<<"))
+        _ = try await inspector.abortOperation(in: conflicted)
 
         let restoredRepository = try await inspector.inspect(at: repositoryURL)
         let restoredHistory = try await inspector.history(in: restoredRepository)
@@ -933,6 +930,95 @@ final class RepositoryInspectorTests: XCTestCase {
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             featureID
         )
+    }
+
+    func testMergeToolsPreserveIndexAndUseLiteralConflictPaths() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: repositoryURL) }
+        let path = "한글 '$(touch injected)' [x].txt"
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: path, in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        try runGit(["-C", repositoryURL.path, "switch", "-c", "feature"])
+        try write("theirs\n", to: path, in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Feature")
+        try runGit(["-C", repositoryURL.path, "switch", "main"])
+        try write("ours\n", to: path, in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        let inspector = RepositoryInspector()
+        let original = try await inspector.inspect(at: repositoryURL)
+        let conflicted = try await inspector.mergeBranchCreatingCommit("feature", in: original)
+        let change = try XCTUnwrap(conflicted.changes.first(where: \.isConflicted))
+        let index = try gitOutput(["-C", repositoryURL.path, "ls-files", "-u"])
+        let scriptURL = repositoryURL.appending(path: "fake-merge-tool")
+        try write("""
+        #!/bin/sh
+        set -eu
+        if [ "$1" = "--wait" ]; then
+          test "$2" = "--merge"
+          theirs="$3"; ours="$4"; base="$5"; merged="$6"
+        else
+          test "$1" = "mergetool"
+          base="$2"; ours="$3"; theirs="$4"
+          test "$5" = "-o"
+          merged="$6"
+        fi
+        test "$(cat "$base")" = base
+        test "$(cat "$ours")" = ours
+        test "$(cat "$theirs")" = theirs
+        printf '%s' "$base" > export-path
+        printf 'resolved\\n' > "$merged"
+        """, to: "fake-merge-tool", in: repositoryURL)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+        for tool in [MergeTool.vscode, .sublimeMerge] {
+            let updated = try await inspector.openMergeTool(for: change, in: conflicted, tool: tool, executableURL: scriptURL)
+            XCTAssertTrue(updated.changes.contains(where: { $0.id == change.id && $0.isConflicted }))
+            XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "ls-files", "-u"]), index)
+            XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: path), encoding: .utf8), "resolved\n")
+            let exported = try String(contentsOf: repositoryURL.appending(path: "export-path"), encoding: .utf8)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: exported))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: repositoryURL.appending(path: "injected").path))
+        }
+        // A nonzero tool exit must not stage or roll back edits made in the editor.
+        try write("#!/bin/sh\nprintf 'unfinished\\n' > \"$6\"\nexit 1\n", to: "fake-merge-tool", in: repositoryURL)
+        do {
+            _ = try await inspector.openMergeTool(for: change, in: conflicted, tool: .vscode, executableURL: scriptURL)
+            XCTFail("Tool failure should be reported")
+        } catch { }
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "ls-files", "-u"]), index)
+        XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: path), encoding: .utf8), "unfinished\n")
+
+        // Refuse a working-file symlink before sending any paths to an external tool.
+        let mergedURL = repositoryURL.appending(path: path)
+        try FileManager.default.removeItem(at: mergedURL)
+        try write("do not change\n", to: "protected.txt", in: repositoryURL)
+        try FileManager.default.createSymbolicLink(at: mergedURL, withDestinationURL: repositoryURL.appending(path: "protected.txt"))
+        do {
+            _ = try await inspector.openMergeTool(for: change, in: conflicted, tool: .vscode, executableURL: scriptURL)
+            XCTFail("Symlink targets must not be opened")
+        } catch { }
+        XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: "protected.txt"), encoding: .utf8), "do not change\n")
+        try FileManager.default.removeItem(at: mergedURL)
+        try write("unfinished\n", to: path, in: repositoryURL)
+        for key in ["merge.guitool", "merge.tool"] {
+            try runGit(["-C", repositoryURL.path, "config", key, ""])
+        }
+        do {
+            _ = try await inspector.openMergeTool(for: change, in: conflicted, tool: .git)
+            XCTFail("Do not guess a merge tool when none is configured")
+        } catch { }
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "ls-files", "-u"]), index)
+
+        // Existing Git configuration may stage its result, but never completes the merge itself.
+        try runGit(["-C", repositoryURL.path, "config", "merge.guitool", "gallae-test"])
+        try runGit(["-C", repositoryURL.path, "config", "mergetool.gallae-test.cmd", "printf 'git resolved\\n' > \"$MERGED\""])
+        try runGit(["-C", repositoryURL.path, "config", "mergetool.gallae-test.trustExitCode", "true"])
+        let staged = try await inspector.openMergeTool(for: change, in: conflicted, tool: .git)
+        XCTAssertFalse(staged.changes.contains(where: \.isConflicted))
+        XCTAssertEqual(staged.operation?.kind, .merge)
+        let completed = try await inspector.continueOperation(in: staged)
+        XCTAssertNil(completed.operation)
+        XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-list", "--parents", "-n", "1", "HEAD"]).split(separator: " ").count, 3)
     }
 
     func testRebasesCurrentBranchOntoAnotherLocalBranch() async throws {

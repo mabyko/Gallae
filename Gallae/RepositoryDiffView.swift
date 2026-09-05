@@ -389,6 +389,8 @@ struct RepositoryDiffView: View {
     let discard: (RepositorySummary.Change.ID) -> Void
     let resolveConflict: (RepositoryConflictSide) -> Void
     let markConflictResolved: () -> Void
+    let openMergeTool: () -> Void
+    let activeMergeTool: String?
     let updateHunk: (RepositoryDiff.Hunk) -> Void
     let discardHunk: (RepositoryDiff.Hunk) -> Void
     let retry: () -> Void
@@ -552,6 +554,9 @@ struct RepositoryDiffView: View {
                     }
 
                     if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                        Button("Open in Merge Tool", systemImage: "arrow.up.forward.app", action: openMergeTool)
+                            .disabled(isBusy)
+                            .help("Open this conflict using the Merge Tool selected in Settings → General")
                         Button("Mark Resolved…") {
                             pendingConflictResolution = .workingTree
                         }
@@ -610,6 +615,16 @@ struct RepositoryDiffView: View {
             Divider()
 
             if diff.sections.allSatisfy(\.scope.isConflictVersion) {
+                if let activeMergeTool {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting for \(activeMergeTool). Close its merge editor when finished.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(10)
+                    .accessibilityElement(children: .combine)
+                }
                 RepositoryConflictComparisonView(
                     sections: diff.sections,
                     loadExpanded: loadExpanded

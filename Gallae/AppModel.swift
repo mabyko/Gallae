@@ -324,6 +324,7 @@ final class AppModel {
     var stashPatchState: RepositoryCommitPatchLoadState = .noSelection
     var isLoading = false
     var isWritingRepository = false
+    var activeMergeTool: String?
     var remoteOperation: RepositoryRemoteOperation?
     /// Short result of the last remote operation, shown briefly in the activity capsule.
     var remoteOperationResult: String?
@@ -2131,6 +2132,33 @@ final class AppModel {
         } catch {
             guard generation == inspectionGeneration else { return }
             present(error, title: "Couldn’t Discard Changes")
+        }
+    }
+
+    func openSelectedConflictInMergeTool() async {
+        guard !isLoading, let repository, let change = selectedChange, change.isConflicted else { return }
+        let tool = MergeTool(rawValue: UserDefaults.standard.string(forKey: MergeTool.storageKey) ?? "") ?? .git
+        let executableURL = tool.executableURL
+        inspectionGeneration += 1
+        let generation = inspectionGeneration
+        isLoading = true
+        isWritingRepository = true
+        activeMergeTool = tool.title
+        defer {
+            activeMergeTool = nil
+            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
+        }
+        do {
+            let updated = try await inspector.openMergeTool(for: change, in: repository, tool: tool, executableURL: executableURL)
+            guard generation == inspectionGeneration else { return }
+            apply(updated, showWorkspaceOnSuccess: false)
+        } catch {
+            guard generation == inspectionGeneration else { return }
+            if let updated = try? await inspector.inspect(at: repository.rootURL) {
+                guard generation == inspectionGeneration else { return }
+                apply(updated, showWorkspaceOnSuccess: false)
+            }
+            present(error, title: "Couldn’t Complete Merge Tool")
         }
     }
 

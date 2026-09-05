@@ -77,6 +77,13 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 - History·Stashes의 저장된 변경 칸이 560pt보다 좁으면 파일 목록을 경로 선택 메뉴로 바꾼다. 넓어지면 같은 선택으로 목록을 복원한다.
 - 좌우 배치와 Details의 긴 커밋 본문은 Show Full Message로 펼쳐 스크롤하고 Show Less로 접는다. 다른 커밋을 고르면 다시 접힌다.
 
+### 충돌과 외부 병합 도구
+
+- 현재 branch의 Create Merge Commit은 충돌이 나면 Merge 상태를 유지하고 Changes의 충돌 파일을 보여 준다. 충돌 외의 실행 실패는 기존 자동 중단·복원 검사를 유지한다. 해결 후 Continue로 완료하거나 Abort로 중단한다. Pull은 fast-forward 전용이다.
+- Settings → General → Merge Tool은 Use Git Configuration·VS Code·Sublime Merge를 제공한다. Zed는 Open in 에디터로만 제공한다. Git 설정은 merge.guitool, merge.tool 순서로 선택하며 추측으로 다른 도구를 실행하지 않는다. Git 설정을 바꾸지 않으며 터미널 입력이 필요한 도구는 터미널에서 실행하도록 안내한다.
+- 충돌 파일의 Open in Merge Tool은 양쪽에 있는 일반 파일을 대상으로 한다. 직접 연동은 UTF-8 텍스트의 Base·Ours·Theirs를 임시로 내보내고 결과는 실제 working tree 파일에 저장한다. 앱에 포함된 CLI를 인자 배열로 실행하고 편집 화면을 닫을 때까지 기다린다. 임시 버전은 실행 종료 후 정리한다.
+- VS Code·Sublime Merge 직접 실행은 index·HEAD를 바꾸지 않으며 사용자가 결과를 검토하고 Mark Resolved를 실행한다. Git 설정 사용은 git mergetool의 스테이징 동작을 따르고 종료 후 실제 상태를 다시 읽는다. 도구 실행만으로 병합을 Continue하지 않는다. 삭제·심볼릭 링크·서브모듈 등은 기존 파일 해결 동작이나 터미널을 안내한다.
+
 ### 시각 언어와 조작
 
 - branch 우클릭과 상단 작업 위치 메뉴의 Open in에서 Finder 또는 기본 터미널로 폴더를 열고, Copy Path로 경로를 복사한다. 현재 branch는 현재 폴더, 다른 Worktree에서 체크아웃한 branch는 해당 폴더를 대상으로 하며, 체크아웃된 폴더가 없는 branch에서는 비활성화한다. checkout은 바뀌지 않는다. Settings → General → Terminal Application에서 설치된 Terminal·Ghostty·Warp·iTerm2·cmux·Kaku·WezTerm·kitty·Alacritty·Rio 중 선택하며 기본값은 Terminal이다. Other…로 다른 앱을 선택할 수 있고, 사용자 지정 앱은 폴더 열기를 지원해야 한다. 선택은 재실행 후에도 유지한다. 앱이 사라졌거나 실행에 실패하면 오류를 표시한다.

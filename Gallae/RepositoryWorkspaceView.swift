@@ -149,7 +149,7 @@ struct RepositoryWorkspaceView: View {
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
 
-    var body: some View {
+    private var workspaceLayout: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             navigatorColumn
         } detail: {
@@ -224,6 +224,10 @@ struct RepositoryWorkspaceView: View {
                 }
             }
         }
+    }
+
+    var body: some View {
+        workspaceLayout
         .onChange(of: model.repository?.rootURL, initial: true) {
             commitSubject = ""
             commitBody = ""
@@ -232,7 +236,10 @@ struct RepositoryWorkspaceView: View {
             isConfirmingOperationAbort = false
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
             // AppModel resets the scope for an ordinary open and retains it for Worktree navigation.
-            if model.repository?.changes.isEmpty == true, workspaceSection == .changes {
+            if let conflict = model.repository?.changes.first(where: \.isConflicted) {
+                show(.changes)
+                model.selectedChangeID = conflict.id
+            } else if model.repository?.changes.isEmpty == true, workspaceSection == .changes {
                 workspaceSection = .history
             }
         }
@@ -242,7 +249,12 @@ struct RepositoryWorkspaceView: View {
         .onChange(of: scope, initial: true) { _, scope in
             isNavigatorPanelPresented = false
         }
-        .onChange(of: model.repository?.changes) { _, changes in
+        .onChange(of: model.repository?.changes) { previous, changes in
+            if previous?.contains(where: \.isConflicted) != true,
+               let conflict = changes?.first(where: \.isConflicted) {
+                show(.changes)
+                model.selectedChangeID = conflict.id
+            }
             let availableIDs = Set((changes ?? []).map(\.id))
             selectedChangeIDs.formIntersection(availableIDs)
             if
@@ -747,6 +759,8 @@ struct RepositoryWorkspaceView: View {
                         markConflictResolved: {
                             Task { await model.markSelectedConflictResolved() }
                         },
+                        openMergeTool: { Task { await model.openSelectedConflictInMergeTool() } },
+                        activeMergeTool: model.activeMergeTool,
                         updateHunk: { hunk in
                             Task { await model.updateSelectedHunk(hunk) }
                         },
