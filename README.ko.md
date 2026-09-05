@@ -8,18 +8,11 @@
 
 > **상태: 개발 중.** 아직 배포판이 없다. 직접 빌드해 쓸 수 있다.
 
-![커밋 그래프 아래에 Split diff를 배치하고 사이드바에 Worktree를 표시한 Gallae History](docs/screenshots/history-top-and-bottom.png)
+| 상하 배치 · Top and Bottom (기본) | 좌우 배치 · Side by Side |
+| :---: | :---: |
+| [![커밋 그래프 아래에 Split diff를 배치한 History](docs/screenshots/history-top-and-bottom.png)](docs/screenshots/history-top-and-bottom.png) | [![커밋 목록 오른쪽에 커밋 상세와 Unified diff를 배치한 History](docs/screenshots/history-side-by-side.png)](docs/screenshots/history-side-by-side.png) |
 
-기본 **Top and Bottom** 배치. 커밋 목록 아래에서 Split diff를 검토한다.
-
-<details>
-<summary>Side by Side 배치 보기</summary>
-
-![커밋 목록 오른쪽에 커밋 상세와 Unified diff를 배치한 Gallae History](docs/screenshots/history-side-by-side.png)
-
-같은 History를 **Side by Side**로 배치하고 Unified diff를 표시한 화면. History 배치와 diff 방식은 각각 선택할 수 있다.
-
-</details>
+History 배치와 diff 방식은 각각 선택할 수 있다. 이미지를 누르면 원본 크기로 볼 수 있다.
 
 ## 무엇을 할 수 있나
 

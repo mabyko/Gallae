@@ -8,18 +8,11 @@ A free, open-source Git GUI for macOS. Inspect local repositories, understand ch
 
 > **Status: in development.** No public release is available yet. You can build the app from source.
 
-![Gallae History with the commit graph above a split diff and Worktrees in the sidebar](docs/screenshots/history-top-and-bottom.png)
+| Top and Bottom (default) | Side by Side |
+| :---: | :---: |
+| [![History with the commit graph above a split diff](docs/screenshots/history-top-and-bottom.png)](docs/screenshots/history-top-and-bottom.png) | [![History with the commit list beside commit details and a unified diff](docs/screenshots/history-side-by-side.png)](docs/screenshots/history-side-by-side.png) |
 
-History in the default **Top and Bottom** layout, with a split diff below the commit list.
-
-<details>
-<summary>View the Side by Side layout</summary>
-
-![Gallae History with the commit list beside commit details and a unified diff](docs/screenshots/history-side-by-side.png)
-
-The same history in **Side by Side**, with a unified diff. History layout and diff layout can be chosen independently.
-
-</details>
+History layout and diff layout can be chosen independently. Click either screenshot to view it at full size.
 
 ## Features
 
