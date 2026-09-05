@@ -2452,6 +2452,89 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertFalse(lines.contains { $0.text.contains("other after") })
     }
 
+    func testDiffPresentationUsesVisibleContentWithoutChangingPreference() {
+        let addition = RepositoryDiff.Line(id: 0, kind: .addition, oldLineNumber: nil, newLineNumber: 1, text: "+new")
+        let context = RepositoryDiff.Line(id: 1, kind: .context, oldLineNumber: 1, newLineNumber: 1, text: " old")
+        let preferred = RepositoryDiffLayout.split
+        let newFile = RepositoryDiffPresentation(content: .text([addition]), preferred: preferred)
+        XCTAssertFalse(newFile.canSplit)
+        XCTAssertEqual(newFile.layout, .unified)
+        let edit = RepositoryDiffPresentation(content: .text([context, addition]), preferred: preferred)
+        XCTAssertTrue(edit.canSplit)
+        XCTAssertEqual(edit.layout, .split)
+        XCTAssertEqual(RepositoryDiffPresentation(content: .binary, preferred: preferred).layout, .unified)
+        XCTAssertFalse(RepositoryDiffPresentation(content: nil, preferred: preferred).canSplit)
+        XCTAssertEqual(preferred, .split)
+    }
+
+    @MainActor
+    func testRefreshPreservesSavedFileSelectionAndChangingRevisionResetsIt() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("first\n", to: "a.txt", in: root)
+        try write("second\n", to: "b.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try write("changed\n", to: "a.txt", in: root)
+        try commitAll(in: root, message: "Edit")
+        try write("stashed a\n", to: "a.txt", in: root)
+        try write("stashed b\n", to: "b.txt", in: root)
+        try runGit(["-C", root.path, "stash", "push", "-m", "Saved"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: root)
+        await model.loadHistory()
+        guard case .loaded(let history) = model.historyState else { return XCTFail("Expected history") }
+        let initial = try XCTUnwrap(history.commits.last)
+        model.selectedHistoryCommitID = initial.id
+        await model.loadSelectedCommitFiles()
+        model.selectedHistoryFileID = "b.txt"
+        await model.loadSelectedCommitPatch()
+        let originalPatch = model.commitPatchState
+        await model.loadStashes()
+        await model.loadSelectedStashFiles()
+        model.selectedStashFileID = "b.txt"
+        await model.loadSelectedStashPatch()
+        let stashID = model.selectedStashID
+        let originalStashPatch = model.stashPatchState
+
+        await model.refreshRepository()
+        XCTAssertEqual(model.commitPatchState, originalPatch)
+        XCTAssertEqual(model.stashPatchState, originalStashPatch)
+        await model.loadHistory()
+        await model.loadSelectedCommitFiles()
+        await model.loadSelectedCommitPatch()
+        await model.loadStashes()
+        await model.loadSelectedStashFiles()
+        await model.loadSelectedStashPatch()
+        XCTAssertEqual(model.selectedHistoryCommitID, initial.id)
+        XCTAssertEqual(model.selectedHistoryFileID, "b.txt")
+        XCTAssertEqual(model.commitPatchState, originalPatch)
+        XCTAssertEqual(model.selectedStashID, stashID)
+        XCTAssertEqual(model.selectedStashFileID, "b.txt")
+        XCTAssertEqual(model.stashPatchState, originalStashPatch)
+
+        // A vanished selection falls back to an existing file.
+        model.selectedHistoryFileID = "missing.txt"
+        await model.loadSelectedCommitFiles()
+        XCTAssertEqual(model.selectedHistoryFileID, "a.txt")
+        model.selectedHistoryCommitID = history.commits.first?.id
+        XCTAssertNil(model.selectedHistoryFileID)
+        XCTAssertEqual(model.commitPatchState, .noSelection)
+        await model.loadSelectedCommitFiles()
+        XCTAssertEqual(model.selectedHistoryFileID, "a.txt")
+
+        // A deleted stash cannot keep the previous file or patch on screen.
+        try runGit(["-C", root.path, "stash", "drop"])
+        await model.refreshRepository()
+        await model.loadStashes()
+        XCTAssertNil(model.selectedStashID)
+        XCTAssertNil(model.selectedStashFileID)
+        XCTAssertEqual(model.stashPatchState, .noSelection)
+    }
+
     func testResizableHSplitLeadingPaneYieldsThenBothShrink() {
         func width(_ preferred: CGFloat, total: CGFloat) -> CGFloat {
             ResizableHSplitLayout.leadingWidth(

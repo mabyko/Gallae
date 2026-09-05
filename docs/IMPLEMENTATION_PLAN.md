@@ -1,7 +1,15 @@
 # Gallae 구현 계획
 
 > 상태: 1 · Open & Inspect 완료 · 2 · Commit 완료 · 3 · History 완료 · 4 · Sync 완료 · 5 · Recovery 완료 · 6 · Advanced 완료 · 7 · Workspace 구조 진행 중 · 2026-09-03
-> 현재 범위: 시안 8 구현 끝. sem 요약은 뺐다(7D-3·7D-4). 다음 슬라이스는 미정
+> 현재 범위: 시안 8 후속 — 새로고침 선택 보존, diff 표시 판단 통합, 좁은 History·접근성 개선. sem 요약은 뺐다(7D-3·7D-4).
+
+## 시안 8 후속 개선
+
+- 같은 Repository의 새로고침은 History·Stashes의 revision·파일 선택과 로드된 내용을 유지한다. 다른 revision 선택은 파일 상태를 초기화하며, 사라진 선택은 유효한 첫 항목으로 대체한다.
+- `RepositoryDiffPresentation`이 현재 구획과 저장된 취향에서 실제 레이아웃을 결정한다. Changes·History·Stashes의 선택기와 본문이 이를 함께 사용한다.
+- 저장된 변경 칸이 560pt보다 좁으면 파일 목록 대신 경로 선택 메뉴를 제공한다. 넓어지면 목록이 돌아오며 선택을 유지한다.
+- 긴 커밋 본문은 펼쳐서 스크롤할 수 있고, 커밋 전환 시 접힌다. 분할선은 포커스·좌우 화살표·접근성 증감 동작을 제공한다.
+- 기존 실제 Git 테스트에 새로고침 선택 보존·revision 전환·사라진 선택과 diff 레이아웃 판단 회귀 검증을 추가한다.
 
 ## 사용자 결과
 
@@ -116,7 +124,7 @@ GallaeApp
 
 - `diff --git`·`index`·`---`·`+++` 네 줄을 diff 화면에서 뺀다. 파일 이름과 상태는 diff를 둘러싼 화면이 이미 보여 주므로 이 줄들은 정보를 더하지 않는다.
 - 모델에서 지우지는 않는다. `RepositoryDiff.Section.hunks`가 이 줄들을 패치 헤더로 그대로 써서 `git apply`에 넘기기 때문이다. `Line.isPatchHeader`로 표시할 때만 거른다.
-- 새 파일의 mode, rename의 옛 경로와 새 경로처럼 화면이 달리 말해 주지 않는 헤더 줄은 남긴다. hunk 안의 `-`로 시작하는 내용 줄은 `.deletion`이라 헤더로 오인되지 않는다.
+- 새 파일과 삭제 파일의 mode는 화면에서 숨기되 패치에는 남긴다. chmod의 old mode/new mode와 rename의 옛 경로·새 경로는 표시한다. hunk 안의 `-`로 시작하는 내용 줄은 `.deletion`이라 헤더로 오인되지 않는다.
 
 ### 7D-3 · 7D-4 · sem entity 요약 — 넣었다가 뺌
 

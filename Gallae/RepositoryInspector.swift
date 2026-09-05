@@ -461,9 +461,7 @@ extension RepositoryDiff.Section {
         return lines.count { $0.kind == .addition || $0.kind == .deletion }
     }
 
-    /// True when every changed line is on the same side — a new file, a deleted file, or a hunk that only
-    /// adds or only removes. Split has nothing to compare against, so it draws one column instead of leaving
-    /// half the width empty.
+    /// New or deleted content without context uses one column; ordinary edits keep their comparison.
     var isOneSided: Bool { content.isOneSided }
 
     /// The section's patch exactly as Git wrote it. `Line.text` keeps each line's original prefix, so joining

@@ -1674,7 +1674,14 @@ final class AppModel {
     var repository: RepositorySummary?
     var selectedChangeID: String?
     var diffState: RepositoryDiffLoadState = .noSelection
-    var selectedHistoryCommitID: String?
+    var selectedHistoryCommitID: String? {
+        didSet {
+            guard selectedHistoryCommitID != oldValue else { return }
+            selectedHistoryFileID = nil
+            commitFilesState = .noSelection
+            commitPatchState = .noSelection
+        }
+    }
     var historyState: RepositoryHistoryLoadState = .notLoaded
     /// Fully qualified ref the Navigator selected (`refs/heads/…`, `refs/tags/…`); nil shows every ref in History.
     var historyReference: String? {
@@ -1691,7 +1698,14 @@ final class AppModel {
     var commitFilesState: RepositoryCommitFilesLoadState = .noSelection
     var commitPatchState: RepositoryCommitPatchLoadState = .noSelection
     private(set) var selectedCommitSignature: RepositoryCommitSignature?
-    var selectedStashID: String?
+    var selectedStashID: String? {
+        didSet {
+            guard selectedStashID != oldValue else { return }
+            selectedStashFileID = nil
+            stashFilesState = .noSelection
+            stashPatchState = .noSelection
+        }
+    }
     var stashesState: RepositoryStashesLoadState = .notLoaded
     var selectedReflogEntryID: String?
     var reflogState: RepositoryReflogLoadState = .notLoaded
@@ -3891,7 +3905,11 @@ final class AppModel {
 
         historyGeneration += 1
         let generation = historyGeneration
-        historyState = .loading
+        if case .loaded = historyState {
+            // Keep the current revision available while refreshing its list.
+        } else {
+            historyState = .loading
+        }
 
         do {
             let history = try await inspector.history(in: repository, reference: request.reference)
@@ -3904,9 +3922,6 @@ final class AppModel {
             selectedHistoryCommitID = selectedHistoryCommitID.flatMap { selectedID in
                 history.commits.contains(where: { $0.id == selectedID }) ? selectedID : nil
             } ?? headID ?? history.commits.first?.id
-            selectedHistoryFileID = nil
-            commitFilesState = selectedHistoryCommitID == nil ? .noSelection : .loading
-            commitPatchState = .noSelection
         } catch is CancellationError {
             return
         } catch {
@@ -4006,8 +4021,6 @@ final class AppModel {
 
         commitFilesGeneration += 1
         let generation = commitFilesGeneration
-        selectedHistoryFileID = nil
-        commitPatchState = .noSelection
         var pendingSpinner: Task<Void, Never>?
         if case .loaded = commitFilesState {
             pendingSpinner = delayedSpinner { [self] in
@@ -4028,8 +4041,15 @@ final class AppModel {
                 return
             }
             commitFilesState = .loaded(files)
-            selectedHistoryFileID = files.first?.id
-            commitPatchState = selectedHistoryFileID == nil ? .noSelection : .loading
+            let previousSelection = selectedHistoryFileID
+            selectedHistoryFileID = previousSelection.flatMap { id in
+                files.contains { $0.id == id } ? id : nil
+            } ?? files.first?.id
+            if selectedHistoryFileID == nil {
+                commitPatchState = .noSelection
+            } else if selectedHistoryFileID != previousSelection {
+                commitPatchState = .loading
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -4110,7 +4130,11 @@ final class AppModel {
 
         stashesGeneration += 1
         let generation = stashesGeneration
-        stashesState = .loading
+        if case .loaded = stashesState {
+            // Keep the current revision available while refreshing its list.
+        } else {
+            stashesState = .loading
+        }
 
         do {
             let stashes = try await inspector.stashes(in: repository)
@@ -4119,9 +4143,6 @@ final class AppModel {
             selectedStashID = selectedStashID.flatMap { selectedID in
                 stashes.contains(where: { $0.id == selectedID }) ? selectedID : nil
             } ?? stashes.first?.id
-            selectedStashFileID = nil
-            stashFilesState = selectedStashID == nil ? .noSelection : .loading
-            stashPatchState = .noSelection
         } catch is CancellationError {
             return
         } catch {
@@ -4173,8 +4194,6 @@ final class AppModel {
 
         stashFilesGeneration += 1
         let generation = stashFilesGeneration
-        selectedStashFileID = nil
-        stashPatchState = .noSelection
         var pendingSpinner: Task<Void, Never>?
         if case .loaded = stashFilesState {
             pendingSpinner = delayedSpinner { [self] in
@@ -4190,8 +4209,15 @@ final class AppModel {
             let files = try await inspector.files(for: stash, in: repository)
             guard generation == stashFilesGeneration, request == stashFilesRequest else { return }
             stashFilesState = .loaded(files)
-            selectedStashFileID = files.first?.id
-            stashPatchState = selectedStashFileID == nil ? .noSelection : .loading
+            let previousSelection = selectedStashFileID
+            selectedStashFileID = previousSelection.flatMap { id in
+                files.contains { $0.id == id } ? id : nil
+            } ?? files.first?.id
+            if selectedStashFileID == nil {
+                stashPatchState = .noSelection
+            } else if selectedStashFileID != previousSelection {
+                stashPatchState = .loading
+            }
         } catch is CancellationError {
             return
         } catch {
@@ -4313,7 +4339,17 @@ final class AppModel {
         let previousSelection = isSameRepository
             ? selectedChangeID
             : nil
+        // Refresh keeps the reader's context; opening another repository resets it.
         if !isSameRepository {
+            historyState = .notLoaded
+            stashesState = .notLoaded
+            reflogState = .notLoaded
+            selectedHistoryFileID = nil
+            commitFilesState = .noSelection
+            commitPatchState = .noSelection
+            selectedStashFileID = nil
+            stashFilesState = .noSelection
+            stashPatchState = .noSelection
             selectedHistoryCommitID = nil
             selectedStashID = nil
             selectedReflogEntryID = nil
@@ -4332,19 +4368,11 @@ final class AppModel {
         } else {
             diffState = .loading
         }
-        historyState = .notLoaded
+        reflogState = .notLoaded
         localBranchesState = .notLoaded
         localBranchWorktreeURLs = [:]
         remotesState = .notLoaded
         tagsState = .notLoaded
-        selectedHistoryFileID = nil
-        commitFilesState = .noSelection
-        commitPatchState = .noSelection
-        stashesState = .notLoaded
-        reflogState = .notLoaded
-        selectedStashFileID = nil
-        stashFilesState = .noSelection
-        stashPatchState = .noSelection
         let cacheID = repositoryCacheID(for: inspectedRepository.rootURL)
         libraryRepositorySummaries[cacheID] = inspectedRepository
         libraryRepositorySummaryErrors[cacheID] = nil

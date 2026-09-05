@@ -46,6 +46,7 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
     private let trailing: () -> Trailing
     @SceneStorage private var leadingWidth: Double
     @State private var dragStartWidth: CGFloat?
+    @FocusState private var isDividerFocused: Bool
 
     init(
         leadingMinimum: CGFloat,
@@ -105,7 +106,35 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
                                     .onEnded { _ in dragStartWidth = nil }
                             )
                     }
-                    .accessibilityHidden(true)
+                    .overlay {
+                        if isDividerFocused {
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(.tint, lineWidth: 2)
+                                .frame(width: 9)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Resize panels")
+                    .accessibilityValue("Left panel \(Int(width)) points")
+                    .accessibilityHint("Use Left and Right Arrow to resize the panels")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: adjustWidth(by: 20, current: width, total: proxy.size.width)
+                        case .decrement: adjustWidth(by: -20, current: width, total: proxy.size.width)
+                        @unknown default: break
+                        }
+                    }
+                    .focusable()
+                    .focused($isDividerFocused)
+                    .onKeyPress(.leftArrow) {
+                        adjustWidth(by: -20, current: width, total: proxy.size.width)
+                        return .handled
+                    }
+                    .onKeyPress(.rightArrow) {
+                        adjustWidth(by: 20, current: width, total: proxy.size.width)
+                        return .handled
+                    }
 
                 trailing()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,6 +142,17 @@ struct ResizableHSplit<Leading: View, Trailing: View>: View {
             }
         }
     }
+
+    private func adjustWidth(by amount: CGFloat, current: CGFloat, total: CGFloat) {
+        leadingWidth = Double(ResizableHSplitLayout.leadingWidth(
+            preferred: current + amount,
+            leadingMinimum: leadingMinimum,
+            leadingMaximum: leadingMaximum,
+            trailingMinimum: trailingMinimum,
+            total: total
+        ))
+    }
+
 }
 
 /// Keeps the sidebar within `maximum`. `navigationSplitViewColumnWidth(max:)` binds programmatic positions only:
@@ -3569,6 +3609,7 @@ private struct RepositoryCommitDetailView: View {
     @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
     @State private var commitPendingReset: RepositoryHistory.Commit?
     @State private var commitPendingRebasePlan: RepositoryHistory.Commit?
+    @State private var showsFullMessage = false
 
     @ViewBuilder
     var body: some View {
@@ -3601,6 +3642,7 @@ private struct RepositoryCommitDetailView: View {
                 )
             }
         }
+        .onChange(of: model.selectedHistoryCommitID) { showsFullMessage = false }
         .sheet(item: $mergeCommitPendingRevert) { commit in
             RevertMergeCommitSheet(model: model, commit: commit)
         }
@@ -3698,11 +3740,30 @@ private struct RepositoryCommitDetailView: View {
                     .textSelection(.enabled)
 
                 if !commit.body.isEmpty {
-                    Text(commit.body)
+                    if showsFullMessage {
+                        ScrollView {
+                            Text(commit.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 180)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                        .lineLimit(4)
-                        .textSelection(.enabled)
+                        .accessibilityLabel("Full commit message")
+                    } else {
+                        Text(commit.body)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                    }
+                    Button(showsFullMessage ? "Show Less" : "Show Full Message") {
+                        showsFullMessage.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .font(.caption)
+                    .accessibilityValue(showsFullMessage ? "Expanded" : "Collapsed")
                 }
 
                 Text("Commit \(commit.id)")
@@ -4548,7 +4609,33 @@ private struct RepositoryRevisionChangesView: View {
     }
 
     private func revisionFiles(_ files: [RepositoryCommitFile]) -> some View {
-        ResizableHSplit(leadingMinimum: 160, leadingIdeal: 200, leadingMaximum: 280, trailingMinimum: 230, storageKey: "revisionFiles") {
+        GeometryReader { proxy in
+            // Keep the diff readable when the saved-changes pane cannot fit both lists and code.
+            if proxy.size.width < 560 {
+                VStack(spacing: 0) {
+                    Picker("Changed Files", selection: $selectedFileID) {
+                        ForEach(files) { file in
+                            Text(file.path).tag(Optional(file.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .accessibilityLabel("Changed Files, \(files.count) files")
+                    Divider()
+                    revisionDetail
+                }
+            } else {
+                ResizableHSplit(leadingMinimum: 160, leadingIdeal: 200, leadingMaximum: 280, trailingMinimum: 400, storageKey: "revisionFiles") {
+                    revisionFileList(files)
+                } trailing: {
+                    revisionDetail
+                }
+            }
+        }
+    }
+
+    private func revisionFileList(_ files: [RepositoryCommitFile]) -> some View {
             VStack(spacing: 0) {
                 HStack {
                     Text("Changed Files")
@@ -4578,7 +4665,9 @@ private struct RepositoryRevisionChangesView: View {
                 .legacyScrollerAware()
                 .accessibilityLabel("Changed Files, \(files.count) files")
             }
-        } trailing: {
+    }
+
+    private var revisionDetail: some View {
             VStack(spacing: 0) {
                 if let file = selectedFile {
                     HStack(alignment: .center, spacing: 12) {
@@ -4597,7 +4686,7 @@ private struct RepositoryRevisionChangesView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        RepositoryDiffLayoutPicker(canSplit: canSplitSelectedPatch)
+                        RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
@@ -4607,13 +4696,12 @@ private struct RepositoryRevisionChangesView: View {
 
                 revisionPatchContent
             }
-        }
     }
 
-    /// A saved version with nothing to compare against — an added or deleted file — has no Split to offer.
-    private var canSplitSelectedPatch: Bool {
-        guard case .loaded(let patch) = patchState else { return true }
-        return !patch.content.isOneSided
+    private var presentation: RepositoryDiffPresentation {
+        let content: RepositoryDiff.Section.Content?
+        if case .loaded(let patch) = patchState { content = patch.content } else { content = nil }
+        return .init(content: content, preferred: layout)
     }
 
     @ViewBuilder
@@ -4644,6 +4732,7 @@ private struct RepositoryRevisionChangesView: View {
 
     @ViewBuilder
     private func revisionPatch(_ content: RepositoryDiff.Section.Content) -> some View {
+        let layout = presentation.layout
         switch content {
         case .text(let lines):
             GeometryReader { proxy in
@@ -4931,7 +5020,13 @@ private struct RepositoryDiffView: View {
     }
 
     private func diffContent(_ diff: RepositoryDiff) -> some View {
-        VStack(spacing: 0) {
+        let shown = shownScope(in: diff)
+        let presentation = RepositoryDiffPresentation(
+            content: diff.sections.first { $0.scope == shown }?.content,
+            preferred: layout
+        )
+        let effectiveLayout = presentation.layout
+        return VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(diff.fileName)
@@ -4954,7 +5049,7 @@ private struct RepositoryDiffView: View {
 
                 Spacer()
 
-                RepositoryDiffLayoutPicker(canSplit: !diff.sections.allSatisfy(\.isOneSided))
+                RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
 
                 if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
                     Button("Mark Resolved…") {
@@ -5020,18 +5115,17 @@ private struct RepositoryDiffView: View {
                     loadExpanded: loadExpanded
                 )
             } else {
-                let shown = shownScope(in: diff)
                 if let other = otherScope(in: diff, than: shown) {
                     scopeSwitcher(in: diff, shown: shown, other: other)
                     Divider()
                 }
                 GeometryReader { proxy in
-                    ScrollView(layout == .split ? [.vertical] : [.horizontal, .vertical]) {
+                    ScrollView(effectiveLayout == .split ? [.vertical] : [.horizontal, .vertical]) {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             if let section = diff.sections.first(where: { $0.scope == shown }) {
                                 RepositoryDiffSectionView(
                                     section: section,
-                                    layout: layout,
+                                    layout: effectiveLayout,
                                     // The switcher above already names the side, and a lone section needs
                                     // no name at all: the file and its status sit right above it.
                                     showsHeader: false,
@@ -5052,7 +5146,7 @@ private struct RepositoryDiffView: View {
                         // content smaller than the pane; filling the height leaves nothing to centre.
                         .frame(
                             minWidth: proxy.size.width.rounded(.down),
-                            maxWidth: layout == .split ? proxy.size.width.rounded(.down) : nil,
+                            maxWidth: effectiveLayout == .split ? proxy.size.width.rounded(.down) : nil,
                             minHeight: proxy.size.height.rounded(.down),
                             alignment: .topLeading
                         )
@@ -5322,17 +5416,34 @@ struct RepositoryDiffSplitRow: Equatable, Identifiable {
     }
 }
 
+/// One decision for the picker, scroll axes and rows, using only the visible content.
+struct RepositoryDiffPresentation {
+    let canSplit: Bool
+    let layout: RepositoryDiffLayout
+
+    init(content: RepositoryDiff.Section.Content?, preferred: RepositoryDiffLayout) {
+        if case .text(let lines) = content {
+            canSplit = !lines.isEmpty && content?.isOneSided == false
+        } else {
+            canSplit = false
+        }
+        layout = canSplit ? preferred : .unified
+    }
+}
+
 /// The Unified/Split toggle in diff headers; the last choice is remembered across files and windows.
 private struct RepositoryDiffLayoutPicker: View {
     /// False for a new or deleted file: there is no opposite version, so Split would draw one column and the
     /// control would claim a layout the diff is not in.
-    var canSplit = true
-    @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
+    let presentation: RepositoryDiffPresentation
+    @Binding var preferred: RepositoryDiffLayout
+
+    private var canSplit: Bool { presentation.canSplit }
 
     /// Reads Unified while Split is unavailable so the control never highlights a layout the diff is not in,
     /// and writes through so the remembered choice survives a file that cannot be split.
     private var shown: Binding<RepositoryDiffLayout> {
-        Binding(get: { canSplit ? layout : .unified }, set: { layout = $0 })
+        Binding(get: { presentation.layout }, set: { preferred = $0 })
     }
 
     var body: some View {
@@ -5351,10 +5462,10 @@ private struct RepositoryDiffLayoutPicker: View {
         .help(
             canSplit
                 ? "Show the diff in one column, or the old and new versions side by side"
-                : "This file has no opposite version to compare, so it is shown in one column"
+                : "The selected content does not support a side-by-side comparison"
         )
         .accessibilityLabel("Diff Layout")
-        .accessibilityValue(canSplit ? "" : "Split unavailable, no opposite version to compare")
+        .accessibilityValue(canSplit ? "" : "Split unavailable for the selected content")
     }
 }
 
@@ -5404,8 +5515,7 @@ private struct RepositoryDiffSectionView: View {
                     hunkSecondaryAction: { line in discardAction(for: line, in: lines) },
                     lineChoice: { line in lineChoice(for: line) },
                     hunkChoice: { line in hunkChoice(for: line, in: lines) },
-                    reservesChoiceColumn: choosesLines,
-                    isOneSided: section.isOneSided
+                    reservesChoiceColumn: choosesLines
                 )
             case .binary:
                 RepositoryDiffNotice(
@@ -5553,9 +5663,6 @@ private struct RepositoryDiffLinesView: View {
     var hunkChoice: (RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? = { _ in nil }
     /// Keeps the checkbox column on every unified line so numbers line up whether or not a line has one.
     var reservesChoiceColumn = false
-    /// A new or deleted file has no opposite version, so Split draws one column rather than half a screen
-    /// of empty cells.
-    var isOneSided = false
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
@@ -5570,18 +5677,6 @@ private struct RepositoryDiffLinesView: View {
             ForEach(RepositoryDiffSplitRow.rows(from: lines)) { row in
                 if let full = row.full {
                     fullWidthLine(full, numberWidth: numberWidth)
-                } else if isOneSided {
-                    let only = row.new ?? row.old
-                    RepositoryDiffLineView(
-                        line: only,
-                        side: row.new != nil ? .new : .old,
-                        numberWidth: numberWidth,
-                        choice: only.flatMap(lineChoice),
-                        reservesChoiceColumn: reservesChoiceColumn,
-                        choiceLabel: row.new != nil
-                            ? "Choose added line \(row.new?.newLineNumber ?? 0)"
-                            : "Choose deleted line \(row.old?.oldLineNumber ?? 0)"
-                    )
                 } else {
                     HStack(alignment: .top, spacing: 0) {
                         RepositoryDiffLineView(
