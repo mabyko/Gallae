@@ -9,9 +9,17 @@ final class GitHubAvatarLookup {
 
     private var cache: [String: URL]
     private var unresolvedEmails: Set<String> = []
+    private var pendingLookups: [String: Task<URL?, Never>] = [:]
+    private let defaults: UserDefaults
+    private let lookup: @Sendable (String) async -> URL?
 
-    init() {
-        let stored = UserDefaults.standard.dictionary(forKey: Self.cacheKey) as? [String: String]
+    init(
+        defaults: UserDefaults = .standard,
+        lookup: @escaping @Sendable (String) async -> URL? = GitHubAvatarLookup.fetchAvatar
+    ) {
+        self.defaults = defaults
+        self.lookup = lookup
+        let stored = defaults.dictionary(forKey: Self.cacheKey) as? [String: String]
         cache = stored?.compactMapValues(URL.init(string:)) ?? [:]
     }
 
@@ -20,7 +28,22 @@ final class GitHubAvatarLookup {
         guard !key.isEmpty else { return nil }
         if let cached = cache[key] { return cached }
         guard !unresolvedEmails.contains(key) else { return nil }
+        if let pending = pendingLookups[key] { return await pending.value }
 
+        // Badges share the lookup; one disappearing badge must not cancel it for the others.
+        let pending = Task { await lookup(key) }
+        pendingLookups[key] = pending
+        defer { pendingLookups[key] = nil }
+        guard let avatarURL = await pending.value else {
+            unresolvedEmails.insert(key)
+            return nil
+        }
+        cache[key] = avatarURL
+        defaults.set(cache.mapValues(\.absoluteString), forKey: Self.cacheKey)
+        return avatarURL
+    }
+
+    private nonisolated static func fetchAvatar(for key: String) async -> URL? {
         guard var components = URLComponents(string: "https://api.github.com/search/users") else {
             return nil
         }
@@ -34,27 +57,14 @@ final class GitHubAvatarLookup {
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-                unresolvedEmails.insert(key)
-                return nil
-            }
-            guard let avatarURL = Self.avatarURL(fromSearchResponse: data) else {
-                unresolvedEmails.insert(key)
-                return nil
-            }
-            cache[key] = avatarURL
-            UserDefaults.standard.set(
-                cache.mapValues(\.absoluteString),
-                forKey: Self.cacheKey
-            )
-            return avatarURL
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return Self.avatarURL(fromSearchResponse: data)
         } catch {
-            unresolvedEmails.insert(key)
             return nil
         }
     }
 
-    static func avatarURL(fromSearchResponse data: Data) -> URL? {
+    nonisolated static func avatarURL(fromSearchResponse data: Data) -> URL? {
         struct SearchResponse: Decodable {
             struct Item: Decodable {
                 let avatarURL: String

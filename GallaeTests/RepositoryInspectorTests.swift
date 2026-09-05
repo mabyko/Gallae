@@ -32,6 +32,44 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testConcurrentAvatarRequestsShareLookupAndPersistResult() async throws {
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let gate = RepositoryReadGate()
+        let avatar = try XCTUnwrap(URL(string: "https://avatars.githubusercontent.com/u/1?s=64"))
+        let lookup = GitHubAvatarLookup(defaults: defaults) { _ in
+            await gate.wait()
+            return avatar
+        }
+        let started = expectation(description: "All badges request the same author")
+        started.expectedFulfillmentCount = 8
+        let requests = (0..<8).map { index in
+            Task {
+                started.fulfill()
+                return await lookup.avatarURL(for: index.isMultiple(of: 2) ? "Author@example.com" : "author@example.com")
+            }
+        }
+        await fulfillment(of: [started], timeout: 5)
+        requests[0].cancel() // Removing one badge must not cancel the shared lookup.
+        await gate.release()
+        for request in requests {
+            let result = await request.value
+            XCTAssertEqual(result, avatar)
+        }
+        let cached = await lookup.avatarURL(for: "AUTHOR@example.com")
+        XCTAssertEqual(cached, avatar)
+        let restored = GitHubAvatarLookup(defaults: defaults) { _ in
+            XCTFail("A persisted avatar must not be fetched again")
+            return nil
+        }
+        let persisted = await restored.avatarURL(for: "author@example.com")
+        XCTAssertEqual(persisted, avatar)
+        let requestCount = await gate.arrivals
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    @MainActor
     func testLateRepositoryReadCannotReplaceNewWorkspace() async throws {
         for restoring in [false, true] {
             let root = try makeTemporaryDirectory()
@@ -6144,10 +6182,12 @@ private enum GitFixtureError: LocalizedError {
 }
 
 private actor RepositoryReadGate {
+    private(set) var arrivals = 0
     private var isReleased = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func wait() async {
+        arrivals += 1
         guard !isReleased else { return }
         await withCheckedContinuation { waiters.append($0) }
     }
