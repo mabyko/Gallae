@@ -2067,7 +2067,7 @@ struct RepositoryInspector: Sendable {
     ) throws -> RepositoryInteractiveRebasePlan {
         let currentRepository = try inspectSynchronously(at: repository.rootURL)
         guard
-            case .branch = currentRepository.head,
+            case .branch(let branch) = currentRepository.head,
             !currentRepository.isUnborn,
             currentRepository.operation == nil
         else {
@@ -2113,12 +2113,18 @@ struct RepositoryInspector: Sendable {
             throw RepositoryInteractiveRebasePlanError.invalidOutput
         }
 
-        return .init(steps: stride(from: 0, to: fields.count, by: 2).map { index in
-            .init(
-                id: String(decoding: fields[index], as: UTF8.self),
-                subject: String(decoding: fields[index + 1], as: UTF8.self)
-            )
-        })
+        return .init(
+            rootURL: currentRepository.rootURL,
+            branch: branch,
+            headID: headID,
+            startingCommitID: commit.id,
+            steps: stride(from: 0, to: fields.count, by: 2).map { index in
+                .init(
+                    id: String(decoding: fields[index], as: UTF8.self),
+                    subject: String(decoding: fields[index + 1], as: UTF8.self)
+                )
+            }
+        )
     }
 
     private static func executeInteractiveRebaseSynchronously(
@@ -2148,6 +2154,10 @@ struct RepositoryInspector: Sendable {
             in: currentRepository
         )
         guard
+            sameFileLocation(plan.rootURL, currentPlan.rootURL),
+            plan.branch == currentPlan.branch,
+            plan.headID == currentPlan.headID,
+            plan.startingCommitID == currentPlan.startingCommitID,
             plan.steps.count == currentPlan.steps.count,
             Set(plan.steps.map(\.id)) == Set(currentPlan.steps.map(\.id))
         else {
@@ -2162,16 +2172,7 @@ struct RepositoryInspector: Sendable {
             }
         }
 
-        let originalHeadResult = try runGit([
-            "-C", repository.rootURL.path,
-            "rev-parse", "--verify", "HEAD"
-        ])
-        guard originalHeadResult.status == 0 else {
-            throw RepositoryInteractiveRebasePlanError.executionFailed(
-                originalHeadResult.standardError
-            )
-        }
-        let originalHead = line(from: originalHeadResult.standardOutput)
+        let originalHead = currentPlan.headID
 
         let parentResult = try runGit([
             "-C", repository.rootURL.path,

@@ -2518,6 +2518,71 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testRejectsRebasePlanAfterItsRepositoryBranchOrHeadChanges() async throws {
+        for changedContext in ["branch", "clone", "worktree", "head"] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let repositoryURL = directory.appending(path: "repository")
+            let otherURL = directory.appending(path: "other")
+            try initializeRepository(at: repositoryURL)
+            try write("base\n", to: "base.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "Base")
+            try write("a\n", to: "a.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "A")
+            try write("b\n", to: "b.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "B")
+            let inspector = RepositoryInspector()
+            let repository = try await inspector.inspect(at: repositoryURL)
+            let history = try await inspector.history(in: repository)
+            let start = try XCTUnwrap(history.commits.first { $0.subject == "A" })
+            var plan = try await inspector.interactiveRebasePlan(startingAt: start, in: repository)
+            plan.steps[0].action = .drop
+
+            let executionURL: URL
+            switch changedContext {
+            case "branch":
+                try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "other"])
+                executionURL = repositoryURL
+            case "clone":
+                try runGit(["clone", "--quiet", repositoryURL.path, otherURL.path])
+                try initializeRepository(at: otherURL)
+                executionURL = otherURL
+            case "worktree":
+                try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "other"])
+                try runGit(["-C", repositoryURL.path, "worktree", "add", "--quiet", otherURL.path, "main"])
+                executionURL = otherURL
+            default:
+                // A new merge HEAD can leave the --no-merges plan's commit set unchanged.
+                let mergeID = try gitOutput([
+                    "-C", repositoryURL.path, "commit-tree", "HEAD^{tree}",
+                    "-p", "HEAD", "-p", "HEAD~1", "-m", "Merge"
+                ]).trimmingCharacters(in: .whitespacesAndNewlines)
+                try runGit(["-C", repositoryURL.path, "update-ref", "HEAD", mergeID])
+                executionURL = repositoryURL
+            }
+            let before = try await inspector.inspect(at: executionURL)
+            let currentPlan = try await inspector.interactiveRebasePlan(startingAt: start, in: before)
+            XCTAssertEqual(plan.steps.map(\.id), currentPlan.steps.map(\.id), changedContext)
+            let refs = try gitOutput(["-C", executionURL.path, "show-ref"])
+            let head = try gitOutput(["-C", executionURL.path, "rev-parse", "HEAD"])
+            do {
+                _ = try await inspector.executeInteractiveRebase(
+                    plan, rewordMessages: [:], startingAt: start, in: before
+                )
+                XCTFail("A plan must retain its original context: \(changedContext)")
+            } catch let error as RepositoryInteractiveRebasePlanError {
+                XCTAssertEqual(error, .invalidPlan, changedContext)
+            }
+            let after = try await inspector.inspect(at: executionURL)
+            XCTAssertEqual(after, before, changedContext)
+            XCTAssertEqual(try gitOutput(["-C", executionURL.path, "show-ref"]), refs, changedContext)
+            XCTAssertEqual(try gitOutput(["-C", executionURL.path, "rev-parse", "HEAD"]), head, changedContext)
+            XCTAssertEqual(
+                try String(contentsOf: executionURL.appending(path: "a.txt"), encoding: .utf8), "a\n"
+            )
+        }
+    }
+
     func testLeavesConflictingInteractiveRebaseReadyToAbort() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }

@@ -21,7 +21,7 @@
 ## 대안 흐름
 
 - `reword` 메시지가 비었거나 local 변경이 있으면 이유를 표시하고 실행하지 않는다.
-- 실행 전에 branch·HEAD·계획이 바뀌었으면 Repository를 변경하지 않고 오류를 표시한다.
+- 실행 전에 Repository·Worktree·branch·HEAD·시작 commit이 계획 생성 때와 달라졌으면 Repository를 변경하지 않고 오류를 표시한다. commit 목록이 같아도 다른 작업 위치에는 계획을 적용하지 않는다.
 - 충돌이 나면 시트를 닫고 진행 중인 Rebase와 충돌 파일을 Workspace에 표시한다. 사용자는 기존 Resolve·Continue·Abort 흐름을 사용한다.
 - 실행이 실패하면 실제 Repository 상태를 다시 읽고 같은 검토 단계에 오류를 표시한다.
 - 실행 중 Cancel은 Git 프로세스를 중단하고 Rebase를 Abort한 뒤 원래 branch·HEAD와 깨끗한 working tree가 복원됐는지 확인한다.

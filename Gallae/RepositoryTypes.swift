@@ -300,6 +300,10 @@ struct RepositoryInteractiveRebasePlan: Equatable, Sendable {
         var action: Action = .pick
     }
 
+    let rootURL: URL
+    let branch: String
+    let headID: String
+    let startingCommitID: String
     var steps: [Step]
 
     var validationError: ValidationError? {
