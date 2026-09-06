@@ -192,7 +192,7 @@ extension RepositoryInspector {
         }
         let paths = Array(Set(changes.flatMap { change in
             [change.originalPath, change.path].compactMap(\.self)
-        }))
+        })).map(literalPathspec)
         let result = try runGit([
             "-C", repository.rootURL.path,
             "add", "--all", "--"
@@ -215,7 +215,7 @@ extension RepositoryInspector {
         }
         let paths = Array(Set(changes.flatMap { change in
             [change.originalPath, change.path].compactMap(\.self)
-        }))
+        })).map(literalPathspec)
         let command = repository.isUnborn
             ? ["rm", "--cached", "--force", "--ignore-unmatch", "--"]
             : ["restore", "--staged", "--"]

@@ -4524,6 +4524,43 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testStageAndUnstageTreatSelectedPathsLiterally() async throws {
+        for hasCommit in [false, true] {
+            let repositoryURL = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: repositoryURL) }
+            try initializeRepository(at: repositoryURL)
+            if hasCommit {
+                try write("base\n", to: "base.txt", in: repositoryURL)
+                try commitAll(in: repositoryURL, message: "Initial")
+            }
+            let selectedPaths: Set<String> = ["[ab].txt", ":(glob)*"]
+            let otherPaths: Set<String> = ["a.txt", "b.txt", "other.txt"]
+            for path in selectedPaths.union(otherPaths) {
+                try write("content: \(path)\n", to: path, in: repositoryURL)
+            }
+
+            let inspector = RepositoryInspector()
+            let before = try await inspector.inspect(at: repositoryURL)
+            let staged = try await inspector.stage(
+                before.changes.filter { selectedPaths.contains($0.path) }, in: before
+            )
+            XCTAssertEqual(Set(staged.changes.filter { $0.staged != nil }.map(\.path)), selectedPaths)
+
+            try runGit(["-C", repositoryURL.path, "add", "--all"])
+            let allStaged = try await inspector.inspect(at: repositoryURL)
+            let unstaged = try await inspector.unstage(
+                allStaged.changes.filter { selectedPaths.contains($0.path) }, in: allStaged
+            )
+            XCTAssertEqual(Set(unstaged.changes.filter { $0.staged != nil }.map(\.path)), otherPaths)
+            for path in selectedPaths.union(otherPaths) {
+                XCTAssertEqual(
+                    try String(contentsOf: repositoryURL.appending(path: path), encoding: .utf8),
+                    "content: \(path)\n"
+                )
+            }
+        }
+    }
+
     @MainActor
     func testStagesAndUnstagesMultipleSelectedChangesTogether() async throws {
         let repositoryURL = try makeTemporaryDirectory()
