@@ -434,7 +434,7 @@ private struct RepositoryIntegrateBranchSheet: View {
     @State private var selectedBranch: String?
     @State private var divergence: RepositoryBranchDivergence?
     @State private var mergePrediction: RepositoryMergePrediction?
-    @State private var conflictedWorktreeURL: URL?
+    @State private var conflictedWorktree: RepositorySummary?
 
     init(model: AppModel, repositoryRootURL: URL, initialBranch: String? = nil) {
         self.model = model
@@ -578,26 +578,26 @@ private struct RepositoryIntegrateBranchSheet: View {
         .confirmationDialog(
             "Merge Conflicted in Worktree",
             isPresented: Binding(
-                get: { conflictedWorktreeURL != nil },
-                set: { if !$0 { conflictedWorktreeURL = nil } }
+                get: { conflictedWorktree != nil },
+                set: { if !$0 { conflictedWorktree = nil } }
             ),
             titleVisibility: .visible,
-            presenting: conflictedWorktreeURL
-        ) { worktreeURL in
+            presenting: conflictedWorktree
+        ) { worktree in
             Button("Open Worktree") {
                 Task {
-                    if await model.openRepository(at: worktreeURL) {
+                    if await model.openRepository(at: worktree.rootURL) {
                         dismiss()
                     }
                 }
             }
             Button("Abort Merge", role: .destructive) {
-                Task { await model.abortMergeInWorktree(at: worktreeURL) }
+                Task { await model.abortMergeInWorktree(worktree) }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { worktreeURL in
+        } message: { worktree in
             Text(
-                "The merge stopped with conflicts in \(worktreeURL.path). Open the Worktree to resolve the conflicts and Continue, or abort to restore its earlier state."
+                "The merge stopped with conflicts in \(worktree.rootURL.path). Open the Worktree to resolve the conflicts and Continue, or abort to restore its earlier state."
             )
         }
         .interactiveDismissDisabled(model.isLoading)
@@ -631,8 +631,8 @@ private struct RepositoryIntegrateBranchSheet: View {
             switch await model.mergeCurrentBranchIntoBranch(selectedBranch) {
             case .completed:
                 dismiss()
-            case .conflictedInWorktree(let worktreeURL):
-                conflictedWorktreeURL = worktreeURL
+            case .conflictedInWorktree(let worktree):
+                conflictedWorktree = worktree
             case .failed:
                 break
             }

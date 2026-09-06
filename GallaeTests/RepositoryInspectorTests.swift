@@ -3844,10 +3844,8 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let inspector = RepositoryInspector()
         let repository = try await inspector.inspect(at: repositoryURL)
-        XCTAssertEqual(
-            repository.operation,
-            .init(kind: .merge, unresolvedConflictCount: 1)
-        )
+        XCTAssertEqual(repository.operation?.kind, .merge)
+        XCTAssertEqual(repository.operation?.unresolvedConflictCount, 1)
         XCTAssertFalse(try XCTUnwrap(repository.operation).canContinue)
 
         try write("combined\n", to: "conflict.txt", in: repositoryURL)
@@ -3856,10 +3854,9 @@ final class RepositoryInspectorTests: XCTestCase {
             in: repository
         )
 
-        XCTAssertEqual(
-            resolvedRepository.operation,
-            .init(kind: .merge, unresolvedConflictCount: 0)
-        )
+        XCTAssertEqual(resolvedRepository.operation?.kind, .merge)
+        XCTAssertEqual(resolvedRepository.operation?.unresolvedConflictCount, 0)
+        XCTAssertEqual(resolvedRepository.operation?.identity, repository.operation?.identity)
         XCTAssertTrue(try XCTUnwrap(resolvedRepository.operation).canContinue)
     }
 
@@ -3920,6 +3917,50 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    func testRejectsReplacedOperationsWithoutChangingResolvedWork() async throws {
+        for (original, replacement) in [("merge", "rebase"), ("merge", "merge"), ("rebase", "rebase")] {
+            let repositoryURL = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: repositoryURL) }
+            try initializeRepository(at: repositoryURL)
+            try write("base\n", to: "conflict.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "Initial")
+            try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "side"])
+            try write("side\n", to: "conflict.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "Side")
+            try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+            try write("main\n", to: "conflict.txt", in: repositoryURL)
+            try commitAll(in: repositoryURL, message: "Main")
+            try runGit(["-C", repositoryURL.path, original, "side"], expectedStatus: 1)
+            let inspector = RepositoryInspector()
+            let confirmed = try await inspector.inspect(at: repositoryURL)
+            try runGit(["-C", repositoryURL.path, original, "--abort"])
+            try runGit(["-C", repositoryURL.path, replacement, "side"], expectedStatus: 1)
+            try write("manual resolution\n", to: "conflict.txt", in: repositoryURL)
+            try runGit(["-C", repositoryURL.path, "add", "conflict.txt"])
+            let before = try await inspector.inspect(at: repositoryURL)
+            let refs = try gitOutput(["-C", repositoryURL.path, "show-ref"])
+            let head = try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"])
+
+            for aborting in [false, true] {
+                do {
+                    if aborting { _ = try await inspector.abortOperation(in: confirmed) }
+                    else { _ = try await inspector.continueOperation(in: confirmed) }
+                    XCTFail("A replaced operation must reject stale Continue and Abort")
+                } catch let error as RepositoryOperationError {
+                    XCTAssertEqual(error, .unavailable)
+                }
+                let after = try await inspector.inspect(at: repositoryURL)
+                XCTAssertEqual(after, before)
+                XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "show-ref"]), refs)
+                XCTAssertEqual(try gitOutput(["-C", repositoryURL.path, "rev-parse", "HEAD"]), head)
+                XCTAssertEqual(
+                    try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+                    "manual resolution\n"
+                )
+            }
+        }
+    }
+
     func testReportsRebaseInProgressBeforeAndAfterResolvingConflict() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
@@ -3941,10 +3982,8 @@ final class RepositoryInspectorTests: XCTestCase {
 
         let inspector = RepositoryInspector()
         let repository = try await inspector.inspect(at: repositoryURL)
-        XCTAssertEqual(
-            repository.operation,
-            .init(kind: .rebase, unresolvedConflictCount: 1)
-        )
+        XCTAssertEqual(repository.operation?.kind, .rebase)
+        XCTAssertEqual(repository.operation?.unresolvedConflictCount, 1)
         XCTAssertFalse(try XCTUnwrap(repository.operation).canContinue)
 
         try write("combined\n", to: "conflict.txt", in: repositoryURL)
@@ -3953,10 +3992,9 @@ final class RepositoryInspectorTests: XCTestCase {
             in: repository
         )
 
-        XCTAssertEqual(
-            resolvedRepository.operation,
-            .init(kind: .rebase, unresolvedConflictCount: 0)
-        )
+        XCTAssertEqual(resolvedRepository.operation?.kind, .rebase)
+        XCTAssertEqual(resolvedRepository.operation?.unresolvedConflictCount, 0)
+        XCTAssertEqual(resolvedRepository.operation?.identity, repository.operation?.identity)
         XCTAssertTrue(try XCTUnwrap(resolvedRepository.operation).canContinue)
     }
 
@@ -4019,6 +4057,55 @@ final class RepositoryInspectorTests: XCTestCase {
             try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
             "combined\n"
         )
+    }
+
+    @MainActor
+    func testOperationConfirmationSurvivesRefreshButCannotTargetAnotherRepository() async throws {
+        let repositoryURL = try makeTemporaryDirectory()
+        let otherURL = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: repositoryURL)
+            try? FileManager.default.removeItem(at: otherURL)
+        }
+        try initializeRepository(at: repositoryURL)
+        try initializeRepository(at: otherURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "merge", "side"], expectedStatus: 1)
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        let confirmed = try XCTUnwrap(model.repository)
+        try runGit(["-C", repositoryURL.path, "merge", "--abort"])
+        try runGit(["-C", repositoryURL.path, "merge", "side"], expectedStatus: 1)
+        try write("manual resolution\n", to: "conflict.txt", in: repositoryURL)
+        await model.refreshRepository()
+        let current = try XCTUnwrap(model.repository)
+
+        await model.abortRepositoryOperation(in: confirmed)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(model.repository, current)
+        XCTAssertEqual(
+            try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
+            "manual resolution\n"
+        )
+
+        await model.openRepository(at: otherURL)
+        let other = model.repository
+        await model.abortRepositoryOperation(in: current)
+        XCTAssertEqual(model.repository, other)
+        let stillInProgress = try await RepositoryInspector().inspect(at: repositoryURL)
+        XCTAssertEqual(stillInProgress, current)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.isWritingRepository)
     }
 
     func testReadsConflictBaseOursAndTheirsWithoutChangingRepository() async throws {
@@ -5723,6 +5810,7 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testWorktreeMergeConflictLeavesResolvableStateAndAborts() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         let worktreeParent = try makeTemporaryDirectory()
@@ -5748,26 +5836,38 @@ final class RepositoryInspectorTests: XCTestCase {
         ])
 
         let inspector = RepositoryInspector()
-        let repository = try await inspector.inspect(at: repositoryURL)
         let mainBefore = try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"])
-
-        do {
-            _ = try await inspector.mergeCurrentBranch(
-                into: "main",
-                inWorktreeAt: worktreeURL,
-                in: repository
-            )
-            XCTFail("Expected the conflicted worktree merge to fail")
-        } catch let error as RepositoryBranchError {
-            XCTAssertEqual(error, .mergeInWorktreeConflicted(worktreeURL))
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: repositoryURL)
+        guard case .conflictedInWorktree(let confirmed) = await model.mergeCurrentBranchIntoBranch("main") else {
+            return XCTFail("Expected the conflicted worktree merge to preserve its context")
         }
+        XCTAssertEqual(confirmed.operation?.kind, .merge)
         XCTAssertEqual(
             try gitOutput(["-C", worktreeURL.path, "rev-parse", "--verify", "MERGE_HEAD"])
                 .isEmpty,
             false
         )
 
-        _ = try await inspector.abortMerge(inWorktreeAt: worktreeURL, in: repository)
+        try runGit(["-C", worktreeURL.path, "merge", "--abort"])
+        try runGit(["-C", worktreeURL.path, "merge", "feature"], expectedStatus: 1)
+        try write("manual resolution\n", to: "shared.txt", in: worktreeURL)
+        let current = try await inspector.inspect(at: worktreeURL)
+        await model.abortMergeInWorktree(confirmed)
+        XCTAssertNotNil(model.errorMessage)
+        let afterStaleAbort = try await inspector.inspect(at: worktreeURL)
+        XCTAssertEqual(afterStaleAbort, current)
+        XCTAssertEqual(
+            try String(contentsOf: worktreeURL.appending(path: "shared.txt"), encoding: .utf8),
+            "manual resolution\n"
+        )
+
+        await model.abortMergeInWorktree(current)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.repository?.head, .branch("feature"))
         XCTAssertEqual(
             try gitOutput(["-C", repositoryURL.path, "rev-parse", "refs/heads/main"]),
             mainBefore

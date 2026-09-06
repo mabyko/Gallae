@@ -384,18 +384,6 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
-    func abortMerge(
-        inWorktreeAt worktreeURL: URL,
-        in repository: RepositorySummary
-    ) async throws -> RepositorySummary {
-        try Task.checkCancellation()
-        let updatedRepository = try await Task.detached(priority: .userInitiated) {
-            try Self.abortMergeSynchronously(inWorktreeAt: worktreeURL, in: repository)
-        }.value
-        try Task.checkCancellation()
-        return updatedRepository
-    }
-
     func trackingBranch(
         of branch: String,
         in repository: RepositorySummary
@@ -858,7 +846,9 @@ struct RepositoryInspector: Sendable {
         aborting: Bool
     ) throws -> RepositorySummary {
         let currentRepository = try inspectSynchronously(at: repository.rootURL)
-        guard let operation = currentRepository.operation else {
+        guard let operation = currentRepository.operation,
+              let confirmedOperation = repository.operation,
+              operation.identity == confirmedOperation.identity else {
             throw RepositoryOperationError.unavailable
         }
         guard aborting || operation.canContinue else {
@@ -1530,20 +1520,6 @@ struct RepositoryInspector: Sendable {
         return try inspectSynchronously(at: repository.rootURL)
     }
 
-    private static func abortMergeSynchronously(
-        inWorktreeAt worktreeURL: URL,
-        in repository: RepositorySummary
-    ) throws -> RepositorySummary {
-        let result = try runGit([
-            "-C", worktreeURL.path,
-            "merge", "--abort"
-        ])
-        guard result.status == 0 else {
-            throw RepositoryBranchError.mergeOutFailed(result.standardError)
-        }
-        return try inspectSynchronously(at: repository.rootURL)
-    }
-
     private static func trackingBranchSynchronously(
         of branch: String,
         in repository: RepositorySummary
@@ -2010,17 +1986,17 @@ struct RepositoryInspector: Sendable {
             throw RepositoryInspectionError.unreadableStatus(statusResult.standardError)
         }
 
-        let operationKind = try operationKindSynchronously(in: rootURL)
+        let operationIdentity = try operationIdentitySynchronously(in: rootURL)
         return try parseStatus(
             statusResult.standardOutput,
             rootURL: rootURL,
-            operationKind: operationKind
+            operationIdentity: operationIdentity
         )
     }
 
-    private static func operationKindSynchronously(
+    private static func operationIdentitySynchronously(
         in rootURL: URL
-    ) throws -> RepositorySummary.Operation.Kind? {
+    ) throws -> RepositorySummary.Operation.Identity? {
         let result = try runGit([
             "-C", rootURL.path,
             "rev-parse", "--path-format=absolute",
@@ -2034,10 +2010,22 @@ struct RepositoryInspector: Sendable {
         guard result.status == 0, paths.count == 3 else {
             throw RepositoryInspectionError.invalidGitOutput
         }
-        if paths.dropFirst().contains(where: FileManager.default.fileExists(atPath:)) {
-            return .rebase
+        // Rebase's directory survives Continue; a new operation creates a new marker.
+        // Conflict count and modification time change during normal resolution.
+        let markerPath = paths.dropFirst().first(where: FileManager.default.fileExists(atPath:))
+            ?? (FileManager.default.fileExists(atPath: paths[0]) ? paths[0] : nil)
+        guard let markerPath else { return nil }
+        let attributes = try FileManager.default.attributesOfItem(atPath: markerPath)
+        guard let fileNumber = attributes[.systemFileNumber] as? NSNumber,
+              let creationDate = attributes[.creationDate] as? Date else {
+            throw RepositoryInspectionError.invalidGitOutput
         }
-        return FileManager.default.fileExists(atPath: paths[0]) ? .merge : nil
+        return .init(
+            kind: markerPath == paths[0] ? .merge : .rebase,
+            markerURL: URL(fileURLWithPath: markerPath),
+            fileNumber: fileNumber.uint64Value,
+            creationDate: creationDate
+        )
     }
 
     static func workingTreeRoot(at selectedURL: URL) throws -> URL {
@@ -2423,7 +2411,7 @@ struct RepositoryInspector: Sendable {
     private static func parseStatus(
         _ data: Data,
         rootURL: URL,
-        operationKind: RepositorySummary.Operation.Kind?
+        operationIdentity: RepositorySummary.Operation.Identity?
     ) throws -> RepositorySummary {
         let records = data.split(separator: 0, omittingEmptySubsequences: true)
         var branchOID: String?
@@ -2549,9 +2537,9 @@ struct RepositoryInspector: Sendable {
             RepositorySummary.Upstream(name: $0, ahead: ahead, behind: behind)
         }
 
-        let operation = operationKind.map {
+        let operation = operationIdentity.map {
             RepositorySummary.Operation(
-                kind: $0,
+                identity: $0,
                 unresolvedConflictCount: changes.count(where: \.isConflicted)
             )
         }

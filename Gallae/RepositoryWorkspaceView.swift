@@ -52,7 +52,7 @@ struct RepositoryWorkspaceView: View {
     private var navigatorFoldWidth: CGFloat {
         CGFloat(navigatorWidth) + Self.detailComfortableWidth + 8
     }
-    @State private var isConfirmingOperationAbort = false
+    @State private var operationAbortRepository: RepositorySummary?
     @FocusState private var isChangeListFocused: Bool
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
@@ -141,7 +141,7 @@ struct RepositoryWorkspaceView: View {
             commitBody = ""
             isAmending = false
             amendPrefill = nil
-            isConfirmingOperationAbort = false
+            operationAbortRepository = nil
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
             // AppModel resets the scope for an ordinary open and retains it for Worktree navigation.
             if let conflict = model.repository?.changes.first(where: \.isConflicted) {
@@ -229,19 +229,26 @@ struct RepositoryWorkspaceView: View {
         }
         .confirmationDialog(
             "Abort Repository Operation?",
-            isPresented: $isConfirmingOperationAbort,
+            isPresented: Binding(
+                get: { operationAbortRepository != nil },
+                set: { if !$0 { operationAbortRepository = nil } }
+            ),
             titleVisibility: .visible,
-            presenting: model.repository?.operation
-        ) { operation in
-            Button("Abort \(operation.kind.name)", role: .destructive) {
-                Task { await model.abortRepositoryOperation() }
+            presenting: operationAbortRepository
+        ) { repository in
+            if let operation = repository.operation {
+                Button("Abort \(operation.kind.name)", role: .destructive) {
+                    Task { await model.abortRepositoryOperation(in: repository) }
+                }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { operation in
-            Text(
-                "Git will stop the \(operation.kind.name.lowercased()) and try to restore its earlier state. "
-                    + "Changes made while resolving conflicts may be discarded."
-            )
+        } message: { repository in
+            if let operation = repository.operation {
+                Text(
+                    "Git will stop the \(operation.kind.name.lowercased()) and try to restore its earlier state. "
+                        + "Changes made while resolving conflicts may be discarded."
+                )
+            }
         }
     }
 
@@ -348,7 +355,7 @@ struct RepositoryWorkspaceView: View {
                 CreateWorktreeSheet(model: model, existingBranch: request.branch)
             }
 
-            if let operation = model.repository?.operation {
+            if let repository = model.repository, let operation = repository.operation {
                 Divider()
                 HStack(spacing: 12) {
                     HStack(spacing: 12) {
@@ -369,7 +376,7 @@ struct RepositoryWorkspaceView: View {
                     )
                     Spacer()
                     Button("Continue") {
-                        Task { await model.continueRepositoryOperation() }
+                        Task { await model.continueRepositoryOperation(in: repository) }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -378,7 +385,7 @@ struct RepositoryWorkspaceView: View {
                     .accessibilityHint("Finish the \(operation.kind.name) using Git")
 
                     Button("Abort…", role: .destructive) {
-                        isConfirmingOperationAbort = true
+                        operationAbortRepository = repository
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

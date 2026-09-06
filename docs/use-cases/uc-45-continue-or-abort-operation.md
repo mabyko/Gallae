@@ -21,7 +21,8 @@
 
 - 충돌이 남아 있으면 Continue를 비활성화하고 Abort는 유지한다.
 - 확인 화면에서 Cancel을 선택하면 Repository를 바꾸지 않는다.
-- 실행 직전에 작업이 끝났거나 종류가 바뀌었으면 명령을 실행하지 않고 최신 상태를 보여 준다.
+- 실행 직전에 확인한 작업이 끝나거나 다른 작업으로 바뀌었으면 명령을 실행하지 않고 최신 상태를 보여 준다. 같은 종류의 Merge·Rebase를 다시 시작한 경우도 포함한다.
+- 확인 뒤 다른 Repository를 열었다면 이전 Workspace의 Continue·Abort를 실행하지 않는다. 별도 Worktree에서 충돌한 Merge의 중단 확인도 해당 Worktree에서 확인한 작업에만 적용한다.
 - Rebase Continue가 다음 충돌에서 멈추면 새 충돌과 진행 중인 Rebase 상태를 보여 준다.
 - Git 명령이 실패하면 실제 Repository를 다시 읽어 부분적으로 바뀐 상태도 숨기지 않고 오류를 표시한다.
 

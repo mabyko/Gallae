@@ -50,9 +50,17 @@ struct RepositorySummary: Equatable, Sendable {
             case rebase
         }
 
-        let kind: Kind
+        struct Identity: Equatable, Sendable {
+            let kind: Kind
+            let markerURL: URL
+            let fileNumber: UInt64
+            let creationDate: Date
+        }
+
+        let identity: Identity
         let unresolvedConflictCount: Int
 
+        var kind: Kind { identity.kind }
         var canContinue: Bool { unresolvedConflictCount == 0 }
     }
 

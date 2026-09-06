@@ -157,7 +157,7 @@ enum RepositoryOperationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            "The Merge or Rebase is no longer in progress. Refresh the Repository and try again."
+            "The Merge or Rebase has changed or is no longer in progress. Refresh the Repository and try again."
         case .unresolvedConflicts:
             "Resolve every conflict before continuing the Merge or Rebase."
         case .continueFailed(let message):

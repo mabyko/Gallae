@@ -8,7 +8,7 @@ enum AppScreen: Equatable, Sendable {
 
 enum RepositoryMergeIntoBranchResult: Equatable, Sendable {
     case completed
-    case conflictedInWorktree(URL)
+    case conflictedInWorktree(RepositorySummary)
     case failed
 }
 
@@ -1366,8 +1366,13 @@ final class AppModel {
         } catch is CancellationError {
             return .failed
         } catch RepositoryBranchError.mergeInWorktreeConflicted(let worktreeURL) {
+            let worktree = try? await inspector.inspect(at: worktreeURL)
             guard generation == inspectionGeneration else { return .failed }
-            return .conflictedInWorktree(worktreeURL)
+            guard let worktree, worktree.operation?.kind == .merge else {
+                present(RepositoryOperationError.unavailable, title: "Couldn’t Inspect Merge")
+                return .failed
+            }
+            return .conflictedInWorktree(worktree)
         } catch {
             guard generation == inspectionGeneration else { return .failed }
             present(error, title: "Couldn’t Create Merge Commit")
@@ -1375,17 +1380,20 @@ final class AppModel {
         }
     }
 
-    func abortMergeInWorktree(at worktreeURL: URL) async {
+    func abortMergeInWorktree(_ worktree: RepositorySummary) async {
         guard !isLoading, let repository else { return }
+        guard worktree.operation?.kind == .merge else {
+            present(RepositoryOperationError.unavailable, title: "Couldn’t Abort Merge")
+            return
+        }
 
         let generation = beginRepositoryWrite()
         defer { finishRepositoryWrite(generation) }
 
         do {
-            let updatedRepository = try await inspector.abortMerge(
-                inWorktreeAt: worktreeURL,
-                in: repository
-            )
+            _ = try await inspector.abortOperation(in: worktree)
+            guard generation == inspectionGeneration else { return }
+            let updatedRepository = try await inspector.inspect(at: repository.rootURL)
             guard generation == inspectionGeneration else { return }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         } catch is CancellationError {
@@ -1886,35 +1894,28 @@ final class AppModel {
         }
     }
 
-    func continueRepositoryOperation() async {
-        await updateRepositoryOperation(aborting: false)
+    func continueRepositoryOperation(in repository: RepositorySummary) async {
+        await updateRepositoryOperation(in: repository, aborting: false)
     }
 
-    func abortRepositoryOperation() async {
-        await updateRepositoryOperation(aborting: true)
+    func abortRepositoryOperation(in repository: RepositorySummary) async {
+        await updateRepositoryOperation(in: repository, aborting: true)
     }
 
-    private func updateRepositoryOperation(aborting: Bool) async {
+    private func updateRepositoryOperation(in repository: RepositorySummary, aborting: Bool) async {
+        guard !isLoading else { return }
         guard
-            !isLoading,
-            let repository,
-            let operation = repository.operation,
-            aborting || operation.canContinue
+            let activeRepository = self.repository,
+            sameFileLocation(activeRepository.rootURL, repository.rootURL),
+            let operation = repository.operation
         else {
+            present(RepositoryOperationError.unavailable, title: "Couldn’t Update Repository Operation")
             return
         }
 
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
+        let generation = beginRepositoryWrite()
+        defer { finishRepositoryWrite(generation) }
         library.invalidateActivity(at: repository.rootURL)
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-                isWritingRepository = false
-            }
-        }
 
         do {
             let updatedRepository: RepositorySummary
