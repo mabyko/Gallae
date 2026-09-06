@@ -386,7 +386,7 @@ struct RepositoryDiffView: View {
     let isBusy: Bool
     let stage: () -> Void
     let unstage: () -> Void
-    let discard: (RepositorySummary.Change.ID) -> Void
+    let discard: () -> Void
     let resolveConflict: (RepositoryConflictSide) -> Void
     let markConflictResolved: () -> Void
     let openMergeTool: () -> Void
@@ -671,13 +671,9 @@ struct RepositoryDiffView: View {
                 }
             }
         }
-        .onChange(of: fileURL) {
-            // The side is a reading choice about one file, not a mode; another file starts fresh.
-            chosenScope = nil
-        }
         .alert("Discard Unstaged Changes?", isPresented: $isConfirmingDiscard) {
             Button("Discard Changes", role: .destructive) {
-                discard(diff.path)
+                discard()
             }
             Button("Cancel", role: .cancel) {}
         } message: {

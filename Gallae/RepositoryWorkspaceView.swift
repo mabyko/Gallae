@@ -655,6 +655,7 @@ struct RepositoryWorkspaceView: View {
                         Button("Show History") { show(.history) }
                     }
                 } else {
+                    let request = model.displayedDiffRequest
                     RepositoryDiffView(
                         state: model.diffState,
                         fileURL: selectedFileURL(in: repository),
@@ -664,23 +665,23 @@ struct RepositoryWorkspaceView: View {
                         canResolveConflict: model.canResolveSelectedConflict,
                         canStageHunks: model.canStageSelectedHunks,
                         canUnstageHunks: model.canUnstageSelectedHunks,
-                        isBusy: model.isLoading,
-                        stage: { Task { await model.stageSelectedChange() } },
-                        unstage: { Task { await model.unstageSelectedChange() } },
-                        discard: { id in Task { await model.discardChange(id: id) } },
+                        isBusy: model.isLoading || request != model.diffRequest,
+                        stage: { Task { await model.stageSelectedChange(for: request) } },
+                        unstage: { Task { await model.unstageSelectedChange(for: request) } },
+                        discard: { Task { await model.discardSelectedChange(for: request) } },
                         resolveConflict: { side in
-                            Task { await model.resolveSelectedConflict(using: side) }
+                            Task { await model.resolveSelectedConflict(using: side, for: request) }
                         },
                         markConflictResolved: {
-                            Task { await model.markSelectedConflictResolved() }
+                            Task { await model.markSelectedConflictResolved(for: request) }
                         },
-                        openMergeTool: { Task { await model.openSelectedConflictInMergeTool() } },
+                        openMergeTool: { Task { await model.openSelectedConflictInMergeTool(for: request) } },
                         activeMergeTool: model.activeMergeTool,
                         updateHunk: { hunk in
-                            Task { await model.updateSelectedHunk(hunk) }
+                            Task { await model.updateSelectedHunk(hunk, for: request) }
                         },
                         discardHunk: { hunk in
-                            Task { await model.discardSelectedHunk(hunk) }
+                            Task { await model.discardSelectedHunk(hunk, for: request) }
                         },
                         retry: { Task { await model.loadSelectedDiff() } },
                         loadExpanded: {
@@ -691,6 +692,7 @@ struct RepositoryWorkspaceView: View {
                             }
                         }
                     )
+                    .id(selectedFileURL(in: repository))
                 }
             }
     }

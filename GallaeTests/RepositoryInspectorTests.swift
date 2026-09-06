@@ -3476,6 +3476,75 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testChangingDiffSelectionInvalidatesDisplayBeforeNextRead() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        for path in ["a.txt", "b.txt"] { try write("before\n", to: path, in: root) }
+        try commitAll(in: root, message: "Initial")
+        for path in ["a.txt", "b.txt"] { try write("after \(path)\n", to: path, in: root) }
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: root)
+        model.selectedChangeID = "a.txt"
+        await model.loadSelectedDiff()
+        guard case .loaded(let firstDiff) = model.diffState else { return XCTFail("Expected a.txt") }
+        let hunk = try XCTUnwrap(firstDiff.sections.first?.hunks.first)
+        let firstRequest = try XCTUnwrap(model.displayedDiffRequest)
+
+        // Selection changes synchronously; SwiftUI's next loading Task has not started yet.
+        model.selectedChangeID = "b.txt"
+        XCTAssertEqual(model.diffState, .loading)
+        await model.stageSelectedChange(for: firstRequest)
+        await model.updateSelectedHunk(hunk, for: firstRequest)
+        await model.discardSelectedHunk(hunk, for: firstRequest)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "diff", "--cached", "--name-only"]), "")
+        await model.loadSelectedDiff()
+        guard case .loaded(let secondDiff) = model.diffState else { return XCTFail("Expected b.txt") }
+        XCTAssertEqual(secondDiff.path, "b.txt")
+        let secondRequest = try XCTUnwrap(model.displayedDiffRequest)
+        // A callback queued by the old view must not retarget B, even after B finishes loading.
+        await model.stageSelectedChange(for: firstRequest)
+        await model.discardSelectedChange(for: firstRequest)
+        await model.updateSelectedHunk(hunk, for: firstRequest)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "diff", "--cached", "--name-only"]), "")
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "a.txt"), encoding: .utf8), "after a.txt\n")
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "b.txt"), encoding: .utf8), "after b.txt\n")
+
+        // Refreshing the same target keeps the content until its replacement is ready.
+        await model.refreshRepository()
+        XCTAssertEqual(model.diffState, .loaded(secondDiff))
+        XCTAssertEqual(model.displayedDiffRequest, secondRequest)
+        XCTAssertNotEqual(model.displayedDiffRequest, model.diffRequest)
+        await model.stageSelectedChange(for: secondRequest)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "diff", "--cached", "--name-only"]), "")
+        await model.loadSelectedDiff()
+        XCTAssertEqual(model.displayedDiffRequest, model.diffRequest)
+        await model.updateSelectedHunk(
+            try XCTUnwrap(secondDiff.sections.first?.hunks.first), for: model.displayedDiffRequest
+        )
+        XCTAssertEqual(try gitOutput(["-C", root.path, "diff", "--cached", "--name-only"]), "b.txt\n")
+        model.selectedChangeID = nil
+        XCTAssertEqual(model.diffState, .noSelection)
+
+        let other = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: other) }
+        try initializeRepository(at: other)
+        try write("before\n", to: "a.txt", in: other)
+        try commitAll(in: other, message: "Other")
+        try write("after a.txt\n", to: "a.txt", in: other)
+        await model.openRepository(at: other)
+        await model.loadSelectedDiff()
+        await model.stageSelectedChange(for: firstRequest)
+        await model.updateSelectedHunk(hunk, for: firstRequest)
+        await model.discardSelectedChange(for: firstRequest)
+        XCTAssertEqual(try gitOutput(["-C", other.path, "diff", "--cached", "--name-only"]), "")
+        XCTAssertEqual(try String(contentsOf: other.appending(path: "a.txt"), encoding: .utf8), "after a.txt\n")
+    }
+
+    @MainActor
     func testRefreshPreservesSavedFileSelectionAndChangingRevisionResetsIt() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3523,6 +3592,18 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(model.selectedStashID, stashID)
         XCTAssertEqual(model.selectedStashFileID, "b.txt")
         XCTAssertEqual(model.stashPatchState, originalStashPatch)
+
+        // Changing just the file must also clear the previous patch before the next read starts.
+        model.selectedHistoryFileID = "a.txt"
+        model.selectedStashFileID = "a.txt"
+        XCTAssertEqual(model.commitPatchState, .loading)
+        XCTAssertEqual(model.stashPatchState, .loading)
+        await model.loadSelectedCommitPatch()
+        await model.loadSelectedStashPatch()
+        model.selectedHistoryFileID = nil
+        model.selectedStashFileID = nil
+        XCTAssertEqual(model.commitPatchState, .noSelection)
+        XCTAssertEqual(model.stashPatchState, .noSelection)
 
         // A vanished selection falls back to an existing file.
         model.selectedHistoryFileID = "missing.txt"
@@ -4795,7 +4876,7 @@ final class RepositoryInspectorTests: XCTestCase {
             contentsOf: repositoryURL.appending(path: "file.txt")
         )
 
-        await model.stageSelectedChange()
+        await model.stageSelectedChange(for: model.diffRequest)
 
         let change = try XCTUnwrap(model.repository?.changes.first)
         XCTAssertEqual(change.path, "file.txt")
@@ -4912,7 +4993,7 @@ final class RepositoryInspectorTests: XCTestCase {
         let contentBeforeStage = try Data(contentsOf: fileURL)
         try FileManager.default.removeItem(at: repositoryURL.appending(path: ".git"))
 
-        await model.stageSelectedChange()
+        await model.stageSelectedChange(for: model.diffRequest)
 
         XCTAssertEqual(model.repository?.changes.first?.unstaged, .modified)
         XCTAssertEqual(try Data(contentsOf: fileURL), contentBeforeStage)
@@ -4941,7 +5022,7 @@ final class RepositoryInspectorTests: XCTestCase {
             contentsOf: repositoryURL.appending(path: "file.txt")
         )
 
-        await model.unstageSelectedChange()
+        await model.unstageSelectedChange(for: model.diffRequest)
 
         let change = try XCTUnwrap(model.repository?.changes.first)
         XCTAssertEqual(change.path, "file.txt")
@@ -4977,7 +5058,7 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(renamed.path, "새 이름 [1].txt")
         XCTAssertEqual(renamed.staged, .renamed)
 
-        await model.unstageSelectedChange()
+        await model.unstageSelectedChange(for: model.diffRequest)
 
         XCTAssertTrue(model.repository?.changes.allSatisfy { $0.staged == nil } == true)
         XCTAssertEqual(try String(contentsOf: destinationURL, encoding: .utf8), "content\n")
@@ -5005,7 +5086,7 @@ final class RepositoryInspectorTests: XCTestCase {
         let fileURL = repositoryURL.appending(path: "new file.txt")
         let contentBeforeUnstage = try Data(contentsOf: fileURL)
 
-        await model.unstageSelectedChange()
+        await model.unstageSelectedChange(for: model.diffRequest)
 
         let change = try XCTUnwrap(model.repository?.changes.first)
         XCTAssertNil(change.staged)

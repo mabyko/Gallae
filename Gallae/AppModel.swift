@@ -251,8 +251,21 @@ final class AppModel {
     let library: RepositoryLibraryModel
     var screen: AppScreen = .library
     var repository: RepositorySummary?
-    var selectedChangeID: String?
-    var diffState: RepositoryDiffLoadState = .noSelection
+    var selectedChangeID: String? {
+        didSet {
+            guard selectedChangeID != oldValue else { return }
+            // Selection changes before SwiftUI starts its next read Task.
+            diffGeneration += 1
+            diffState = selectedChangeID == nil ? .noSelection : .loading
+        }
+    }
+    private(set) var diffState: RepositoryDiffLoadState = .noSelection
+    private var loadedDiffRequest: RepositoryDiffRequest?
+    /// Actions capture the request that produced the visible diff, including during a refresh.
+    var displayedDiffRequest: RepositoryDiffRequest? {
+        guard case .loaded = diffState else { return nil }
+        return loadedDiffRequest
+    }
     var selectedHistoryCommitID: String? {
         didSet {
             guard selectedHistoryCommitID != oldValue else { return }
@@ -305,9 +318,15 @@ final class AppModel {
         return worktree.removalRestriction(currentURL: repository.rootURL) == nil
     }
     var remotesState: RepositoryRemotesLoadState = .notLoaded
-    var selectedHistoryFileID: String?
+    var selectedHistoryFileID: String? {
+        didSet {
+            guard selectedHistoryFileID != oldValue else { return }
+            commitPatchGeneration += 1
+            commitPatchState = selectedHistoryFileID == nil ? .noSelection : .loading
+        }
+    }
     var commitFilesState: RepositoryCommitFilesLoadState = .noSelection
-    var commitPatchState: RepositoryCommitPatchLoadState = .noSelection
+    private(set) var commitPatchState: RepositoryCommitPatchLoadState = .noSelection
     private(set) var selectedCommitSignature: RepositoryCommitSignature?
     var selectedStashID: String? {
         didSet {
@@ -320,9 +339,15 @@ final class AppModel {
     var stashesState: RepositoryStashesLoadState = .notLoaded
     var selectedReflogEntryID: String?
     var reflogState: RepositoryReflogLoadState = .notLoaded
-    var selectedStashFileID: String?
+    var selectedStashFileID: String? {
+        didSet {
+            guard selectedStashFileID != oldValue else { return }
+            stashPatchGeneration += 1
+            stashPatchState = selectedStashFileID == nil ? .noSelection : .loading
+        }
+    }
     var stashFilesState: RepositoryCommitFilesLoadState = .noSelection
-    var stashPatchState: RepositoryCommitPatchLoadState = .noSelection
+    private(set) var stashPatchState: RepositoryCommitPatchLoadState = .noSelection
     var isLoading = false
     var isWritingRepository = false
     var activeMergeTool: String?
@@ -1740,8 +1765,8 @@ final class AppModel {
         }
     }
 
-    func stageSelectedChange() async {
-        guard let selectedChangeID else { return }
+    func stageSelectedChange(for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest, let selectedChangeID else { return }
         await stageChanges(ids: [selectedChangeID])
     }
 
@@ -1769,8 +1794,8 @@ final class AppModel {
         }
     }
 
-    func unstageSelectedChange() async {
-        guard let selectedChangeID else { return }
+    func unstageSelectedChange(for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest, let selectedChangeID else { return }
         await unstageChanges(ids: [selectedChangeID])
     }
 
@@ -1807,8 +1832,14 @@ final class AppModel {
         }
     }
 
-    func openSelectedConflictInMergeTool() async {
-        guard !isLoading, let repository, let change = selectedChange, change.isConflicted else { return }
+    func discardSelectedChange(for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest, let selectedChangeID else { return }
+        await discardChange(id: selectedChangeID)
+    }
+
+    func openSelectedConflictInMergeTool(for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest,
+              !isLoading, let repository, let change = selectedChange, change.isConflicted else { return }
         let tool = MergeTool(rawValue: UserDefaults.standard.string(forKey: MergeTool.storageKey) ?? "") ?? .git
         let executableURL = tool.executableURL
         inspectionGeneration += 1
@@ -1834,8 +1865,9 @@ final class AppModel {
         }
     }
 
-    func resolveSelectedConflict(using side: RepositoryConflictSide) async {
+    func resolveSelectedConflict(using side: RepositoryConflictSide, for request: RepositoryDiffRequest?) async {
         guard
+            let request, request == diffRequest,
             !isLoading,
             let repository,
             let change = selectedChange,
@@ -1867,8 +1899,9 @@ final class AppModel {
         }
     }
 
-    func markSelectedConflictResolved() async {
+    func markSelectedConflictResolved(for request: RepositoryDiffRequest?) async {
         guard
+            let request, request == diffRequest,
             !isLoading,
             let repository,
             let change = selectedChange,
@@ -1949,8 +1982,9 @@ final class AppModel {
         }
     }
 
-    func updateSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
-        guard !isLoading, let repository, let change = selectedChange else { return }
+    func updateSelectedHunk(_ hunk: RepositoryDiff.Hunk, for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest,
+              !isLoading, let repository, let change = selectedChange else { return }
 
         let generation = beginRepositoryWrite()
         defer { finishRepositoryWrite(generation) }
@@ -1977,8 +2011,9 @@ final class AppModel {
     }
 
     /// Rewrites the working tree file without one hunk or its chosen lines. The caller confirms first.
-    func discardSelectedHunk(_ hunk: RepositoryDiff.Hunk) async {
-        guard !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
+    func discardSelectedHunk(_ hunk: RepositoryDiff.Hunk, for request: RepositoryDiffRequest?) async {
+        guard let request, request == diffRequest,
+              !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
 
         let generation = beginRepositoryWrite()
         defer { finishRepositoryWrite(generation) }
@@ -2135,6 +2170,7 @@ final class AppModel {
                 maximumOutputBytes: maximumOutputBytes
             )
             guard generation == diffGeneration, request == diffRequest else { return }
+            loadedDiffRequest = request
             diffState = .loaded(diff)
         } catch is CancellationError {
             return
@@ -2313,11 +2349,6 @@ final class AppModel {
             selectedHistoryFileID = previousSelection.flatMap { id in
                 files.contains { $0.id == id } ? id : nil
             } ?? files.first?.id
-            if selectedHistoryFileID == nil {
-                commitPatchState = .noSelection
-            } else if selectedHistoryFileID != previousSelection {
-                commitPatchState = .loading
-            }
         } catch is CancellationError {
             return
         } catch {
@@ -2482,11 +2513,6 @@ final class AppModel {
             selectedStashFileID = previousSelection.flatMap { id in
                 files.contains { $0.id == id } ? id : nil
             } ?? files.first?.id
-            if selectedStashFileID == nil {
-                stashPatchState = .noSelection
-            } else if selectedStashFileID != previousSelection {
-                stashPatchState = .loading
-            }
         } catch is CancellationError {
             return
         } catch {
