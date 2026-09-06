@@ -20,6 +20,7 @@
 
 - 사용자가 Cancel 또는 Escape를 누르면 실행 중인 Fetch를 중단하고 기존 Workspace를 유지한다.
 - 성공하면 캡슐이 `Fetched` 또는 `Fetched from <remote>`를 잠깐 보이고 사라진다.
+- Fetch 중 다른 Repository를 열면 이전 Repository의 완료 결과·오류·선택 화면이 새 Workspace를 덮지 않는다. 같은 Repository에서 Stage·Commit을 완료한 경우에는 두 작업의 최신 상태를 함께 읽는다.
 - remote가 없으면 설정되지 않았다는 오류를 표시한다.
 - 인증 또는 네트워크 오류가 발생하면 Git의 원인을 표시하고 같은 Workspace에서 다시 시도할 수 있다.
 - 터미널 입력은 기다리지 않으며 기존 credential helper와 SSH 환경은 그대로 사용한다.

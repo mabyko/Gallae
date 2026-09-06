@@ -978,11 +978,17 @@ final class AppModel {
                     remoteOperationID = nil
                     remoteTask = nil
                     remoteOperation = nil
-                    if writesWorkingTree {
+                    if writesWorkingTree, generation == inspectionGeneration {
                         isLoading = false
                         isWritingRepository = false
                     }
                 }
+            }
+
+            let acceptsCompletion = {
+                self.remoteOperationID == operationID &&
+                    self.repository.map({ sameFileLocation($0.rootURL, repository.rootURL) }) == true &&
+                    (!writesWorkingTree || self.inspectionGeneration == generation)
             }
 
             do {
@@ -1012,10 +1018,10 @@ final class AppModel {
                     try await inspector.deleteRemoteBranch(trackingRef: trackingRef, in: repository)
                 }
                 guard remoteOperationID == operationID else { return }
-                if writesWorkingTree {
-                    guard generation == inspectionGeneration else { return }
-                    apply(updatedRepository, showWorkspaceOnSuccess: false)
-                } else if inspectionGeneration == startGeneration {
+                if operation.fetchesRemote { lastFetchDates[updatedRepository.rootURL] = .now }
+                library.invalidateActivity(at: updatedRepository.rootURL)
+                guard acceptsCompletion() else { return }
+                if writesWorkingTree || inspectionGeneration == startGeneration {
                     apply(updatedRepository, showWorkspaceOnSuccess: false)
                 } else if !isLoading {
                     // Something else read the Repository while the remote operation ran; read once
@@ -1028,13 +1034,12 @@ final class AppModel {
                         presentFailure: false
                     )
                 }
+                guard acceptsCompletion() else { return }
                 showRemoteOperationResult(operation.successTitle(before: repository))
-                if operation.fetchesRemote { lastFetchDates[updatedRepository.rootURL] = .now }
-                library.invalidateActivity(at: updatedRepository.rootURL)
             } catch is CancellationError {
                 return
             } catch let error as RepositoryFetchError {
-                guard remoteOperationID == operationID else { return }
+                guard acceptsCompletion() else { return }
                 if operation == .automaticFetch {
                     setAutomaticFetchEnabled(false)
                     present(error, title: operation.failureTitle)
@@ -1050,7 +1055,7 @@ final class AppModel {
                     present(error, title: operation.failureTitle)
                 }
             } catch let error as RepositoryPushError {
-                guard remoteOperationID == operationID else { return }
+                guard acceptsCompletion() else { return }
                 if operation == .publish {
                     switch error {
                     case .noRemote:
@@ -1069,16 +1074,16 @@ final class AppModel {
                     present(error, title: operation.failureTitle)
                 }
             } catch {
-                guard remoteOperationID == operationID else { return }
+                guard acceptsCompletion() else { return }
                 if operation == .automaticFetch {
                     setAutomaticFetchEnabled(false)
                 }
-                if operation == .pull,
-                   let refreshedRepository = try? await inspector.inspect(at: repository.rootURL),
-                   remoteOperationID == operationID,
-                   generation == inspectionGeneration
-                {
-                    apply(refreshedRepository, showWorkspaceOnSuccess: false)
+                if writesWorkingTree {
+                    let refreshedRepository = try? await inspector.inspect(at: repository.rootURL)
+                    guard acceptsCompletion() else { return }
+                    if let refreshedRepository {
+                        apply(refreshedRepository, showWorkspaceOnSuccess: false)
+                    }
                 }
                 present(error, title: operation.failureTitle)
             }

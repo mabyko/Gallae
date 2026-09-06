@@ -23,6 +23,7 @@
 - local과 upstream history가 갈라졌으면 merge하거나 rebase하지 않고 오류를 표시한다.
 - remote 변경과 겹치는 local 수정, 인증 또는 네트워크 오류가 있으면 현재 HEAD·index·working tree를 유지한다.
 - Pull의 Fetch 단계에서 remote-tracking ref가 갱신됐으면 최신 ahead/behind를 다시 읽는다.
+- 다른 Repository를 여는 작업이 시작됐다면 이전 Pull의 완료·오류가 새 Workspace나 진행 중인 읽기 상태를 바꾸지 않는다.
 
 ## 완료 확인
 

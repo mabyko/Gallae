@@ -160,6 +160,138 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(model.historySelection)
     }
 
+    @MainActor
+    func testRemoteCompletionStaysWithItsRepositoryAndPreservesConcurrentLocalWork() async throws {
+        func waitUntil(_ predicate: () -> Bool) async throws -> Bool {
+            for _ in 0..<1_000 {
+                if predicate() { return true }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            return false
+        }
+
+        for scenario in ["switch", "failure", "localCommit", "duringRefresh", "pull", "pullFailure"] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let source = directory.appending(path: "source")
+            let remote = directory.appending(path: "remote.git")
+            let first = directory.appending(path: "first")
+            let second = directory.appending(path: "second")
+            let started = directory.appending(path: "started")
+            let release = directory.appending(path: "release")
+            let uploadPack = directory.appending(path: "upload-pack.sh")
+            try initializeRepository(at: source)
+            try write("base\n", to: "file.txt", in: source)
+            try commitAll(in: source, message: "Base")
+            try runGit(["clone", "--quiet", "--bare", source.path, remote.path])
+            try runGit(["clone", "--quiet", remote.path, first.path])
+            try initializeRepository(at: first)
+            try initializeRepository(at: second)
+            try write("remote\n", to: "remote.txt", in: source)
+            try commitAll(in: source, message: "Remote")
+            try runGit(["-C", source.path, "push", "--quiet", remote.path, "main"])
+            let remoteHead = try gitOutput(["-C", remote.path, "rev-parse", "HEAD"])
+            let fails = scenario == "failure" || scenario == "pullFailure"
+            let pulls = scenario == "pull" || scenario == "pullFailure"
+            if fails { try Data().write(to: directory.appending(path: "fail")) }
+            let script = """
+            #!/bin/sh
+            gate_dir=${0%/*}
+            : > "$gate_dir/started"
+            attempts=0
+            while [ ! -e "$gate_dir/release" ]; do
+                attempts=$((attempts + 1))
+                [ "$attempts" -le 1500 ] || exit 1
+                sleep 0.02
+            done
+            [ ! -e "$gate_dir/fail" ] || exit 1
+            exec /usr/bin/git upload-pack "$@"
+            """
+            try script.write(to: uploadPack, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uploadPack.path)
+            try runGit(["-C", first.path, "config", "remote.origin.uploadpack", uploadPack.path])
+            let suite = "GallaeTests-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let gate = RepositoryReadGate()
+            let readStarted = pulls || scenario == "duringRefresh"
+                ? expectation(description: "Repository read waits at \(scenario)") : nil
+            let model = AppModel(store: LibraryStore(defaults: defaults)) { url in
+                let result = try await RepositoryInspector().inspect(at: url)
+                if (pulls && sameFileLocation(url, second)) ||
+                    (scenario == "duringRefresh" && sameFileLocation(url, first) &&
+                     FileManager.default.fileExists(atPath: release.path)) {
+                    readStarted?.fulfill()
+                    await gate.wait()
+                }
+                return result
+            }
+            defer {
+                try? Data().write(to: release)
+                model.cancelRemoteOperation()
+                Task { await gate.release() }
+            }
+            await model.openRepository(at: first)
+            if pulls { model.pullRepository() }
+            else { model.fetch(from: "origin", pruning: false, in: first) }
+            guard try await waitUntil({ FileManager.default.fileExists(atPath: started.path) }) else {
+                return XCTFail("Remote operation did not start: \(scenario)")
+            }
+
+            var pendingOpen: Task<Bool, Never>?
+            if pulls {
+                pendingOpen = Task { await model.openRepository(at: second) }
+                await fulfillment(of: [try XCTUnwrap(readStarted)], timeout: 5)
+            } else if scenario == "localCommit" {
+                try write("local\n", to: "local.txt", in: first)
+                await model.refreshRepository()
+                await model.stageAllChanges()
+                let committed = await model.commit(subject: "Local", body: "", amend: false)
+                XCTAssertTrue(committed)
+            } else if scenario == "duringRefresh" {
+                await model.refreshRepository()
+            } else {
+                model.showLibrary()
+                await model.openRepository(at: second)
+            }
+            try Data().write(to: release)
+            if scenario == "duringRefresh" {
+                await fulfillment(of: [try XCTUnwrap(readStarted)], timeout: 5)
+                await model.openRepository(at: second)
+                await gate.release()
+            }
+            let expected = model.repository
+            let revision = model.repositoryRevision
+            guard try await waitUntil({ !model.isSyncing }) else {
+                return XCTFail("Remote operation did not finish: \(scenario)")
+            }
+            XCTAssertNil(model.errorMessage, scenario)
+            XCTAssertNil(model.repositorySheetRequest, scenario)
+            if pulls {
+                XCTAssertTrue(model.isLoading, "A late Pull must not unlock B's pending read")
+                await gate.release()
+                let opened = await pendingOpen?.value
+                XCTAssertEqual(opened, true)
+                XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+            } else if scenario == "localCommit" {
+                XCTAssertEqual(model.repository?.upstream?.ahead, 1)
+                XCTAssertEqual(model.repository?.upstream?.behind, 1)
+                XCTAssertEqual(try gitOutput(["-C", first.path, "log", "-1", "--format=%s"]), "Local\n")
+                XCTAssertEqual(try String(contentsOf: first.appending(path: "local.txt"), encoding: .utf8), "local\n")
+                XCTAssertTrue(model.repository?.changes.isEmpty == true)
+            } else {
+                XCTAssertEqual(model.repository, expected, scenario)
+                XCTAssertEqual(model.repositoryRevision, revision, scenario)
+                XCTAssertNil(model.remoteOperationResult, scenario)
+            }
+            if !fails {
+                XCTAssertEqual(try gitOutput(["-C", first.path, "rev-parse", "refs/remotes/origin/main"]), remoteHead)
+            }
+            XCTAssertFalse(model.isLoading)
+            XCTAssertFalse(model.isWritingRepository)
+        }
+    }
+
     func testAddsRemoteWithoutFetchingOrPublishing() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
