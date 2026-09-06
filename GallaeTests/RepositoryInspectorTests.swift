@@ -161,6 +161,211 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectionCompletionCannotUnlockAnotherRepositoryRead() async throws {
+        for fails in [false, true] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let first = directory.appending(path: "first")
+            let second = directory.appending(path: "second")
+            let remote = directory.appending(path: "remote.git")
+            try initializeRepository(at: first)
+            try initializeRepository(at: second)
+            try write("base\n", to: "file.txt", in: first)
+            try commitAll(in: first, message: "Base")
+            try runGit(["clone", "--bare", "--quiet", first.path, remote.path])
+            try runGit(["-C", first.path, "remote", "add", "origin", remote.path])
+            let script = directory.appending(path: "upload-pack.sh")
+            try writeBlockingScript(at: script, afterRelease: "exec /usr/bin/git upload-pack \"$@\"")
+            try runGit(["-C", first.path, "config", "remote.origin.uploadpack", script.path])
+            if fails { try Data().write(to: directory.appending(path: "fail")) }
+            let suite = "GallaeTests-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let gate = RepositoryReadGate()
+            let readingSecond = expectation(description: "B is still being read")
+            let model = AppModel(store: LibraryStore(defaults: defaults)) { url in
+                let result = try await RepositoryInspector().inspect(at: url)
+                if sameFileLocation(url, second) {
+                    readingSecond.fulfill()
+                    await gate.wait()
+                }
+                return result
+            }
+            defer {
+                try? Data().write(to: directory.appending(path: "release"))
+                Task { await gate.release() }
+            }
+            await model.openRepository(at: first)
+            let connection = Task { try await model.testRemoteConnection(named: "origin", in: first) }
+            let started = await waitForFile(directory.appending(path: "started"))
+            guard started else { return XCTFail("Connection did not start") }
+            XCTAssertTrue(model.isLoading)
+            XCTAssertFalse(model.isWritingRepository, "A connection test only reads")
+            let openingSecond = Task { await model.openRepository(at: second) }
+            await fulfillment(of: [readingSecond], timeout: 5)
+            try Data().write(to: directory.appending(path: "release"))
+            do {
+                try await connection.value
+                XCTAssertFalse(fails)
+            } catch {
+                XCTAssertTrue(fails, "Unexpected connection failure: \(error)")
+            }
+            XCTAssertTrue(model.isLoading, "A's completion must not unlock B's pending read")
+            XCTAssertFalse(model.isWritingRepository)
+            await gate.release()
+            let opened = await openingSecond.value
+            XCTAssertTrue(opened)
+            XCTAssertFalse(model.isLoading)
+            XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+        }
+    }
+
+    @MainActor
+    func testRemoteRenameRecheckCannotReplaceAnotherRepository() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appending(path: "first")
+        let second = directory.appending(path: "second")
+        try initializeRepository(at: first)
+        try initializeRepository(at: second)
+        try write("base\n", to: "file.txt", in: first)
+        try commitAll(in: first, message: "Base")
+        try runGit(["-C", first.path, "remote", "add", "origin", directory.path])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: first)
+        let script = directory.appending(path: "fsmonitor.sh")
+        try writeBlockingScript(at: script, afterRelease: "exit 1")
+        // Only pause the status recheck after the remote has actually been renamed.
+        let contents = try String(contentsOf: script, encoding: .utf8)
+        try contents.replacingOccurrences(
+            of: "gate_dir=${0%/*}",
+            with: "gate_dir=${0%/*}\n/usr/bin/git config --get remote.origin.url >/dev/null && exit 1"
+        ).write(to: script, atomically: false, encoding: .utf8)
+        try runGit(["-C", first.path, "config", "core.fsmonitor", script.path])
+        defer { try? Data().write(to: directory.appending(path: "release")) }
+        let rename = Task {
+            try await model.updateRemote(named: "origin", renamingTo: "backup", fetchURL: directory.path,
+                                         pushURL: directory.path, in: first)
+        }
+        let started = await waitForFile(directory.appending(path: "started"))
+        guard started else { return XCTFail("Rename status recheck did not start") }
+        await model.openRepository(at: second)
+        await model.loadRemotes(in: second)
+        let expectedRepository = model.repository
+        let expectedRemotes = model.remotesState
+        try Data().write(to: directory.appending(path: "release"))
+        do { try await rename.value }
+        catch is CancellationError { }
+        catch { XCTFail("Unexpected rename failure: \(error)") }
+        XCTAssertEqual(model.repository, expectedRepository)
+        XCTAssertEqual(model.remotesState, expectedRemotes)
+        XCTAssertEqual(try gitOutput(["-C", first.path, "remote"]), "backup\n")
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.isWritingRepository)
+    }
+
+    @MainActor
+    func testFailedOperationRecheckCannotReportErrorInAnotherRepository() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appending(path: "first")
+        let second = directory.appending(path: "second")
+        try initializeRepository(at: first)
+        try initializeRepository(at: second)
+        try write("base\n", to: "file.txt", in: first)
+        try commitAll(in: first, message: "Base")
+        try write("changed\n", to: "file.txt", in: first)
+        try runGit(["-C", first.path, "stash", "push", "--quiet"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: first)
+        await model.loadStashes()
+        let stash = try XCTUnwrap(model.selectedStash)
+        try runGit(["-C", first.path, "stash", "drop", "--quiet"])
+        let script = directory.appending(path: "fsmonitor.sh")
+        // Fail the Git status process after its caller has moved to another Repository.
+        try writeBlockingScript(at: script, afterRelease: "kill -TERM \"$PPID\"")
+        try runGit(["-C", first.path, "config", "core.fsmonitor", script.path])
+        defer { try? Data().write(to: directory.appending(path: "release")) }
+        let dropping = Task { await model.dropStash(stash) }
+        let started = await waitForFile(directory.appending(path: "started"))
+        guard started else { return XCTFail("Failure status recheck did not start") }
+        await model.openRepository(at: second)
+        try Data().write(to: directory.appending(path: "release"))
+        await dropping.value
+        XCTAssertNil(model.errorMessage, "A's failed recovery read must not show A's error in B")
+        XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+        XCTAssertFalse(model.isLoading)
+    }
+
+    @MainActor
+    func testMergeToolCompletionKeepsAnotherRepositoryToolProgress() async throws {
+        // Override the preference in this test process only; the installed app's setting is untouched.
+        let preferences = UserDefaults.standard
+        let originalArguments = preferences.volatileDomain(forName: UserDefaults.argumentDomain)
+        preferences.setVolatileDomain(originalArguments.merging([MergeTool.storageKey: MergeTool.git.rawValue]) { _, new in new },
+                                      forName: UserDefaults.argumentDomain)
+        defer { preferences.setVolatileDomain(originalArguments, forName: UserDefaults.argumentDomain) }
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appending(path: "first")
+        let second = directory.appending(path: "second")
+        for root in [first, second] {
+            try initializeRepository(at: root)
+            try write("base\n", to: "file.txt", in: root)
+            try commitAll(in: root, message: "Base")
+            try runGit(["-C", root.path, "switch", "-c", "feature"])
+            try write("theirs\n", to: "file.txt", in: root)
+            try commitAll(in: root, message: "Feature")
+            try runGit(["-C", root.path, "switch", "main"])
+            try write("ours\n", to: "file.txt", in: root)
+            try commitAll(in: root, message: "Main")
+            try runGit(["-C", root.path, "merge", "feature"], expectedStatus: 1)
+            try writeBlockingScript(at: root.appending(path: ".git/merge-gate.sh"),
+                                    afterRelease: "printf 'resolved\\n' > \"$1\"")
+            try runGit(["-C", root.path, "config", "merge.guitool", "gallae-test"])
+            try runGit(["-C", root.path, "config", "mergetool.gallae-test.cmd", "sh .git/merge-gate.sh \"$MERGED\""])
+            try runGit(["-C", root.path, "config", "mergetool.gallae-test.trustExitCode", "true"])
+        }
+        defer {
+            for root in [first, second] { try? Data().write(to: root.appending(path: ".git/release")) }
+        }
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        await model.openRepository(at: first)
+        let firstRequest = model.diffRequest
+        let firstTool = Task { await model.openSelectedConflictInMergeTool(for: firstRequest) }
+        let firstStarted = await waitForFile(first.appending(path: ".git/started"))
+        guard firstStarted else { return XCTFail("First merge tool did not start") }
+        XCTAssertEqual(model.activeMergeTool, MergeTool.git.title)
+        await model.openRepository(at: second)
+        XCTAssertNil(model.activeMergeTool, "A's tool must not appear in B")
+        let secondRequest = model.diffRequest
+        let secondTool = Task { await model.openSelectedConflictInMergeTool(for: secondRequest) }
+        let secondStarted = await waitForFile(second.appending(path: ".git/started"))
+        guard secondStarted else { return XCTFail("Second merge tool did not start") }
+        try Data().write(to: first.appending(path: ".git/release"))
+        await firstTool.value
+        XCTAssertEqual(model.activeMergeTool, MergeTool.git.title, "A must not clear B's tool progress")
+        XCTAssertTrue(model.isLoading)
+        XCTAssertTrue(model.isWritingRepository)
+        try Data().write(to: second.appending(path: ".git/release"))
+        await secondTool.value
+        XCTAssertNil(model.activeMergeTool)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertFalse(model.isWritingRepository)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+    }
+
+    @MainActor
     func testRemoteCompletionStaysWithItsRepositoryAndPreservesConcurrentLocalWork() async throws {
         func waitUntil(_ predicate: () -> Bool) async throws -> Bool {
             for _ in 0..<1_000 {
@@ -6480,6 +6685,33 @@ final class RepositoryInspectorTests: XCTestCase {
             )
         }
         XCTAssertNil(CommandLineToolInstaller.installedLocation(in: [missing]))
+    }
+
+    private func writeBlockingScript(at url: URL, afterRelease command: String) throws {
+        let script = """
+        #!/bin/sh
+        gate_dir=${0%/*}
+        : > "$gate_dir/started"
+        attempts=0
+        while [ ! -e "$gate_dir/release" ]; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -le 1500 ] || exit 1
+            sleep 0.02
+        done
+        [ ! -e "$gate_dir/fail" ] || exit 1
+        \(command)
+        """
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    @MainActor
+    private func waitForFile(_ url: URL) async -> Bool {
+        for _ in 0..<500 {
+            if FileManager.default.fileExists(atPath: url.path) { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
     }
 
     private func makeTemporaryDirectory() throws -> URL {

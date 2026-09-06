@@ -858,8 +858,8 @@ final class AppModel {
         guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
             throw RepositoryRemoteError.unavailable
         }
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
         let updated = try await inspector.addRemote(named: name, url: url, in: repository)
         guard generation == inspectionGeneration else { return }
         apply(updated, showWorkspaceOnSuccess: false)
@@ -870,8 +870,8 @@ final class AppModel {
         guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, rootURL) else {
             throw RepositoryTagCreationError.failed("This Repository is no longer available.")
         }
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
         let updated = try await inspector.createTag(named: name, at: target, in: repository)
         guard generation == inspectionGeneration else { return }
         apply(updated, showWorkspaceOnSuccess: false)
@@ -893,8 +893,8 @@ final class AppModel {
             throw RepositoryRemoteError.unavailable
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         let remotes = try await inspector.updateRemote(
             named: name,
@@ -909,8 +909,16 @@ final class AppModel {
         else {
             throw CancellationError()
         }
-        if name != newName,
-           let updatedRepository = try? await inspector.inspect(at: repository.rootURL) {
+        let updatedRepository = name != newName
+            ? try? await inspector.inspect(at: repository.rootURL)
+            : nil
+        guard
+            generation == inspectionGeneration,
+            self.repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true
+        else {
+            throw CancellationError()
+        }
+        if let updatedRepository {
             apply(updatedRepository, showWorkspaceOnSuccess: false)
         }
         remotesState = .loaded(remotes)
@@ -925,8 +933,8 @@ final class AppModel {
             throw RepositoryRemoteError.unavailable
         }
 
-        isLoading = true
-        defer { isLoading = false }
+        let generation = beginRepositoryActivity(writing: false)
+        defer { finishRepositoryActivity(generation) }
         try await inspector.testRemoteConnection(named: name, in: repository)
     }
 
@@ -939,8 +947,8 @@ final class AppModel {
             throw RepositoryRemoteError.unavailable
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         let updatedRepository = try await inspector.removeRemote(named: name, in: repository)
         guard
@@ -986,12 +994,7 @@ final class AppModel {
         let writesWorkingTree = operation == .pull
         let operationID = UUID()
         let startGeneration = inspectionGeneration
-        if writesWorkingTree {
-            inspectionGeneration += 1
-            isLoading = true
-            isWritingRepository = true
-        }
-        let generation = inspectionGeneration
+        let generation = writesWorkingTree ? beginRepositoryActivity() : inspectionGeneration
         remoteOperationID = operationID
         remoteOperation = operation
         remoteOperationResult = nil
@@ -1003,9 +1006,8 @@ final class AppModel {
                     remoteOperationID = nil
                     remoteTask = nil
                     remoteOperation = nil
-                    if writesWorkingTree, generation == inspectionGeneration {
-                        isLoading = false
-                        isWritingRepository = false
+                    if writesWorkingTree {
+                        finishRepositoryActivity(generation)
                     }
                 }
             }
@@ -1197,8 +1199,8 @@ final class AppModel {
             return false
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.switchBranch(to: branch, in: repository)
@@ -1221,8 +1223,8 @@ final class AppModel {
             return false
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.createBranch(
@@ -1244,8 +1246,8 @@ final class AppModel {
 
     func createWorktree(at destination: URL, branch: String, creatingBranch: Bool, startPoint: String) async -> URL? {
         guard !isLoading, !isSyncing, let repository else { return nil }
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
         do {
             let url = try await inspector.createWorktree(
                 at: destination, branch: branch.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1276,8 +1278,8 @@ final class AppModel {
             return false
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository: RepositorySummary
@@ -1301,11 +1303,7 @@ final class AppModel {
             library.invalidateActivity(at: updatedRepository.rootURL)
             return true
         } catch {
-            guard generation == inspectionGeneration else { return false }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return false }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return false }
             let title = switch action {
             case .fastForward: "Couldn’t Fast-Forward"
             case .mergeCommit: "Couldn’t Create Merge Commit"
@@ -1319,8 +1317,8 @@ final class AppModel {
     func fastForwardBranchToCurrent(_ branch: String) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let worktrees = try await inspector.localBranchWorktrees(in: repository)
@@ -1370,8 +1368,8 @@ final class AppModel {
     func mergeCurrentBranchIntoBranch(_ branch: String) async -> RepositoryMergeIntoBranchResult {
         guard !isLoading, let repository else { return .failed }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let worktrees = try await inspector.localBranchWorktrees(in: repository)
@@ -1417,8 +1415,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             _ = try await inspector.abortOperation(in: worktree)
@@ -1438,8 +1436,8 @@ final class AppModel {
         guard !isLoading, let repository else { return false }
         let originRootURL = repository.rootURL
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let worktreeURL = try await inspector.addTemporaryWorktree(for: branch, in: repository)
@@ -1493,8 +1491,8 @@ final class AppModel {
     func removeTrackingReference(_ trackingRef: String) async {
         guard !isLoading, let repository else { return }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.removeRemoteTrackingReference(
@@ -1531,8 +1529,8 @@ final class AppModel {
     func removeWorktree(at worktreeURL: URL) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.removeWorktree(
@@ -1556,8 +1554,8 @@ final class AppModel {
     func deleteBranch(_ branch: String) async -> Bool {
         guard !isLoading, let repository else { return false }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.deleteBranch(named: branch, in: repository)
@@ -1588,8 +1586,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.removeWorktree(
@@ -1620,8 +1618,8 @@ final class AppModel {
             throw RepositoryStashError.unavailable
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         let updatedRepository = try await inspector.createStash(
             message: message,
@@ -1644,8 +1642,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.applyStash(stash, in: repository)
@@ -1654,11 +1652,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Apply Stash")
         }
     }
@@ -1672,8 +1666,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.dropStash(stash, in: repository)
@@ -1683,11 +1677,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Delete Stash")
         }
     }
@@ -1704,8 +1694,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.revertCommit(
@@ -1720,11 +1710,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Revert Commit")
         }
     }
@@ -1741,8 +1727,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.resetCurrentBranch(
@@ -1756,11 +1742,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Reset Branch")
         }
     }
@@ -1842,25 +1824,15 @@ final class AppModel {
               !isLoading, let repository, let change = selectedChange, change.isConflicted else { return }
         let tool = MergeTool(rawValue: UserDefaults.standard.string(forKey: MergeTool.storageKey) ?? "") ?? .git
         let executableURL = tool.executableURL
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = true
+        let generation = beginRepositoryActivity()
         activeMergeTool = tool.title
-        defer {
-            activeMergeTool = nil
-            if generation == inspectionGeneration { isLoading = false; isWritingRepository = false }
-        }
+        defer { finishRepositoryActivity(generation) }
         do {
             let updated = try await inspector.openMergeTool(for: change, in: repository, tool: tool, executableURL: executableURL)
             guard generation == inspectionGeneration else { return }
             apply(updated, showWorkspaceOnSuccess: false)
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let updated = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(updated, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Complete Merge Tool")
         }
     }
@@ -1876,8 +1848,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.resolveConflict(
@@ -1890,11 +1862,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Resolve Conflict")
         }
     }
@@ -1910,8 +1878,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.markConflictResolved(
@@ -1923,11 +1891,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             present(error, title: "Couldn’t Resolve Conflict")
         }
     }
@@ -1951,8 +1915,8 @@ final class AppModel {
             return
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
         library.invalidateActivity(at: repository.rootURL)
 
         do {
@@ -1972,11 +1936,7 @@ final class AppModel {
         } catch is CancellationError {
             return
         } catch {
-            guard generation == inspectionGeneration else { return }
-            if let refreshedRepository = try? await inspector.inspect(at: repository.rootURL) {
-                guard generation == inspectionGeneration else { return }
-                apply(refreshedRepository, showWorkspaceOnSuccess: false)
-            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
             let kindName = operation.kind == .merge ? "Merge" : "Rebase"
             present(error, title: aborting ? "Couldn’t Abort \(kindName)" : "Couldn’t Continue \(kindName)")
         }
@@ -1986,8 +1946,8 @@ final class AppModel {
         guard let request, request == diffRequest,
               !isLoading, let repository, let change = selectedChange else { return }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository: RepositorySummary
@@ -2015,8 +1975,8 @@ final class AppModel {
         guard let request, request == diffRequest,
               !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.discard(hunk, for: change, in: repository)
@@ -2041,8 +2001,8 @@ final class AppModel {
             return false
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.commit(
@@ -2073,15 +2033,8 @@ final class AppModel {
     }
 
     func reconnectRecentRepository(_ oldURL: URL, to newURL: URL) async {
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = false
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-            }
-        }
+        let generation = beginRepositoryActivity(writing: false)
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let inspectedRepository = try await inspector.inspect(at: newURL)
@@ -2266,8 +2219,8 @@ final class AppModel {
             throw RepositoryInteractiveRebasePlanError.unavailable
         }
 
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let updatedRepository = try await inspector.executeInteractiveRebase(
@@ -2566,17 +2519,30 @@ final class AppModel {
         }
     }
 
-    private func beginRepositoryWrite() -> Int {
+    private func beginRepositoryActivity(writing: Bool = true) -> Int {
         inspectionGeneration += 1
         isLoading = true
-        isWritingRepository = true
+        isWritingRepository = writing
+        activeMergeTool = nil
         return inspectionGeneration
     }
 
-    private func finishRepositoryWrite(_ generation: Int) {
+    private func finishRepositoryActivity(_ generation: Int) {
         guard generation == inspectionGeneration else { return }
         isLoading = false
         isWritingRepository = false
+        activeMergeTool = nil
+    }
+
+    private func refreshAfterFailedActivity(in repository: RepositorySummary, generation: Int) async -> Bool {
+        guard generation == inspectionGeneration else { return false }
+        let refreshedRepository = try? await inspector.inspect(at: repository.rootURL)
+        // A failed recheck still suspends; its error also belongs to the original operation.
+        guard generation == inspectionGeneration else { return false }
+        if let refreshedRepository {
+            apply(refreshedRepository, showWorkspaceOnSuccess: false)
+        }
+        return true
     }
 
     /// Common completion for local file writes. Operations with conflict recovery keep their own completion.
@@ -2586,8 +2552,8 @@ final class AppModel {
         operation: () async throws -> RepositorySummary
     ) async {
         guard !isLoading, self.repository.map({ sameFileLocation($0.rootURL, repository.rootURL) }) == true else { return }
-        let generation = beginRepositoryWrite()
-        defer { finishRepositoryWrite(generation) }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
         do {
             let updated = try await operation()
             guard generation == inspectionGeneration else { return }
@@ -2614,15 +2580,8 @@ final class AppModel {
         addLibraryFolderWhenNotWorkingTree: Bool = false,
         preservingHistoryScope: Bool = false
     ) async -> InspectionOutcome {
-        inspectionGeneration += 1
-        let generation = inspectionGeneration
-        isLoading = true
-        isWritingRepository = false
-        defer {
-            if generation == inspectionGeneration {
-                isLoading = false
-            }
-        }
+        let generation = beginRepositoryActivity(writing: false)
+        defer { finishRepositoryActivity(generation) }
 
         do {
             let inspectedRepository = try await inspectRepository(url)
