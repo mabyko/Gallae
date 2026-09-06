@@ -1094,7 +1094,8 @@ private struct RepositoryDiffSectionView: View {
 
     /// The second hunk button on a working tree section: the whole hunk or the ticked lines, after asking.
     private func discardAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
-        guard section.scope == .unstaged, canStageHunks, let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
+        guard line.kind == .hunk, section.scope == .unstaged, canStageHunks,
+              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
         let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
         guard !chosen.isEmpty else {
             return ("Discard Hunk…", { pendingDiscard = .init(hunk: hunk, lineCount: nil) })
@@ -1109,7 +1110,8 @@ private struct RepositoryDiffSectionView: View {
 
     /// The hunk button: the whole hunk while nothing is ticked, otherwise only the ticked lines of that hunk.
     private func hunkAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
-        guard let hunkVerb, let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
+        guard line.kind == .hunk, let hunkVerb,
+              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
         let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
         guard choosesLines, !chosen.isEmpty else {
             return ("\(hunkVerb) Hunk", { updateHunk(hunk) })
