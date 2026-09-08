@@ -265,14 +265,14 @@ struct RepositoryWorkspaceView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .help("Working on: \(repository.head.label). Switch, create, or integrate local branches")
                     .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
                     .disabled(model.isLoading || model.isSyncing)
 
                     if isWindowNarrow, narrowNavigatorStyle == .locationMenu {
                         Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
+                            .gallaeFont(.caption2, weight: .semibold)
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, -6)
                             .accessibilityHidden(true)
@@ -286,7 +286,7 @@ struct RepositoryWorkspaceView: View {
                         }
                         .menuStyle(.borderlessButton)
                         .fixedSize()
-                        .font(.callout.weight(.medium))
+                        .gallaeFont(.callout, weight: .medium)
                         .help("Where you are. Choose a destination, remote, or tag")
                         .accessibilityLabel("Location, \(location.title). Go to")
                     }
@@ -296,7 +296,7 @@ struct RepositoryWorkspaceView: View {
                             upstreamDisplayLabel(upstream, head: repository.head),
                             systemImage: "arrow.up.arrow.down"
                         )
-                            .font(.callout)
+                            .gallaeFont(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -311,24 +311,24 @@ struct RepositoryWorkspaceView: View {
                                 .lineLimit(1)
                         }
                         .buttonStyle(.plain)
-                        .font(.callout)
+                        .gallaeFont(.callout)
                         .foregroundStyle(.secondary)
                         .help("Show Changes")
                         .accessibilityLabel("Working tree, \(workingTreeSummary(repository)). Show Changes")
                     }
                     if repository.isUnborn {
                         Label("No commits yet", systemImage: "circle.dashed")
-                            .font(.callout)
+                            .gallaeFont(.callout)
                             .foregroundStyle(.secondary)
                     }
                     if model.isRepositoryStale {
                         Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                            .font(.callout)
+                            .gallaeFont(.callout)
                             .foregroundStyle(theme.colors.statusConflict)
                     }
                     if model.isCurrentWorkspaceTemporaryWorktree {
                         Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
-                            .font(.callout)
+                            .gallaeFont(.callout)
                             .foregroundStyle(.secondary)
                             .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
                     }
@@ -339,7 +339,7 @@ struct RepositoryWorkspaceView: View {
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             Text(lastFetchText(fetched, now: context.date))
                         }
-                        .font(.callout)
+                        .gallaeFont(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .help("Last fetch \(fetched.formatted(date: .abbreviated, time: .shortened))")
@@ -360,7 +360,7 @@ struct RepositoryWorkspaceView: View {
                 HStack(spacing: 12) {
                     HStack(spacing: 12) {
                         Label(operation.kind.label, systemImage: "arrow.triangle.merge")
-                            .font(.callout.weight(.semibold))
+                            .gallaeFont(.callout, weight: .semibold)
                             .foregroundStyle(
                                 operation.canContinue
                                     ? theme.colors.statusAdded
@@ -393,7 +393,7 @@ struct RepositoryWorkspaceView: View {
                     .help("Stop the \(operation.kind.name) and try to restore its earlier state")
                     .accessibilityHint("Opens a confirmation before stopping the \(operation.kind.name)")
                 }
-                .font(.callout)
+                .gallaeFont(.callout)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
                 .background(theme.colors.badgeBackground)
@@ -702,14 +702,14 @@ struct RepositoryWorkspaceView: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Changes")
-                        .font(.headline)
+                        .gallaeFont(.headline)
                     Text("Working tree")
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text(repository.changes.count, format: .number)
-                    .font(.caption.weight(.medium))
+                    .gallaeFont(.caption1, weight: .medium)
                     .monospacedDigit()
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -803,7 +803,7 @@ struct RepositoryWorkspaceView: View {
                 .accessibilityHint("Add optional details about the staged changes")
 
             Toggle("Amend last commit", isOn: $isAmending)
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .disabled(repository.isUnborn || model.isLoading)
                 .help("Replace the latest commit with the staged changes and entered message")
@@ -811,7 +811,7 @@ struct RepositoryWorkspaceView: View {
 
             HStack {
                 Text("\(repository.changes.filter { $0.staged != nil }.count) staged")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
 
@@ -907,7 +907,7 @@ struct RepositoryWorkspaceView: View {
                                     ? "chevron.down"
                                     : "chevron.right"
                             )
-                            .font(.caption2.weight(.semibold))
+                            .gallaeFont(.caption2, weight: .semibold)
                             .frame(width: 10)
                             .accessibilityHidden(true)
                             Text(group.title)
@@ -920,7 +920,7 @@ struct RepositoryWorkspaceView: View {
                         .contentShape(.interaction, Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .font(.caption.weight(.semibold))
+                    .gallaeFont(.caption1, weight: .semibold)
                     .foregroundStyle(.secondary)
                     .accessibilityValue(
                         expandedStatusGroups.contains(group.id) ? "Expanded" : "Collapsed"
@@ -1060,14 +1060,14 @@ private struct RepositoryChangeRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(change.fileName)
-                        .font(.callout.weight(.medium))
+                        .gallaeFont(.callout, weight: .medium)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(change.path)
                     Spacer(minLength: 6)
                     ForEach(change.badges) { badge in
                         Text(badge.state?.shortLabel ?? "!")
-                            .font(.caption2.monospaced().weight(.medium))
+                            .gallaeFont(.caption2, weight: .medium, monospaced: true)
                             .foregroundStyle(statusColor(for: badge.state))
                             .lineLimit(1)
                             .frame(width: 22)
@@ -1080,7 +1080,7 @@ private struct RepositoryChangeRow: View {
                 }
                 if showsParentPath, !change.parentPath.isEmpty {
                     Text(change.parentPath)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -1088,7 +1088,7 @@ private struct RepositoryChangeRow: View {
                 }
                 if let originalPath = change.originalPath {
                     Text("From \(originalPath)")
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -1135,11 +1135,11 @@ private struct RepositoryChangeFolderRow: View {
                 .frame(width: 16)
                 .accessibilityHidden(true)
             Text(node.name)
-                .font(.callout.weight(.medium))
+                .gallaeFont(.callout, weight: .medium)
                 .lineLimit(1)
             Spacer()
             Text(node.changeCount, format: .number)
-                .font(.caption.monospacedDigit())
+                .gallaeFont(.caption1, digits: true)
                 .foregroundStyle(.secondary)
         }
         .accessibilityValue("\(node.path), folder, \(node.changeCount) changed files")

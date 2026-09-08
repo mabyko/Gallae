@@ -84,7 +84,6 @@ struct GallaeTheme: Sendable {
         let changeListMinimumWidth: CGFloat
         let changeListIdealWidth: CGFloat
         let historyGraphWidth: CGFloat
-        let diffFontSize: CGFloat
         /// Width of the leading color bar on added and deleted diff lines; 0 hides it.
         let diffChangeBarWidth: CGFloat
         /// Vertical padding of Changes, History, Stashes, and Reflog rows.
@@ -147,7 +146,6 @@ struct GallaeTheme: Sendable {
                 changeListMinimumWidth: 320,
                 changeListIdealWidth: 320,
                 historyGraphWidth: 44,
-                diffFontSize: contrast ? 11 : NSFont.systemFontSize,
                 diffChangeBarWidth: contrast ? 3 : 0,
                 rowVerticalPadding: compactRows ? 3 : 7
             ),
@@ -189,5 +187,79 @@ private struct GallaeSelectionBackground: ViewModifier {
 extension View {
     func gallaeSelectionBackground(isSelected: Bool, isFocused: Bool, sidebar: Bool = false) -> some View {
         modifier(GallaeSelectionBackground(isSelected: isSelected, isFocused: isFocused, sidebar: sidebar))
+    }
+}
+
+/// Stored names are PostScript face names; an empty name follows the system font.
+struct GallaeTypography: Sendable {
+    static let uiFaceKey = "uiFontFace"
+    static let uiSizeKey = "uiFontSize"
+    static let codeFaceKey = "codeFontFace"
+    static let codeSizeKey = "codeFontSize"
+    static let sizeRange = 10.0...24.0
+
+    var uiFace = ""
+    var uiSize = Double(NSFont.systemFontSize)
+    var codeFace = ""
+    var codeSize = Double(NSFont.systemFontSize)
+
+    static func boundedSize(_ size: Double) -> CGFloat {
+        size.isFinite ? min(max(size, sizeRange.lowerBound), sizeRange.upperBound) : NSFont.systemFontSize
+    }
+
+    var codeNSFont: NSFont {
+        let size = Self.boundedSize(codeSize)
+        if let font = NSFont(name: codeFace, size: size), font.isFixedPitch { return font }
+        return .monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    func uiNSFont(_ style: NSFont.TextStyle = .body, monospaced: Bool = false) -> NSFont {
+        let preferred = NSFont.preferredFont(forTextStyle: style)
+        let scale = Self.boundedSize(uiSize) / NSFont.preferredFont(forTextStyle: .body).pointSize
+        let size = preferred.pointSize * scale
+        if monospaced {
+            return NSFont(name: codeNSFont.fontName, size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+        return NSFont(name: uiFace, size: size) ?? NSFont(descriptor: preferred.fontDescriptor, size: size) ?? preferred
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var gallaeTypography = GallaeTypography()
+}
+
+/// Applied outside each scene's content so sheets, toolbars and settings inherit it too.
+private struct GallaeTypographyRoot: ViewModifier {
+    @AppStorage(GallaeTypography.uiFaceKey) private var uiFace = ""
+    @AppStorage(GallaeTypography.uiSizeKey) private var uiSize = Double(NSFont.systemFontSize)
+    @AppStorage(GallaeTypography.codeFaceKey) private var codeFace = ""
+    @AppStorage(GallaeTypography.codeSizeKey) private var codeSize = Double(NSFont.systemFontSize)
+
+    func body(content: Content) -> some View {
+        let typography = GallaeTypography(uiFace: uiFace, uiSize: uiSize, codeFace: codeFace, codeSize: codeSize)
+        content.environment(\.gallaeTypography, typography).font(Font(typography.uiNSFont()))
+    }
+}
+
+private struct GallaeUIFont: ViewModifier {
+    @Environment(\.gallaeTypography) private var typography
+    let style: NSFont.TextStyle
+    let weight: Font.Weight?
+    let monospaced: Bool
+    let digits: Bool
+
+    func body(content: Content) -> some View {
+        let base = Font(typography.uiNSFont(style, monospaced: monospaced))
+        let weighted = weight.map { base.weight($0) } ?? (style == .headline ? base.bold() : base)
+        content.font(digits ? weighted.monospacedDigit() : weighted)
+    }
+}
+
+extension View {
+    func gallaeTypography() -> some View { modifier(GallaeTypographyRoot()) }
+
+    func gallaeFont(_ style: NSFont.TextStyle, weight: Font.Weight? = nil,
+                    monospaced: Bool = false, digits: Bool = false) -> some View {
+        modifier(GallaeUIFont(style: style, weight: weight, monospaced: monospaced, digits: digits))
     }
 }

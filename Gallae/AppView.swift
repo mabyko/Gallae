@@ -344,7 +344,7 @@ struct AppView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(operation.progressTitle)
-                    .font(.callout)
+                    .gallaeFont(.callout)
                 Button("Cancel") {
                     model.cancelRemoteOperation()
                 }
@@ -359,7 +359,7 @@ struct AppView: View {
                 ProgressView()
                     .controlSize(.small)
                 Text(model.isWritingRepository ? "Updating Repository…" : "Reading Repository…")
-                    .font(.callout)
+                    .gallaeFont(.callout)
             }
         } else if let result = model.remoteOperationResult {
             capsule {
@@ -367,7 +367,7 @@ struct AppView: View {
                     .foregroundStyle(theme.colors.statusAdded)
                     .accessibilityHidden(true)
                 Text(result)
-                    .font(.callout)
+                    .gallaeFont(.callout)
             }
             .accessibilityLabel(result)
         }
@@ -446,7 +446,7 @@ private struct RepositoryIntegrateBranchSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Integrate Local Branch", systemImage: "arrow.triangle.merge")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text(
                     direction == .into
                         ? "Bring the selected branch into \(currentBranch), or rebase \(currentBranch) onto it."
@@ -471,7 +471,7 @@ private struct RepositoryIntegrateBranchSheet: View {
 
             if let divergenceDescription {
                 Label(divergenceDescription, systemImage: "arrow.triangle.branch")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -694,14 +694,14 @@ private struct RepositoryIntegrateBranchSheet: View {
                     "Rebase rewrites commits unique to \(currentBranch); Gallae won’t force-push them.",
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
             } else {
                 Label(
                     "Commit or stash the current changes before creating a merge commit or rebasing.",
                     systemImage: "exclamationmark.circle"
                 )
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
             }
         } else if let worktreeURL = selectedWorktreeURL {
@@ -711,7 +711,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                     : "Fast-Forward runs in the Worktree at \(worktreeURL.path) and updates its files.",
                 systemImage: "folder"
             )
-            .font(.caption)
+            .gallaeFont(.caption1)
             .foregroundStyle(.secondary)
             .lineLimit(2)
             .help(worktreeURL.path)
@@ -722,7 +722,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                     : "The merge commit is created without a checkout, so merge hooks don’t run. Only the selected branch reference moves.",
                 systemImage: "info.circle"
             )
-            .font(.caption)
+            .gallaeFont(.caption1)
             .foregroundStyle(.secondary)
             .lineLimit(2)
         } else {
@@ -730,7 +730,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                 "Only the selected branch reference moves. No working files change, and uncommitted changes here are fine.",
                 systemImage: "info.circle"
             )
-            .font(.caption)
+            .gallaeFont(.caption1)
             .foregroundStyle(.secondary)
         }
     }
@@ -792,7 +792,7 @@ private struct RepositoryIntegrateBranchSheet: View {
                                 : worktreeURL.lastPathComponent,
                             systemImage: "folder"
                         )
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -911,7 +911,7 @@ struct EditRemoteSheet: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Edit Remote", systemImage: "pencil")
-                        .font(.title2.bold())
+                        .gallaeFont(.title2, weight: .bold)
                     Text(remote.name)
                         .foregroundStyle(.secondary)
                 }
@@ -952,7 +952,7 @@ struct EditRemoteSheet: View {
             }
 
             Text("Fetch and Push URLs should point to the same Repository.")
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
 
             HStack {
@@ -1126,7 +1126,7 @@ private struct AddRemoteSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Add Remote", systemImage: "network")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text(publishAfterAdding
                      ? "Connect \(repositoryRootURL.lastPathComponent) to a remote, then publish the current branch."
                      : "Save a remote URL for \(repositoryRootURL.lastPathComponent). This does not fetch or push.")
@@ -1244,7 +1244,7 @@ private struct CreateStashSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Create Stash", systemImage: "archivebox")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text("Save the current changes in \(repositoryRootURL.lastPathComponent) and return tracked files to HEAD.")
                     .foregroundStyle(.secondary)
             }
@@ -1259,12 +1259,12 @@ private struct CreateStashSheet: View {
                     .accessibilityHint("Save untracked files too; ignored files remain in place")
 
                 Text("Staged and unstaged tracked changes are always included. Ignored files are not included.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
 
                 if let unavailableReason {
                     Text(unavailableReason)
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1377,7 +1377,7 @@ private struct ChooseRemoteSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label(purpose.title, systemImage: purpose.systemImage)
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text(description)
                     .foregroundStyle(.secondary)
             }
@@ -1463,7 +1463,7 @@ private struct CreateTagSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Label("New Tag", systemImage: "tag").font(.title2.bold())
+            Label("New Tag", systemImage: "tag").gallaeFont(.title2, weight: .bold)
             Text("Create a local lightweight tag at a commit. This does not switch branches or push the tag.")
                 .foregroundStyle(.secondary)
             Form {

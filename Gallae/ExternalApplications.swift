@@ -131,7 +131,7 @@ struct MergeToolPicker: View {
         Text(tool == .git
              ? "Uses merge.guitool or merge.tool from Git. The configured tool may stage resolved files. Tools requiring terminal input must be run in a terminal."
              : "Close the merge editor when finished, then review and Mark Resolved in Gallae. Opening the tool does not stage or commit the file.")
-            .font(.caption).foregroundStyle(.secondary)
+            .gallaeFont(.caption1).foregroundStyle(.secondary)
     }
 }
 
@@ -221,7 +221,7 @@ struct TerminalApplicationPicker: View {
         Text(terminal == .custom
              ? "Open in sends the folder to this app. Custom apps must support opening folders."
              : "Open in uses this terminal to start a session in the selected repository or Worktree folder.")
-            .font(.caption).foregroundStyle(.secondary)
+            .gallaeFont(.caption1).foregroundStyle(.secondary)
     }
 }
 
@@ -235,7 +235,7 @@ struct EditorApplicationPicker: View {
                                   selection: Binding(get: { editor.rawValue }, set: { editor = EditorApplication(rawValue: $0) ?? .vscode }),
                                   customPath: $customPath)
         Text("Open in opens the selected repository or Worktree folder in this editor. Custom apps must support opening folders.")
-            .font(.caption).foregroundStyle(.secondary)
+            .gallaeFont(.caption1).foregroundStyle(.secondary)
     }
 }
 

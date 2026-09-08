@@ -110,7 +110,9 @@ struct RepositoryAuthorBadge: View {
             paletteCount: palette.count
         )]
         return Text(AuthorIdentity.initials(for: name))
-            .font(.system(size: 12, weight: .semibold))
+            .gallaeFont(.callout, weight: .semibold)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .foregroundStyle(.white)
             .frame(width: 28, height: 28)
             .background(color.gradient, in: .circle)

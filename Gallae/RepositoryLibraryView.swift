@@ -97,9 +97,9 @@ struct RepositoryLibraryView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Library")
-                        .font(.headline)
+                        .gallaeFont(.headline)
                     Text("Recent and folders")
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -236,11 +236,11 @@ struct RepositoryLibraryView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
-            .font(.caption.weight(.medium))
+            .gallaeFont(.caption1, weight: .medium)
 
             if case .failed(let message) = folder.scanState {
                 Text(message)
-                    .font(.caption2)
+                    .gallaeFont(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .help(message)
@@ -252,7 +252,7 @@ struct RepositoryLibraryView: View {
                     "Skipped \(partialFailureCount) unreadable locations",
                     systemImage: "exclamationmark.triangle"
                 )
-                .font(.caption2)
+                .gallaeFont(.caption2)
                 .foregroundStyle(theme.colors.statusConflict)
             }
 
@@ -260,7 +260,7 @@ struct RepositoryLibraryView: View {
                case .completed(let count) = folder.scanState,
                count > 0 {
                 Text(failure.url.path)
-                    .font(.caption2.monospaced())
+                    .gallaeFont(.caption2, monospaced: true)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .help("\(failure.url.path)\n\(failure.message)")
@@ -275,16 +275,16 @@ struct RepositoryLibraryView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.selectedLibrarySource == .recent ? "Recent Repositories" : "Repositories")
-                        .font(.headline)
+                        .gallaeFont(.headline)
                     if let folder = model.selectedLibraryFolder {
                         Text(folder.url.path)
-                            .font(.caption.monospaced())
+                            .gallaeFont(.caption1, monospaced: true)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .help(folder.url.path)
                     } else if model.selectedLibrarySource == .recent {
                         Text("Most recent first")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -561,9 +561,9 @@ struct RepositoryLibraryView: View {
                             ? "Repositories"
                             : selectedHierarchyFolder == nil ? "Repository" : "Folder"
                     )
-                        .font(.headline)
+                        .gallaeFont(.headline)
                     Text("Selection summary")
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -640,9 +640,9 @@ struct RepositoryLibraryView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
                 Label(folder.name, systemImage: "folder")
-                    .font(.title2.weight(.semibold))
+                    .gallaeFont(.title2, weight: .semibold)
                 Text(folder.id.path)
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -661,9 +661,9 @@ struct RepositoryLibraryView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
                 Label(repository.name, systemImage: "arrow.triangle.branch")
-                    .font(.title2.weight(.semibold))
+                    .gallaeFont(.title2, weight: .semibold)
                 Text(repository.rootURL.path)
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
@@ -719,7 +719,7 @@ struct RepositoryLibraryView: View {
             VStack(alignment: .leading, spacing: 10) {
                 LabeledContent("Commits", value: activity.commitCount.formatted())
                 Text("Recent Activity")
-                    .font(.subheadline.weight(.semibold))
+                    .gallaeFont(.subheadline, weight: .semibold)
                 if activity.recentCommits.isEmpty {
                     Text("No commits yet")
                         .foregroundStyle(.secondary)
@@ -730,7 +730,7 @@ struct RepositoryLibraryView: View {
                                 .lineLimit(2)
                                 .help(commit.subject.isEmpty ? "Untitled commit" : commit.subject)
                             Text("\(commit.id.prefix(8)) · \(RelativeTimeLabel.string(for: commit.committedAt))")
-                                .font(.caption.monospaced())
+                                .gallaeFont(.caption1, monospaced: true)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .help(commit.committedAt.formatted(date: .abbreviated, time: .shortened))
@@ -744,9 +744,9 @@ struct RepositoryLibraryView: View {
         } else if let message = model.libraryRepositoryActivityErrors[repositoryID] {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Recent Activity Unavailable")
-                    .font(.subheadline.weight(.semibold))
+                    .gallaeFont(.subheadline, weight: .semibold)
                 Text(message)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 Button("Try Again") {
                     Task { await model.retryLibraryRepositoryActivity(at: repositoryID) }
@@ -832,7 +832,7 @@ private struct LibraryFolderRow: View {
                 Text(folder.name)
                     .lineLimit(1)
                 Text(folder.url.path)
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -863,11 +863,11 @@ private struct RepositoryLibraryRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(repository.name)
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .lineLimit(1)
                 if showsPath {
                     Text(repository.rootURL.path)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -879,12 +879,12 @@ private struct RepositoryLibraryRow: View {
             if let summary {
                 HStack(spacing: 8) {
                     Text(summary.head.label)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(summary.head.label)
                     Text(summary.changes.isEmpty ? "Clean" : "\(summary.changes.count) changes")
-                        .font(.caption2.weight(.medium))
+                        .gallaeFont(.caption2, weight: .medium)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(theme.colors.badgeBackground, in: .capsule)
@@ -926,11 +926,11 @@ private struct RepositoryHierarchyFolderRow: View {
                 .frame(width: 16)
                 .accessibilityHidden(true)
             Text(node.name)
-                .font(.callout.weight(.medium))
+                .gallaeFont(.callout, weight: .medium)
                 .lineLimit(1)
             Spacer()
             Text(node.repositoryCount, format: .number)
-                .font(.caption.monospacedDigit())
+                .gallaeFont(.caption1, digits: true)
                 .foregroundStyle(.secondary)
         }
         .accessibilityValue("\(node.name), folder, \(node.repositoryCount) Repositories")
