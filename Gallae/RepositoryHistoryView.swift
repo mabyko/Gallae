@@ -11,6 +11,8 @@ struct RepositoryHistoryView: View {
     @State private var editedRemote: RepositoryRemote?
     @Environment(\.gallaeTheme) private var theme
     @State private var searchText = ""
+    @State private var isSearchVisible = false
+    @FocusState private var isSearchFocused: Bool
     @State private var isCreatingBranch = false
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
@@ -39,6 +41,19 @@ struct RepositoryHistoryView: View {
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
                                 .background(theme.colors.badgeBackground, in: .capsule)
+                            if !history.commits.isEmpty {
+                                Button(isSearchVisible ? "Close Search" : "Search Commit History",
+                                       systemImage: isSearchVisible ? "xmark" : "magnifyingglass") {
+                                    if isSearchVisible {
+                                        closeSearch()
+                                    } else {
+                                        isSearchVisible = true
+                                    }
+                                }
+                                .labelStyle(.iconOnly)
+                                .controlSize(.small)
+                                .help(isSearchVisible ? "Close Search" : "Search Commit History")
+                            }
                         }
                     }
 
@@ -58,11 +73,13 @@ struct RepositoryHistoryView: View {
                         .gallaeFont(.caption1)
                     }
 
-                    if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
+                    if isSearchVisible, case .loaded(let history) = model.historyState, !history.commits.isEmpty {
                         TextField("Search message, author, SHA, or ref", text: $searchText)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityLabel("Search Commit History")
-                            .onExitCommand { searchText = "" }
+                            .focused($isSearchFocused)
+                            .onAppear { isSearchFocused = true }
+                            .onExitCommand { closeSearch() }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -301,6 +318,13 @@ struct RepositoryHistoryView: View {
     private func fetch(from remote: String, pruning: Bool) {
         guard let rootURL = model.repository?.rootURL, !model.isLoading, !model.isSyncing else { return }
         model.fetch(from: remote, pruning: pruning, in: rootURL)
+    }
+
+    private func closeSearch() {
+        searchText = ""
+        isSearchVisible = false
+        isSearchFocused = false
+        historyFocused = true
     }
 
     private var reviewControls: some View {
