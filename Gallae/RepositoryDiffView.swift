@@ -44,13 +44,13 @@ private struct RepositoryDiffHeader<Actions: View>: View {
     private var fileIdentity: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(path.split(separator: "/").last.map(String.init) ?? path)
-                .font(.headline)
+                .gallaeFont(.headline)
                 .lineLimit(1)
                 .truncationMode(.middle)
             HStack(spacing: 8) {
                 let directory = (path as NSString).deletingLastPathComponent
                 Text(directory.isEmpty ? "Repository root" : directory)
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -59,7 +59,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                         Text("+\(counts.added)").foregroundStyle(theme.colors.statusAdded)
                         Text("−\(counts.removed)").foregroundStyle(theme.colors.statusDeleted)
                     }
-                    .font(.caption.monospacedDigit().weight(.medium))
+                    .gallaeFont(.caption1, weight: .medium, digits: true)
                     .fixedSize()
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Line changes: \(counts.added) added, \(counts.removed) deleted")
@@ -68,7 +68,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
             }
             if let originalPath {
                 Text("From \(originalPath)")
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -161,10 +161,10 @@ struct RepositoryRevisionChangesView: View {
             VStack(spacing: 0) {
                 HStack {
                     Text("Changed Files")
-                        .font(.callout.weight(.semibold))
+                        .gallaeFont(.callout, weight: .semibold)
                     Spacer()
                     Text(files.count, format: .number)
-                        .font(.caption.monospacedDigit())
+                        .gallaeFont(.caption1, digits: true)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 14)
@@ -316,13 +316,13 @@ private struct RepositoryCommitFileRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(file.fileName)
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 if !file.parentPath.isEmpty {
                     Text(file.parentPath)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -330,7 +330,7 @@ private struct RepositoryCommitFileRow: View {
 
                 if let originalPath = file.originalPath {
                     Text("From \(originalPath)")
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -340,7 +340,7 @@ private struct RepositoryCommitFileRow: View {
             Spacer(minLength: 4)
 
             Text(file.state.shortLabel)
-                .font(.caption2.monospaced().weight(.medium))
+                .gallaeFont(.caption2, weight: .medium, monospaced: true)
                 .foregroundStyle(statusColor)
                 .lineLimit(1)
                 .frame(width: 22)
@@ -449,7 +449,7 @@ struct RepositoryDiffView: View {
                 .help("Choose whether to read what is staged for the next commit, or what is not")
 
                 Text(shown == .staged ? "in the next commit" : "not in the next commit yet")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
             }
@@ -466,9 +466,9 @@ struct RepositoryDiffView: View {
                         .fill(other == .staged ? theme.colors.statusAdded : theme.colors.statusModified)
                         .frame(width: 3)
                     Text(other.label)
-                        .font(.caption.weight(.semibold))
+                        .gallaeFont(.caption1, weight: .semibold)
                     Text(changedLineSummary(changedLines(in: diff, scope: other), scope: other))
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 8)
                 }
@@ -619,7 +619,7 @@ struct RepositoryDiffView: View {
                     HStack {
                         ProgressView().controlSize(.small)
                         Text("Waiting for \(activeMergeTool). Close its merge editor when finished.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .gallaeFont(.caption1).foregroundStyle(.secondary)
                         Spacer()
                     }
                     .padding(10)
@@ -763,14 +763,15 @@ private struct RepositoryConflictVersionView: View {
     let section: RepositoryDiff.Section
     let loadExpanded: () -> Void
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.gallaeTypography) private var typography
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
                 Label(section.scope.label, systemImage: section.scope.systemImage)
-                    .font(.caption.weight(.semibold))
+                    .gallaeFont(.caption1, weight: .semibold)
                 Text(section.scope.stageLabel)
-                    .font(.caption2.monospaced())
+                    .gallaeFont(.caption2, monospaced: true)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -794,7 +795,7 @@ private struct RepositoryConflictVersionView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .text(let lines):
-            let numberWidth = diffNumberWidth(for: lines, fontSize: theme.metrics.diffFontSize)
+            let numberWidth = diffNumberWidth(for: lines, font: typography.codeNSFont)
             GeometryReader { proxy in
                 ScrollView([.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -848,6 +849,7 @@ private struct RepositoryConflictLineView: View {
     let line: RepositoryDiff.Line
     let numberWidth: CGFloat
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.gallaeTypography) private var typography
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -858,7 +860,7 @@ private struct RepositoryConflictLineView: View {
             Text(line.text.isEmpty ? " " : line.text)
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .font(.callout.monospaced())
+        .font(Font(typography.codeNSFont))
         .foregroundStyle(theme.colors.diffText)
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
@@ -1008,7 +1010,7 @@ private struct RepositoryDiffSectionView: View {
         LazyVStack(alignment: .leading, spacing: 0) {
             if showsHeader {
                 Label(section.scope.label, systemImage: section.scope.systemImage)
-                    .font(.caption.weight(.semibold))
+                    .gallaeFont(.caption1, weight: .semibold)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1178,10 +1180,11 @@ private struct RepositoryDiffLinesView: View {
     /// Keeps the checkbox column on every unified line so numbers line up whether or not a line has one.
     var reservesChoiceColumn = false
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.gallaeTypography) private var typography
 
     var body: some View {
         let lines = lines.filter { !$0.isPatchHeader }
-        let numberWidth = diffNumberWidth(for: lines, fontSize: theme.metrics.diffFontSize)
+        let numberWidth = diffNumberWidth(for: lines, font: typography.codeNSFont)
         switch layout {
         case .unified:
             ForEach(lines) { line in
@@ -1234,7 +1237,7 @@ private struct RepositoryDiffLinesView: View {
                 if line.hunkLocation != nil {
                     // The raw header stays for readers who know it, quiet enough not to lead.
                     Text(line.text)
-                        .font(.system(size: theme.metrics.diffFontSize - 1, design: .monospaced))
+                        .font(Font(typography.codeNSFont))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
@@ -1272,11 +1275,11 @@ private struct RepositoryDiffLinesView: View {
 /// Width of a diff's line-number column: exactly as wide as its largest line number, so a six-digit file is
 /// never truncated and a short file is not padded out to a fixed five digits. One value per diff keeps every
 /// row, and both halves of the split layout, on the same gutter.
-func diffNumberWidth(for lines: [RepositoryDiff.Line], fontSize: CGFloat) -> CGFloat {
+func diffNumberWidth(for lines: [RepositoryDiff.Line], font: NSFont) -> CGFloat {
     let largest = lines.reduce(0) { max($0, $1.oldLineNumber ?? 0, $1.newLineNumber ?? 0) }
     let digits = max(2, String(largest).count)
-    let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-    return (CGFloat(digits) * font.maximumAdvancement.width).rounded(.up)
+    let digitWidth = (0...9).map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+    return (CGFloat(digits) * digitWidth).rounded(.up)
 }
 
 private struct RepositoryDiffLineView: View {
@@ -1293,7 +1296,7 @@ private struct RepositoryDiffLineView: View {
     /// Split's full-width rows are metadata and hunk headers, which carry no line number. One empty number
     /// column instead of two lines their text up with the code in the halves beside them.
     var singleNumberColumn = false
-    /// Shared by every row of one diff; see `diffNumberWidth(for:fontSize:)`.
+    /// Shared by every row of one diff; see `diffNumberWidth(for:font:)`.
     var numberWidth: CGFloat
     /// A gutter checkbox that picks this line for a partial stage or unstage.
     var choice: (isOn: Bool, toggle: () -> Void)? = nil
@@ -1305,6 +1308,7 @@ private struct RepositoryDiffLineView: View {
     /// it truncates instead of drawing over the row beside it. Unified keeps its rigid width and scrolls.
     var truncatesText = false
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.gallaeTypography) private var typography
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -1348,7 +1352,7 @@ private struct RepositoryDiffLineView: View {
             }
         }
         .padding(.leading, theme.metrics.diffChangeBarWidth)
-        .font(.system(size: theme.metrics.diffFontSize, design: .monospaced))
+        .font(Font(typography.codeNSFont))
         .foregroundStyle(foregroundColor)
         .frame(minWidth: 0, maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
         .background(backgroundColor)
@@ -1398,7 +1402,7 @@ private struct RepositoryDiffNotice: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .gallaeFont(.headline)
             Text(message)
                 .foregroundStyle(.secondary)
             if let primaryAction {

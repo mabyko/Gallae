@@ -3890,21 +3890,63 @@ final class RepositoryInspectorTests: XCTestCase {
         func line(_ id: Int, old: Int?, new: Int?) -> RepositoryDiff.Line {
             .init(id: id, kind: .context, oldLineNumber: old, newLineNumber: new, text: "\(id)")
         }
-        let digit = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular).maximumAdvancement.width
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let digit = ("0" as NSString).size(withAttributes: [.font: font]).width
 
         // Metadata and hunk lines carry no number, so a diff of only those still reserves the two-digit floor.
-        XCTAssertEqual(diffNumberWidth(for: [line(0, old: nil, new: nil)], fontSize: 13), (digit * 2).rounded(.up))
-        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 7, new: 7)], fontSize: 13), (digit * 2).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: nil, new: nil)], font: .monospacedSystemFont(ofSize: 13, weight: .regular)), (digit * 2).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 7, new: 7)], font: .monospacedSystemFont(ofSize: 13, weight: .regular)), (digit * 2).rounded(.up))
         // The widest number wins whichever side it is on, so both halves of a split share one gutter.
-        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 999, new: 12)], fontSize: 13), (digit * 3).rounded(.up))
-        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 12, new: 999)], fontSize: 13), (digit * 3).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 999, new: 12)], font: .monospacedSystemFont(ofSize: 13, weight: .regular)), (digit * 3).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 12, new: 999)], font: .monospacedSystemFont(ofSize: 13, weight: .regular)), (digit * 3).rounded(.up))
         // Six digits fit instead of being truncated by a fixed column.
-        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 13), (digit * 6).rounded(.up))
+        XCTAssertEqual(diffNumberWidth(for: [line(0, old: 4, new: 123_456)], font: .monospacedSystemFont(ofSize: 13, weight: .regular)), (digit * 6).rounded(.up))
         // The column tracks the font, not a constant.
         XCTAssertLessThan(
-            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 11),
-            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], fontSize: 13)
+            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], font: .monospacedSystemFont(ofSize: 11, weight: .regular)),
+            diffNumberWidth(for: [line(0, old: 4, new: 123_456)], font: .monospacedSystemFont(ofSize: 13, weight: .regular))
         )
+    }
+
+    @MainActor
+    func testFontSearchMatchesDisplayAndPostScriptNames() throws {
+        let menlo = try XCTUnwrap(NSFont(name: "Menlo-Regular", size: 13))
+        let helvetica = try XCTUnwrap(NSFont(name: "Helvetica", size: 13))
+        let fonts = [menlo, helvetica]
+        XCTAssertEqual(GallaeFontChooser.matchingFonts(fonts, query: "  mEnLo  ").map(\.fontName), [menlo.fontName])
+        XCTAssertEqual(GallaeFontChooser.matchingFonts(fonts, query: "Menlo-Regular").map(\.fontName), [menlo.fontName])
+        XCTAssertEqual(GallaeFontChooser.matchingFonts(fonts, query: menlo.displayName!).map(\.fontName), [menlo.fontName])
+        XCTAssertEqual(GallaeFontChooser.matchingFonts(fonts, query: " ").map(\.fontName), fonts.map(\.fontName))
+        XCTAssertTrue(GallaeFontChooser.matchingFonts(fonts, query: "no-such-typeface").isEmpty)
+    }
+
+    func testTypographyResolvesFacesSizesAndDiffGutter() throws {
+        let small = GallaeTypography(uiFace: "Helvetica", uiSize: 20, codeFace: "Menlo-Regular", codeSize: 12)
+        let large = GallaeTypography(uiFace: "Helvetica", uiSize: 10, codeFace: "Menlo-Regular", codeSize: 24)
+        XCTAssertEqual(small.uiNSFont().fontName, "Helvetica")
+        XCTAssertEqual(small.uiNSFont().pointSize, 20)
+        XCTAssertEqual(large.uiNSFont().pointSize, 10)
+        XCTAssertGreaterThan(small.uiNSFont(.title2).pointSize, small.uiNSFont().pointSize)
+        XCTAssertLessThan(small.uiNSFont(.caption1).pointSize, small.uiNSFont().pointSize)
+        XCTAssertEqual(GallaeTypography(uiFace: "missing-font").uiNSFont().fontName,
+                       NSFont.preferredFont(forTextStyle: .body).fontName)
+        XCTAssertEqual(small.codeNSFont.fontName, "Menlo-Regular")
+        XCTAssertEqual(small.codeNSFont.pointSize, 12)
+        XCTAssertEqual(large.codeNSFont.pointSize, 24)
+        let line = RepositoryDiff.Line(id: 0, kind: .context, oldLineNumber: 123456, newLineNumber: 7, text: "hello")
+        for typography in [small, large] {
+            let font = typography.codeNSFont
+            let width = diffNumberWidth(for: [line], font: font)
+            XCTAssertGreaterThanOrEqual(width, ("123456" as NSString).size(withAttributes: [.font: font]).width)
+        }
+        XCTAssertGreaterThan(diffNumberWidth(for: [line], font: large.codeNSFont),
+                             diffNumberWidth(for: [line], font: small.codeNSFont))
+        let fallback = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        XCTAssertEqual(GallaeTypography(codeFace: "missing-font", codeSize: 13).codeNSFont.fontName, fallback.fontName)
+        XCTAssertEqual(GallaeTypography(codeFace: "Helvetica", codeSize: 13).codeNSFont.fontName, fallback.fontName)
+        XCTAssertEqual(GallaeTypography.boundedSize(.nan), NSFont.systemFontSize)
+        XCTAssertEqual(GallaeTypography.boundedSize(1000), 24)
+        XCTAssertEqual(GallaeTypography.boundedSize(-1), 10)
     }
 
     func testDescribesNavigatorLocationForDestinationsAndObjects() {
@@ -3951,7 +3993,6 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(standard.metrics.diffChangeBarWidth, 0)
         XCTAssertGreaterThan(contrast.metrics.diffChangeBarWidth, 0)
         XCTAssertLessThan(contrast.metrics.rowVerticalPadding, standard.metrics.rowVerticalPadding)
-        XCTAssertLessThan(contrast.metrics.diffFontSize, standard.metrics.diffFontSize)
         let customized = GallaeTheme.resolve(
             response: .increasedContrast, compactRows: false, graphColor: .orange,
             localBranchColor: .green, remoteBranchColor: .pink, tagColor: .indigo

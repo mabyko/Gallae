@@ -17,15 +17,15 @@ struct RepositoryStashesView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Stashes")
-                            .font(.headline)
+                            .gallaeFont(.headline)
                         Text("Newest first · latest 100")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     if case .loaded(let stashes) = model.stashesState {
                         Text(stashes.count, format: .number)
-                            .font(.caption.weight(.medium))
+                            .gallaeFont(.caption1, weight: .medium)
                             .monospacedDigit()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
@@ -112,15 +112,15 @@ struct RepositoryReflogView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Reflog")
-                            .font(.headline)
+                            .gallaeFont(.headline)
                         Text("HEAD movements · latest 100")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     if case .loaded(let entries) = model.reflogState {
                         Text(entries.count, format: .number)
-                            .font(.caption.weight(.medium))
+                            .gallaeFont(.caption1, weight: .medium)
                             .monospacedDigit()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
@@ -200,17 +200,17 @@ private struct RepositoryReflogRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(entry.action)
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 HStack(spacing: 4) {
                     Text(entry.selector)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                     Text("·")
                     Text(RelativeTimeLabel.string(for: entry.occurredAt))
                 }
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
@@ -219,7 +219,7 @@ private struct RepositoryReflogRow: View {
             Spacer(minLength: 8)
 
             Text(entry.commitID.prefix(8))
-                .font(.caption.monospaced())
+                .gallaeFont(.caption1, monospaced: true)
                 .foregroundStyle(.secondary)
         }
         .contentShape(.rect)
@@ -239,10 +239,10 @@ private struct RepositoryReflogDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Label(entry.selector, systemImage: "clock.arrow.circlepath")
-                        .font(.title2.weight(.semibold))
+                        .gallaeFont(.title2, weight: .semibold)
 
                     Text(entry.action)
-                        .font(.title3)
+                        .gallaeFont(.title3)
                         .textSelection(.enabled)
 
                     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
@@ -250,7 +250,7 @@ private struct RepositoryReflogDetailView: View {
                             Text("Commit")
                                 .foregroundStyle(.secondary)
                             Text(entry.commitID)
-                                .font(.callout.monospaced())
+                                .gallaeFont(.callout, monospaced: true)
                                 .textSelection(.enabled)
                         }
                         GridRow {
@@ -267,7 +267,7 @@ private struct RepositoryReflogDetailView: View {
                     }
 
                     Text("This records where HEAD pointed after the action. Git may expire older Reflog entries during maintenance.")
-                        .font(.callout)
+                        .gallaeFont(.callout)
                         .foregroundStyle(.secondary)
 
                     Button("Create Recovery Branch…", systemImage: "arrow.triangle.branch") {
@@ -300,14 +300,14 @@ private struct RepositoryRecoveryBranchSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Create Recovery Branch", systemImage: "arrow.triangle.branch")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text("Create and switch to a new local branch at (entry.selector).")
                     .foregroundStyle(.secondary)
             }
 
             LabeledContent("Commit") {
                 Text(entry.commitID)
-                    .font(.callout.monospaced())
+                    .gallaeFont(.callout, monospaced: true)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
@@ -368,17 +368,17 @@ private struct RepositoryStashRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(stash.subject)
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 HStack(spacing: 4) {
                     Text(stash.reference)
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                     Text("·")
                     Text(RelativeTimeLabel.string(for: stash.createdAt))
                 }
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
@@ -387,7 +387,7 @@ private struct RepositoryStashRow: View {
             Spacer(minLength: 8)
 
             Text(stash.id.prefix(8))
-                .font(.caption.monospaced())
+                .gallaeFont(.caption1, monospaced: true)
                 .foregroundStyle(.secondary)
         }
         .contentShape(.rect)
@@ -410,13 +410,13 @@ private struct RepositoryStashDetailView: View {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(stash.subject)
-                            .font(.headline)
+                            .gallaeFont(.headline)
                             .textSelection(.enabled)
                         Text("\(stash.reference) · \(stash.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                         Text("Stash \(stash.id)")
-                            .font(.caption.monospaced())
+                            .gallaeFont(.caption1, monospaced: true)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)

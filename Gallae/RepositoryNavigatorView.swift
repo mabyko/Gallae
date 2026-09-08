@@ -243,7 +243,7 @@ struct RepositoryNavigatorView: View {
 
     private func screenSectionLabel(_ title: String) -> some View {
         Text(title)
-            .font(.caption.weight(.semibold))
+            .gallaeFont(.caption1, weight: .semibold)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.bottom, 2)
@@ -263,7 +263,7 @@ struct RepositoryNavigatorView: View {
                 Spacer(minLength: 4)
                 if badge > 0 {
                     Text(badge, format: .number)
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .monospacedDigit()
                         .foregroundStyle(isActive ? .white.opacity(0.85) : .secondary)
                 }
@@ -376,7 +376,7 @@ struct RepositoryNavigatorView: View {
             Spacer(minLength: 4)
             if isCurrent {
                 Text("HEAD")
-                    .font(.caption2.weight(.semibold))
+                    .gallaeFont(.caption2, weight: .semibold)
                     .foregroundStyle(scope == .branch(branch) && isReferenceListFocused && controlActiveState == .key
                                      ? Color.white : theme.colors.accent)
                     .fixedSize()
@@ -633,9 +633,9 @@ struct CreateBranchSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("New Branch")
-                .font(.headline)
+                .gallaeFont(.headline)
             Text("Creates a local branch from \(startPointLabel ?? model.repository?.head.label ?? "the current HEAD") and switches to it.")
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
 
             TextField("Branch Name", text: $name)

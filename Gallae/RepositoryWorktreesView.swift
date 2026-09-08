@@ -34,7 +34,7 @@ struct RepositoryWorktreesSection: View {
                 if isExpanded {
                     if case .failed(let message) = model.localBranchesState {
                         Label("Couldn’t Refresh Worktrees", systemImage: "exclamationmark.triangle")
-                            .font(.caption).foregroundStyle(.secondary).help(message).selectionDisabled()
+                            .gallaeFont(.caption1).foregroundStyle(.secondary).help(message).selectionDisabled()
                     }
                     if visibleWorktrees.isEmpty {
                         Text("No Matching Worktrees").foregroundStyle(.secondary).selectionDisabled()
@@ -71,20 +71,20 @@ struct RepositoryWorktreesSection: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(worktree.name).fontWeight(current ? .bold : .regular)
                     .lineLimit(1).truncationMode(.middle)
-                Text(worktree.headLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(worktree.headLabel).gallaeFont(.caption1).foregroundStyle(.secondary).lineLimit(1)
                 if duplicateName {
                     Text(worktree.url.deletingLastPathComponent().path)
-                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                        .gallaeFont(.caption2).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                 }
             }
             Spacer(minLength: 2)
             if current {
-                Image(systemName: "checkmark").font(.caption.bold()).help("Current Worktree")
+                Image(systemName: "checkmark").gallaeFont(.caption1, weight: .bold).help("Current Worktree")
             } else if worktree.isPrimary {
-                Text("Primary").font(.caption2).foregroundStyle(.secondary).fixedSize()
+                Text("Primary").gallaeFont(.caption2).foregroundStyle(.secondary).fixedSize()
             }
             if let reason = worktree.lockedReason {
-                Image(systemName: "lock").font(.caption).help(reason.isEmpty ? "Locked Worktree" : reason)
+                Image(systemName: "lock").gallaeFont(.caption1).help(reason.isEmpty ? "Locked Worktree" : reason)
             }
         }
         .tag(RepositoryNavigatorSelection.worktree(worktree.url))
@@ -149,9 +149,9 @@ struct CreateWorktreeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("New Worktree").font(.headline)
+            Text("New Worktree").gallaeFont(.headline)
             Text("Create a separate working folder. Changes in the current folder stay here.")
-                .font(.caption).foregroundStyle(.secondary)
+                .gallaeFont(.caption1).foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 12) {
                 Picker("Branch", selection: $createsBranch) {
                     Text("New Branch").tag(true)
@@ -161,7 +161,7 @@ struct CreateWorktreeSheet: View {
                     TextField("New branch name", text: $name).focused($isNameFocused)
                         .accessibilityLabel("Worktree Branch Name")
                     TextField("Starting point", text: $startPoint).accessibilityLabel("Worktree Starting Point")
-                    Text("Start from HEAD, a branch, tag, or commit.").font(.caption).foregroundStyle(.secondary)
+                    Text("Start from HEAD, a branch, tag, or commit.").gallaeFont(.caption1).foregroundStyle(.secondary)
                 } else {
                     Picker("Branch", selection: $branch) {
                         Text("Choose a branch").tag("")
@@ -170,7 +170,7 @@ struct CreateWorktreeSheet: View {
                             Text(item + (inUse ? " · In Use" : "")).tag(item).disabled(inUse)
                         }
                     }
-                    if occupied { Text("This branch already has a working folder.").font(.caption).foregroundStyle(.secondary) }
+                    if occupied { Text("This branch already has a working folder.").gallaeFont(.caption1).foregroundStyle(.secondary) }
                 }
                 LabeledContent("Location") {
                     Button(action: chooseParent) {
@@ -180,10 +180,10 @@ struct CreateWorktreeSheet: View {
                 }
                 TextField("New folder name", text: $folderName).accessibilityLabel("Worktree Folder Name")
                 if let destination {
-                    Text(destination.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(destination.path).gallaeFont(.caption1).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 if destinationExists {
-                    Text("That folder already exists. Choose a new folder name.").font(.caption).foregroundStyle(.red)
+                    Text("That folder already exists. Choose a new folder name.").gallaeFont(.caption1).foregroundStyle(.red)
                 }
                 Toggle("Open after creation", isOn: $opensAfterCreation)
             }.disabled(isCreating)

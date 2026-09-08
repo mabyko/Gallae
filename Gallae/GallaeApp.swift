@@ -462,7 +462,7 @@ private struct GallaeSettingsView: View {
                 commandLineSettings
             }
         }
-        .frame(width: 480)
+        .frame(width: 540)
     }
 
     private var gitSettings: some View {
@@ -477,18 +477,18 @@ private struct GallaeSettingsView: View {
                         "SSH commit signing is configured in Git. Gallae keeps that configuration unchanged.",
                         systemImage: "key"
                     )
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 case .gpgUnavailable:
                     Label(
                         "No GPG program was found. Install GnuPG, or set gpg.program in your Git configuration, to sign commits.",
                         systemImage: "exclamationmark.circle"
                     )
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 case .failed(let message):
                     Label(message, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(theme.colors.statusConflict)
                     Button("Try Again") {
                         Task { await loadSigningState() }
@@ -506,17 +506,17 @@ private struct GallaeSettingsView: View {
 
                     if keys.isEmpty {
                         Text("No secret GPG keys were found. Create or import a key with GnuPG first.")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                     } else {
                         Text("Reads and writes the global Git configuration (user.signingkey, commit.gpgsign) — the same values git itself uses, reloaded each time this tab opens. Repositories with their own signing setting keep it.")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                     }
 
                     if let signingErrorMessage {
                         Label(signingErrorMessage, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(theme.colors.statusConflict)
                             .accessibilityLabel("Signing update failed: \(signingErrorMessage)")
                     }
@@ -540,6 +540,7 @@ private struct GallaeSettingsView: View {
 
     private var appearanceSettings: some View {
         Form {
+            GallaeFontSettings()
             Section {
                 Picker("Appearance", selection: $appearance) {
                     ForEach(GallaeAppearanceSettings.Appearance.allCases) { appearance in
@@ -550,7 +551,7 @@ private struct GallaeSettingsView: View {
                 .accessibilityHint("System follows the macOS appearance setting")
 
                 Text("System follows the macOS setting.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -564,7 +565,7 @@ private struct GallaeSettingsView: View {
                 Text(accentColor == "system"
                      ? "Following the macOS accent color."
                      : "Used for selections and controls throughout the app.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -581,13 +582,13 @@ private struct GallaeSettingsView: View {
                         ? "Turned off while Reduce Transparency is on in System Settings › Accessibility."
                         : "Uses the system material. Turned off automatically while Reduce Transparency is on in System Settings."
                 )
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
 
                 Toggle("Compact Rows", isOn: $compactRows)
                     .accessibilityHint("Shorter rows in Changes, History, Stashes, and Reflog")
                 Text("Shorter rows in Changes, History, Stashes, and Reflog.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -599,7 +600,7 @@ private struct GallaeSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 Text(historyLayout.summary)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -609,7 +610,7 @@ private struct GallaeSettingsView: View {
                 colorRow("Remote Branches", selection: $historyRemoteColor)
                 colorRow("Tags", selection: $historyTagColor)
                 Text("The graph uses the remaining colors for other lanes. Badge text keeps its readable system color.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 Button("Reset History Colors") {
                     historyGraphColor = .blue
@@ -627,13 +628,13 @@ private struct GallaeSettingsView: View {
                 }
                 .accessibilityHint("Choose how to reach the Navigator when the window is too narrow to show it")
                 Text("Windows narrower than 948 points fold the Navigator instead of growing. \(narrowNavigator.summary)")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
             Section {
                 Text("Increase Contrast in System Settings › Accessibility raises divider, badge, and diff contrast and adds color bars to changed diff lines. There is no theme picker.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
         }
@@ -658,7 +659,7 @@ private struct GallaeSettingsView: View {
                     )
 
                 Text("Looks up commit authors on GitHub and shows their public avatar. Author email addresses are sent only to GitHub, results are cached per email, and authors without a public GitHub match keep the initials badge.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
         }
@@ -697,13 +698,13 @@ private struct GallaeSettingsView: View {
             Section("Command Line Tool") {
                 LabeledContent("gallae command") {
                     Text(installedURL?.path ?? "Not installed")
-                        .font(.callout.monospaced())
+                        .gallaeFont(.callout, monospaced: true)
                         .foregroundStyle(installedURL == nil ? .secondary : .primary)
                         .textSelection(.enabled)
                 }
 
                 Text("Run “gallae [path]” in Terminal to open the Git repository at that path. The path defaults to the current directory.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
 
                 Button(
@@ -717,7 +718,7 @@ private struct GallaeSettingsView: View {
 
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                         .foregroundStyle(theme.colors.statusConflict)
                         .accessibilityLabel("Install failed: \(errorMessage)")
                 }
@@ -780,6 +781,7 @@ struct GallaeApp: App {
     var body: some Scene {
         Window("Gallae for Git", id: "main") {
             AppView()
+                .gallaeTypography()
                 .tint(customAccentColor)
                 .accentColor(customAccentColor)
         }
@@ -790,8 +792,177 @@ struct GallaeApp: App {
 
         Settings {
             GallaeSettingsView()
+                .gallaeTypography()
                 .tint(customAccentColor)
                 .accentColor(customAccentColor)
+        }
+    }
+}
+
+private struct GallaeFontSettings: View {
+    @AppStorage(GallaeTypography.uiFaceKey) private var uiFace = ""
+    @AppStorage(GallaeTypography.uiSizeKey) private var uiSize = Double(NSFont.systemFontSize)
+    @AppStorage(GallaeTypography.codeFaceKey) private var codeFace = ""
+    @AppStorage(GallaeTypography.codeSizeKey) private var codeSize = Double(NSFont.systemFontSize)
+    @Environment(\.gallaeTypography) private var typography
+    @State private var fonts: [NSFont] = []
+
+    var body: some View {
+        Section("Fonts") {
+            fontControls("UI", face: $uiFace, size: $uiSize, choices: fonts)
+            Text("Gallae · 저장소 — Aa Bb 0123")
+                .gallaeFont(.body)
+            fontControls("Code & Diff", face: $codeFace, size: $codeSize,
+                         choices: fonts.filter(\.isFixedPitch))
+            Text("123  let greeting = \"안녕하세요\"\n124  + print(greeting)")
+                .font(Font(typography.codeNSFont))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("UI size preserves heading and caption sizes. Code and diff use fixed-width fonts. Changes apply immediately.")
+                .gallaeFont(.caption1).foregroundStyle(.secondary)
+            Button("Reset Fonts") {
+                uiFace = ""
+                codeFace = ""
+                uiSize = Double(NSFont.systemFontSize)
+                codeSize = Double(NSFont.systemFontSize)
+            }
+        }
+        .task {
+            fonts = NSFontManager.shared.availableFonts.compactMap { NSFont(name: $0, size: 13) }
+                .sorted { ($0.displayName ?? $0.fontName).localizedStandardCompare($1.displayName ?? $1.fontName) == .orderedAscending }
+        }
+    }
+
+    private func fontControls(_ title: String, face: Binding<String>, size: Binding<Double>, choices: [NSFont]) -> some View {
+        VStack(spacing: 10) {
+            HStack {
+                Text("\(title) Font")
+                Spacer(minLength: 12)
+                GallaeFontPicker(title: title, face: face, choices: choices)
+                    .frame(width: 240)
+            }
+            HStack {
+                Text("\(title) Size")
+                Spacer(minLength: 12)
+                Text("\(Int(GallaeTypography.boundedSize(size.wrappedValue))) pt")
+                    .monospacedDigit()
+                Stepper("\(title) Size", value: size, in: GallaeTypography.sizeRange, step: 1)
+                    .labelsHidden()
+                    .fixedSize()
+            }
+        }
+    }
+}
+
+private struct GallaeFontPicker: View {
+    let title: String
+    @Binding var face: String
+    let choices: [NSFont]
+    @State private var isPresented = false
+
+    private var selectedTitle: String {
+        if face.isEmpty { return "System Default" }
+        return choices.first(where: { $0.fontName == face })?.displayName ?? "\(face) (Unavailable)"
+    }
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            HStack {
+                Text(selectedTitle)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.down")
+                    .imageScale(.small)
+            }
+            .gallaeFont(.body)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .background(.quaternary, in: .rect(cornerRadius: 6))
+        .help(selectedTitle)
+        .accessibilityLabel("\(title) Font")
+        .accessibilityValue(selectedTitle)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            GallaeFontChooser(choices: choices, selection: face) { selected in
+                face = selected
+                isPresented = false
+            }
+        }
+    }
+}
+
+struct GallaeFontChooser: View {
+    let choices: [NSFont]
+    @State var selection: String?
+    let choose: (String) -> Void
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+    @FocusState private var listFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    static func matchingFonts(_ fonts: [NSFont], query: String) -> [NSFont] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return fonts.filter {
+            query.isEmpty || ($0.displayName ?? $0.fontName).localizedStandardContains(query)
+                || $0.fontName.localizedStandardContains(query)
+        }
+    }
+
+    var body: some View {
+        let matches = Self.matchingFonts(choices, query: query)
+        VStack(spacing: 0) {
+            TextField("Search fonts", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .focused($searchFocused)
+                .onSubmit { if let selection { choose(selection) } }
+                .onKeyPress(.downArrow) {
+                    selection = matches.first?.fontName ?? ""
+                    listFocused = true
+                    return .handled
+                }
+                .padding(12)
+            Divider()
+            List(selection: $selection) {
+                Text("System Default")
+                    .tag("")
+                    .onTapGesture { choose("") }
+                ForEach(matches, id: \.fontName) { font in
+                    Text(font.displayName ?? font.fontName)
+                        .lineLimit(1)
+                        .help(font.displayName ?? font.fontName)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(.rect)
+                        .tag(font.fontName)
+                        .onTapGesture { choose(font.fontName) }
+                }
+            }
+            .listStyle(.plain)
+            .focused($listFocused)
+            .onKeyPress(.return) {
+                guard let selection else { return .ignored }
+                choose(selection)
+                return .handled
+            }
+            if matches.isEmpty, !query.isEmpty {
+                Text("No matching fonts")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            }
+        }
+        .frame(width: 380, height: 340)
+        .onAppear { searchFocused = true }
+        .onChange(of: query) { _, _ in
+            selection = matches.first?.fontName
+        }
+        .onKeyPress(.escape) {
+            dismiss()
+            return .handled
         }
     }
 }

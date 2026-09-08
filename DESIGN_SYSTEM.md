@@ -65,15 +65,15 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 | --- | --- | --- | --- | --- |
 | Standard | 기본 | 시스템 재질 | accent 틴트, 모서리 8pt | 기본 팔레트 |
 | Reduced Transparency | 시스템 투명도 줄이기가 켜짐, 또는 설정의 Translucent Sidebar and Toolbar가 꺼짐 | 불투명 뉴트럴(시안 2·A) | accent 틴트, 모서리 6pt | 기본 팔레트 |
-| Increased Contrast | 시스템 대비 증가가 켜짐 | 불투명, 구분선·글자 대비 상향 | accent 채움에 흰 글자, 모서리 4pt | 11pt, 추가·삭제 행 왼쪽 컬러 바 |
+| Increased Contrast | 시스템 대비 증가가 켜짐 | 불투명, 구분선·글자 대비 상향 | accent 채움에 흰 글자, 모서리 4pt | 사용자 지정 글자 크기 유지, 추가·삭제 행 왼쪽 컬러 바 |
 
-세 응답은 별개 테마가 아니라 한 테마의 Semantic 매핑 세 벌이다. 사용자는 테마를 고르지 않고, 설정에는 Translucent Sidebar and Toolbar와 Compact Rows만 둔다. 대비 증가는 시스템 설정을 따르며 앱 설정으로 켜지 않는다.
+세 응답은 별개 테마가 아니라 한 테마의 Semantic 매핑 세 벌이다. 사용자는 테마를 고르지 않고, 설정에서 Translucent Sidebar and Toolbar, Compact Rows와 UI·코드 폰트를 조정한다. 대비 증가는 시스템 설정을 따르며 앱 설정으로 켜지 않는다.
 
 ## 현재 시안
 
 시안 2(`prototype/gallae-workspace`)는 정보 구조 후보 A·B·C를 비교한다. 시안 5는 채택한 구조 위에서 세 Material Response와 밀도를 비교하는 로컬 일회용 HTML이며 저장소에 넣지 않는다. 시안 5의 토큰은 `:root[data-theme]`로 응답별 Semantic 값을 덮어쓰고 Light·Dark를 각각 가지며, 설정 창 목업의 두 토글과 시스템 접근성 토글 시뮬레이션으로 응답 전환을 확인한다. 제품에서는 시스템 설정과 두 개의 앱 설정으로만 응답이 결정된다.
 
-구현은 `Gallae/GallaeTheme.swift`다. `GallaeMaterialResponse.resolve`가 응답을 정하고 `GallaeTheme.resolve(response:compactRows:)`가 그 응답과 밀도의 Semantic 값을 돌려준다. 응답별로 달라지는 값은 배지·diff 배경 농도, diff 글자 크기와 컬러 바 폭, 행 세로 여백, 사이드바·툴바의 재질 사용 여부뿐이며 색 이름과 배치는 같다.
+구현은 `Gallae/GallaeTheme.swift`다. `GallaeMaterialResponse.resolve`가 응답을 정하고 `GallaeTheme.resolve(response:compactRows:)`가 그 응답과 밀도의 Semantic 값을 돌려준다. 응답별로 달라지는 값은 배지·diff 배경 농도, diff 컬러 바 폭, 행 세로 여백, 사이드바·툴바의 재질 사용 여부뿐이며 색 이름과 배치는 같다.
 
 ## 변경 방법
 
@@ -88,7 +88,7 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 
 ## 지금 만들지 않는 것
 
-사용자 제작 Theme, 외부 Theme 파일, Theme 마켓, 런타임 편집기와 플러그인 interface는 만들지 않는다. 테마 선택 UI도 만들지 않는다. 시안 5의 A·B·C는 고를 수 있는 테마가 아니라 한 테마의 접근성 응답이며, 설정에는 Translucent Sidebar and Toolbar와 Compact Rows만 둔다. 실제 요구가 생기기 전까지 하나의 Gallae Theme와 Light·Dark Appearance, 세 응답이면 충분하다.
+사용자 제작 Theme, 외부 Theme 파일, Theme 마켓, 런타임 편집기와 플러그인 interface는 만들지 않는다. 테마 선택 UI도 만들지 않는다. 시안 5의 A·B·C는 고를 수 있는 테마가 아니라 한 테마의 접근성 응답이며, 설정에서 Translucent Sidebar and Toolbar, Compact Rows와 UI·코드 폰트를 조정한다. 실제 요구가 생기기 전까지 하나의 Gallae Theme와 Light·Dark Appearance, 세 응답이면 충분하다.
 
 ## 공개 근거
 
@@ -98,3 +98,11 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 - [Apple Human Interface Guidelines: Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
 - [SwiftUI EnvironmentValues: accessibilityReduceTransparency](https://developer.apple.com/documentation/swiftui/environmentvalues/accessibilityreducetransparency)
 - [SwiftUI ColorSchemeContrast](https://developer.apple.com/documentation/swiftui/colorschemecontrast)
+
+## 사용자 폰트 설정
+
+Settings → Appearance → Fonts에서 UI와 Code & Diff의 글꼴(face)·크기를 각각 저장한다. UI는 설치된 글꼴을, Code & Diff는 설치된 고정폭 글꼴을 선택하며 기본값은 시스템 글꼴이다. 크기는 10–24pt이며 설정 즉시 반영하고 Reset Fonts로 복원한다. 글꼴 선택은 이름 검색이 가능한 팝오버를 사용하며 클릭 또는 방향키·Enter로 선택한다. 크기 숫자와 증감 버튼은 오른쪽에 붙여 배치한다. 글꼴이 없어지거나 코드용으로 유효하지 않으면 시스템 글꼴로 대체한다.
+
+`GallaeTypography`는 색·재질 테마와 독립된 Environment 값이다. 메인 창과 설정 창의 루트에 같은 저장 설정을 연결하고, 하위 화면·시트·툴바에 전달한다. `gallaeFont`는 UI 기본 크기에 맞춰 제목·본문·보조 설명의 상대 크기와 굵기를 유지한다. SHA·경로 등 고정폭 메타데이터는 코드 글꼴을 쓰되 크기는 UI 역할을 따른다. macOS 메뉴·시스템 대화상자와 고정 크기 장식 아이콘은 시스템 표현을 유지한다.
+
+코드·diff 본문과 충돌 버전 미리보기는 코드 크기를 그대로 적용한다. 줄 번호 칸은 같은 실제 폰트로 숫자 폭을 측정하여 통합·분할 diff 모두에 적용한다. 고대비 모드는 글자 크기를 변경하지 않는다.

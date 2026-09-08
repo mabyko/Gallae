@@ -25,7 +25,7 @@ struct RepositoryHistoryView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             historyScopeMenu
                             Text(headerSubtitle)
-                                .font(.caption)
+                                .gallaeFont(.caption1)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
@@ -34,7 +34,7 @@ struct RepositoryHistoryView: View {
                         headerTools
                         if case .loaded(let history) = model.historyState {
                             Text(history.commits.count, format: .number)
-                                .font(.caption.weight(.medium))
+                                .gallaeFont(.caption1, weight: .medium)
                                 .monospacedDigit()
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 2)
@@ -48,14 +48,14 @@ struct RepositoryHistoryView: View {
                             Spacer()
                             Button("Clear Filter") { scope = nil }
                         }
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                     }
                     if let message = model.historyNavigationMessage {
                         HStack {
                             Text(message).foregroundStyle(.secondary)
                             Button("Show in All History") { scope = nil }
                         }
-                        .font(.caption)
+                        .gallaeFont(.caption1)
                     }
 
                     if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
@@ -204,7 +204,7 @@ struct RepositoryHistoryView: View {
             }
         } label: {
             Text(scope.map { "History · Filter: \($0.name)" } ?? "History · All Branches & Tags")
-                .font(.headline)
+                .gallaeFont(.headline)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -306,14 +306,14 @@ struct RepositoryHistoryView: View {
     private var reviewControls: some View {
         HStack(spacing: 8) {
             Text(searchText.isEmpty ? headerTitle : "\(headerTitle) · Filtered")
-                .font(.caption.weight(.medium))
+                .gallaeFont(.caption1, weight: .medium)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help(searchText.isEmpty ? headerTitle : "\(headerTitle) · Search: \(searchText)")
             if let selected = model.selectedHistoryCommitID,
                let index = visibleHistoryCommitIDs.firstIndex(of: selected) {
                 Text("\(index + 1) of \(visibleHistoryCommitIDs.count)")
-                    .font(.caption.monospacedDigit())
+                    .gallaeFont(.caption1, digits: true)
                     .foregroundStyle(.secondary)
                     .fixedSize()
             }
@@ -473,7 +473,7 @@ struct RepositoryHistoryView: View {
                     if history.hasMoreCommits {
                         Divider()
                         Button("Load Older Commits · \(history.commits.count) shown") { model.loadMoreHistory() }
-                            .font(.caption)
+                            .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 14)
@@ -555,7 +555,7 @@ private struct RepositoryHistoryRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(commit.subject)
-                    .font(.callout.weight(isHEAD ? .bold : .medium))
+                    .gallaeFont(.callout, weight: isHEAD ? .bold : .medium)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(isHEAD ? "Current checkout (HEAD)\n\(commit.subject)" : commit.subject)
@@ -566,7 +566,7 @@ private struct RepositoryHistoryRow: View {
                         Text("·")
                         Text(RelativeTimeLabel.string(for: commit.committedAt))
                     }
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 }
@@ -578,7 +578,7 @@ private struct RepositoryHistoryRow: View {
                         }
                         if commit.references.count > 2 {
                             Text("+\(commit.references.count - 2)")
-                                .font(.caption2.monospacedDigit())
+                                .gallaeFont(.caption2, digits: true)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -590,18 +590,18 @@ private struct RepositoryHistoryRow: View {
 
             if usesWideRow {
                 Text(commit.authorName)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(width: 110, alignment: .leading)
                 Text(RelativeTimeLabel.string(for: commit.committedAt))
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(width: 64, alignment: .trailing)
             }
             Text(commit.id.prefix(8))
-                .font(.caption.monospaced())
+                .gallaeFont(.caption1, monospaced: true)
                 .foregroundStyle(.secondary)
         }
         .overlay(alignment: .leading) {
@@ -683,7 +683,7 @@ private struct RepositoryHistoryRow: View {
                 .padding(.horizontal, 5)
                 .frame(minHeight: 18)
         }
-        .font(.caption2.weight(isHEAD ? .bold : .regular))
+        .gallaeFont(.caption2, weight: isHEAD ? .bold : .regular)
         .foregroundStyle(color)
         .background(color.opacity(highContrast ? 0.22 : 0.12), in: .rect(cornerRadius: 4))
         .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 4))
@@ -947,7 +947,7 @@ private struct RepositoryCommitDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
                 Text(commit.subject)
-                    .font(.headline)
+                    .gallaeFont(.headline)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .help(commit.subject)
@@ -966,7 +966,7 @@ private struct RepositoryCommitDetailView: View {
                 Spacer(minLength: 0)
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(commit.id.prefix(8))
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .help(commit.id)
                         .textSelection(.enabled)
@@ -977,7 +977,7 @@ private struct RepositoryCommitDetailView: View {
             }
             if !commit.body.isEmpty {
                 Text(commit.body.split(whereSeparator: \.isWhitespace).joined(separator: " "))
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .textSelection(.enabled)
@@ -1052,7 +1052,7 @@ private struct RepositoryCommitDetailView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(commit.subject)
-                    .font(.headline)
+                    .gallaeFont(.headline)
                     .textSelection(.enabled)
 
                 if !commit.body.isEmpty {
@@ -1063,12 +1063,12 @@ private struct RepositoryCommitDetailView: View {
                                 .textSelection(.enabled)
                         }
                         .frame(maxHeight: 180)
-                        .font(.callout)
+                        .gallaeFont(.callout)
                         .foregroundStyle(.secondary)
                         .accessibilityLabel("Full commit message")
                     } else {
                         Text(commit.body)
-                            .font(.callout)
+                            .gallaeFont(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(4)
                             .textSelection(.enabled)
@@ -1078,12 +1078,12 @@ private struct RepositoryCommitDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.tint)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .accessibilityValue(showsFullMessage ? "Expanded" : "Collapsed")
                 }
 
                 Text("Commit \(commit.id)")
-                    .font(.caption.monospaced())
+                    .gallaeFont(.caption1, monospaced: true)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1091,7 +1091,7 @@ private struct RepositoryCommitDetailView: View {
 
                 if !commit.parentIDs.isEmpty {
                     Text("Parent \(commit.parentIDs.map { String($0.prefix(8)) }.joined(separator: ", "))")
-                        .font(.caption.monospaced())
+                        .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                 }
 
@@ -1108,10 +1108,10 @@ private struct RepositoryCommitDetailView: View {
             RepositoryAuthorBadge(name: commit.authorName, email: commit.authorEmail)
             VStack(alignment: .leading, spacing: 2) {
                 Text(commit.authorName)
-                    .font(.callout.weight(.medium))
+                    .gallaeFont(.callout, weight: .medium)
                     .lineLimit(1)
                 Text("\(commit.authorEmail) · \(commit.committedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1129,7 +1129,7 @@ private struct RepositoryCommitDetailView: View {
     private var commitSignature: some View {
         if let signatureBadge {
             Label(signatureBadge.text, systemImage: signatureBadge.systemImage)
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(signatureBadge.color)
                 .help("\(signatureBadge.text)\n\(signatureBadge.help)")
                 .accessibilityLabel("Commit signature: \(signatureBadge.text)")
@@ -1273,7 +1273,7 @@ private struct InteractiveRebasePlanSheet: View {
 
             HStack {
                 Text(footerMessage)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if phase == .reviewing {
@@ -1344,11 +1344,11 @@ private struct InteractiveRebasePlanSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(headerTitle, systemImage: "list.number")
-                .font(.title2.bold())
+                .gallaeFont(.title2, weight: .bold)
             Text("Commits from \(commit.id.prefix(8)) through the current HEAD run from top to bottom.")
                 .foregroundStyle(.secondary)
             Text(headerDetail)
-                .font(.caption)
+                .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
         }
     }
@@ -1359,7 +1359,7 @@ private struct InteractiveRebasePlanSheet: View {
                 ForEach(Array(plan.steps.enumerated()), id: \.element.id) { index, step in
                     HStack(spacing: 8) {
                         Text(index + 1, format: .number)
-                            .font(.caption.monospacedDigit())
+                            .gallaeFont(.caption1, digits: true)
                             .foregroundStyle(.secondary)
                             .frame(width: 22, alignment: .trailing)
 
@@ -1377,7 +1377,7 @@ private struct InteractiveRebasePlanSheet: View {
                             .lineLimit(1)
                         Spacer(minLength: 8)
                         Text(step.id.prefix(8))
-                            .font(.caption.monospaced())
+                            .gallaeFont(.caption1, monospaced: true)
                             .foregroundStyle(.secondary)
 
                         Button("Move Up", systemImage: "chevron.up") {
@@ -1404,7 +1404,7 @@ private struct InteractiveRebasePlanSheet: View {
 
             if let validationMessage {
                 Label(validationMessage, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(theme.colors.statusConflict)
                     .accessibilityLabel("Invalid Rebase plan: \(validationMessage)")
             }
@@ -1417,11 +1417,11 @@ private struct InteractiveRebasePlanSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
                         Text(index + 1, format: .number)
-                            .font(.caption.monospacedDigit())
+                            .gallaeFont(.caption1, digits: true)
                             .foregroundStyle(.secondary)
                             .frame(width: 22, alignment: .trailing)
                         Text(step.action.rawValue)
-                            .font(.caption.monospaced().weight(.semibold))
+                            .gallaeFont(.caption1, weight: .semibold, monospaced: true)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
                             .background(theme.colors.badgeBackground, in: Capsule())
@@ -1429,7 +1429,7 @@ private struct InteractiveRebasePlanSheet: View {
                             .lineLimit(1)
                         Spacer(minLength: 8)
                         Text(step.id.prefix(8))
-                            .font(.caption.monospaced())
+                            .gallaeFont(.caption1, monospaced: true)
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityElement(children: .combine)
@@ -1454,7 +1454,7 @@ private struct InteractiveRebasePlanSheet: View {
 
             if let message = executionError ?? executionValidationMessage {
                 Label(message, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(theme.colors.statusConflict)
                     .accessibilityLabel("Interactive Rebase unavailable: \(message)")
             }
@@ -1651,7 +1651,7 @@ private struct ResetCurrentBranchSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Reset Current Branch", systemImage: "arrow.counterclockwise")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text("Move \(branchName) to \(commit.subject) (\(commit.id.prefix(8))).")
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -1672,7 +1672,7 @@ private struct ResetCurrentBranchSheet: View {
                 .accessibilityHint("Choose whether changes stay staged, unstaged, or are discarded")
 
                 Text(modeDescription)
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
@@ -1749,7 +1749,7 @@ private struct RevertMergeCommitSheet: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Revert Merge Commit", systemImage: "arrow.uturn.backward")
-                    .font(.title2.bold())
+                    .gallaeFont(.title2, weight: .bold)
                 Text(commit.subject)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -1768,7 +1768,7 @@ private struct RevertMergeCommitSheet: View {
                 .accessibilityHint("Choose which parent side remains after reverting the merge")
 
                 Text("The merge commit stays in History. Git records a new commit and treats the merged tree changes as unwanted.")
-                    .font(.caption)
+                    .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }
 
