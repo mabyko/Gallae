@@ -34,7 +34,7 @@ Appearance settings include system/light/dark themes, row density, the app accen
 
 ## External applications
 
-Choose **Open in** from a branch’s context menu or the current working location menu at the top of the workspace. The current branch opens the current working folder; a branch checked out in another worktree opens that folder. Actions are disabled for branches without a checked-out folder. Opening an external app does not change your checkout.
+Choose **Open in** from a branch’s context menu, a History commit’s local branch submenu, or the current working location menu at the top of the workspace. The current branch opens the current working folder; a branch checked out in another worktree opens that folder. Actions are disabled for branches without a checked-out folder. Opening an external app does not change your checkout.
 
 Select your default terminal and editor independently in **Settings → General**. The following presets are built in; terminal and editor pickers show installed apps.
 

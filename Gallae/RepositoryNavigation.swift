@@ -92,7 +92,7 @@ struct RepositoryNavigatorLocation {
     }
 }
 
-enum RepositoryBranchIntegrationAction: Sendable {
+enum RepositoryBranchIntegrationAction: Hashable, Sendable {
     case fastForward
     case mergeCommit
     case rebase

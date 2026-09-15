@@ -133,6 +133,30 @@ struct RepositoryBranchDivergence: Equatable, Sendable {
     let uniqueToOther: Int
 }
 
+/// A preview pins both branch tips and the folder that will receive the update.
+struct RepositoryBranchIntegrationPreview: Equatable, Sendable {
+    let rootURL: URL
+    let source: String
+    let target: String
+    let sourceCommitID: String
+    let targetCommitID: String
+    let divergence: RepositoryBranchDivergence
+    let targetWorktree: RepositorySummary?
+
+    var isDiverged: Bool { divergence.uniqueToCurrent > 0 && divergence.uniqueToOther > 0 }
+
+    func unavailableReason(for action: RepositoryBranchIntegrationAction) -> String? {
+        if targetWorktree?.operation != nil { return "Finish the operation in the target Worktree first." }
+        if divergence.uniqueToOther == 0 { return "The target already contains all commits from the source." }
+        if action == .fastForward {
+            return divergence.uniqueToCurrent > 0 ? "These branches have diverged. Choose Merge Commit or Rebase." : nil
+        }
+        if targetWorktree?.changes.isEmpty == false { return "Commit or stash changes in the target Worktree first." }
+        if !isDiverged { return "No merge or replay is needed. Choose Fast-Forward." }
+        return nil
+    }
+}
+
 struct RepositoryMergePrediction: Equatable, Sendable {
     let isClean: Bool
     let conflictedPaths: [String]

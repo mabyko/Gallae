@@ -34,7 +34,7 @@ Appearance에서 시스템·라이트·다크 테마, 행 밀도, 앱 강조색�
 
 ## 외부 앱 연동
 
-branch의 우클릭 메뉴 또는 상단 작업 위치 메뉴에서 **Open in**을 선택한다. 현재 branch는 현재 작업 폴더를, 다른 Worktree에서 체크아웃한 branch는 해당 폴더를 연다. 폴더가 없는 branch에서는 비활성화하며, 외부 앱을 여는 것으로 checkout이 바뀌지는 않는다.
+branch의 우클릭 메뉴, History 커밋 우클릭 메뉴의 로컬 branch 하위 메뉴 또는 상단 작업 위치 메뉴에서 **Open in**을 선택한다. 현재 branch는 현재 작업 폴더를, 다른 Worktree에서 체크아웃한 branch는 해당 폴더를 연다. 폴더가 없는 branch에서는 비활성화하며, 외부 앱을 여는 것으로 checkout이 바뀌지는 않는다.
 
 **Settings → General**에서 기본 터미널과 에디터를 각각 선택한다. 아래는 앱에 내장된 선택지이며, 터미널·에디터 목록에는 설치된 앱이 표시된다.
 

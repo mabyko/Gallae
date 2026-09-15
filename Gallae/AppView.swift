@@ -103,6 +103,16 @@ struct AppView: View {
                     )
                 }
             } else {
+                ToolbarItem {
+                    Button("Merge / Rebase…", systemImage: "arrow.triangle.merge") {
+                        model.showIntegrateBranch()
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
+                    .help(model.canIntegrateBranch
+                          ? "Choose a local branch to merge, rebase, or fast-forward"
+                          : "Merge / Rebase needs a local branch with at least one commit")
+                }
                 ToolbarItemGroup {
                     Menu {
                         Button("Fetch & Prune", systemImage: "scissors") {
@@ -422,424 +432,306 @@ struct AppView: View {
 }
 
 private struct RepositoryIntegrateBranchSheet: View {
-    private enum Direction: Hashable {
-        case into
-        case from
+    private struct ComparisonRequest: Equatable, Hashable {
+        let source: String
+        let target: String
+        let revision: Int
+        let retry: Int
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.gallaeTheme) private var theme
     @Bindable var model: AppModel
     let repositoryRootURL: URL
-    @State private var direction: Direction = .into
-    @State private var selectedBranch: String?
-    @State private var divergence: RepositoryBranchDivergence?
-    @State private var mergePrediction: RepositoryMergePrediction?
+    @State private var target: String?
+    @State private var source: String?
+    @State private var action: RepositoryBranchIntegrationAction = .fastForward
+    @State private var preview: RepositoryBranchIntegrationPreview?
+    @State private var previewRequest: ComparisonRequest?
+    @State private var comparisonError: String?
+    @State private var retry = 0
     @State private var conflictedWorktree: RepositorySummary?
+    @State private var isSubmitting = false
 
     init(model: AppModel, repositoryRootURL: URL, initialBranch: String? = nil) {
         self.model = model
         self.repositoryRootURL = repositoryRootURL
-        _selectedBranch = State(initialValue: initialBranch)
+        if case .branch(let branch) = model.repository?.head { _target = State(initialValue: branch) }
+        _source = State(initialValue: initialBranch)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Integrate Local Branch", systemImage: "arrow.triangle.merge")
+                Label("Merge / Rebase", systemImage: "arrow.triangle.merge")
                     .gallaeFont(.title2, weight: .bold)
-                Text(
-                    direction == .into
-                        ? "Bring the selected branch into \(currentBranch), or rebase \(currentBranch) onto it."
-                        : "Fast-forward the selected branch to \(currentBranch) without switching."
-                )
-                .foregroundStyle(.secondary)
+                Text("Choose which branch to update and where its commits come from.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            Picker("Direction", selection: $direction) {
-                Text("Update \(currentBranch)").tag(Direction.into)
-                Text("Update another branch").tag(Direction.from)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .accessibilityLabel("Integration Direction")
-            .accessibilityHint(
-                "Choose whether the selected branch updates \(currentBranch), or \(currentBranch) updates the selected branch"
-            )
 
             branchContent
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if let divergenceDescription {
-                Label(divergenceDescription, systemImage: "arrow.triangle.branch")
-                    .gallaeFont(.caption1)
-                    .foregroundStyle(.secondary)
+            if target != nil && source != nil {
+                comparison
+                if let preview = currentPreview, preview.divergence.uniqueToOther > 0 {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Method").gallaeFont(.body, weight: .semibold)
+                        Picker("Method", selection: $action) {
+                            Text("Fast-Forward").tag(RepositoryBranchIntegrationAction.fastForward)
+                            Text("Merge Commit").tag(RepositoryBranchIntegrationAction.mergeCommit)
+                            Text("Rebase").tag(RepositoryBranchIntegrationAction.rebase)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .accessibilityLabel("Update method")
+                        Text(methodDescription)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let reason = preview.unavailableReason(for: action) {
+                            Label(reason, systemImage: "info.circle")
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if action == .rebase {
+                            Label("Rebase rewrites commits on \(preview.target). Gallae won’t force-push them.",
+                                  systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .gallaeFont(.callout)
+                    .disabled(isSubmitting)
+                }
             }
 
-            directionCaption
-
+            Divider()
             HStack {
+                if isSubmitting {
+                    ProgressView().controlSize(.small)
+                    Text("Updating branch…").foregroundStyle(.secondary)
+                }
                 Spacer()
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                if direction == .into {
-                    Button("Rebase Current Branch") {
-                        integrateBranch(.rebase)
-                    }
-                    .disabled(
-                        selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
-                            || model.isLoading
-                    )
-                    .accessibilityHint(
-                        "Replay the current branch commits onto the selected local branch"
-                    )
-
-                    Button("Create Merge Commit") {
-                        integrateBranch(.mergeCommit)
-                    }
-                    .disabled(
-                        selectedBranch == nil || !hasCleanRepository || !hasCommitsToIntegrate
-                            || model.isLoading
-                    )
-                    .accessibilityHint(
-                        "Create a merge commit from the selected divergent local branch"
-                    )
-
-                    Button("Fast-Forward") {
-                        integrateBranch(.fastForward)
-                    }
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isSubmitting)
+                Button(actionTitle) { submit() }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(selectedBranch == nil || !canFastForward || model.isLoading)
-                    .accessibilityHint(
-                        "Fast-forward the current branch to the selected local branch"
-                    )
-                } else if isDivergedSelection {
-                    if selectedWorktreeURL == nil, mergePrediction?.isClean == false {
-                        Button("Merge in Temporary Worktree…") {
-                            mergeInTemporaryWorktree()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(selectedBranch == nil || model.isLoading)
-                        .accessibilityHint(
-                            "Create a temporary Worktree for the selected branch, merge there, and resolve the conflicts in Gallae"
-                        )
-                    } else {
-                        Button("Create Merge Commit on \(selectedBranch ?? "Branch")") {
-                            mergeIntoSelectedBranch()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(
-                            selectedBranch == nil || !canCreateMergeCommitOut || model.isLoading
-                        )
-                        .accessibilityHint(
-                            "Create a merge commit on the selected branch without switching to it"
-                        )
-                    }
-                } else {
-                    Button("Fast-Forward \(selectedBranch ?? "Branch") to \(currentBranch)") {
-                        fastForwardSelectedBranch()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(selectedBranch == nil || !canFastForwardOut || model.isLoading)
-                    .accessibilityHint(
-                        "Move the selected branch forward to the current branch without switching"
-                    )
-                }
+                    .disabled(currentPreview?.unavailableReason(for: action) != nil
+                              || currentPreview == nil || previewRequest != comparisonRequest
+                              || model.isLoading || model.isSyncing || isSubmitting)
+                    .accessibilityHint(methodDescription)
             }
         }
         .padding(24)
-        .frame(minWidth: 560, idealWidth: 600, minHeight: 360, idealHeight: 440)
-        .task(id: repositoryRootURL) {
-            await model.loadLocalBranches()
-        }
-        .task(id: selectedBranch) {
-            divergence = nil
-            guard let branch = selectedBranch else { return }
-            let result = await model.branchDivergence(from: branch)
-            guard !Task.isCancelled, branch == selectedBranch else { return }
-            divergence = result
-        }
-        .task(id: predictionBranch) {
-            mergePrediction = nil
-            guard let branch = predictionBranch else { return }
-            let result = await model.mergePrediction(into: branch)
-            guard !Task.isCancelled, branch == predictionBranch else { return }
-            mergePrediction = result
-        }
-        .onChange(of: model.localBranchesState, initial: true) { _, _ in
-            reconcileSelection()
+        .frame(width: 560)
+        .task(id: repositoryRootURL) { await model.loadLocalBranches() }
+        .task(id: comparisonRequest) { await compareBranches() }
+        .onChange(of: model.localBranchesState, initial: true) { _, _ in reconcileSelection() }
+        .onChange(of: model.repository?.rootURL) { _, root in
+            if root != repositoryRootURL { dismiss() }
         }
         .confirmationDialog(
-            "Merge Conflicted in Worktree",
-            isPresented: Binding(
-                get: { conflictedWorktree != nil },
-                set: { if !$0 { conflictedWorktree = nil } }
-            ),
+            "Merge Needs Conflict Resolution",
+            isPresented: Binding(get: { conflictedWorktree != nil }, set: { if !$0 { conflictedWorktree = nil } }),
             titleVisibility: .visible,
             presenting: conflictedWorktree
         ) { worktree in
             Button("Open Worktree") {
-                Task {
-                    if await model.openRepository(at: worktree.rootURL) {
-                        dismiss()
-                    }
-                }
+                Task { if await model.openRepository(at: worktree.rootURL) { dismiss() } }
             }
             Button("Abort Merge", role: .destructive) {
-                Task { await model.abortMergeInWorktree(worktree) }
+                Task {
+                    await model.abortMergeInWorktree(worktree)
+                    retry += 1
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: { worktree in
-            Text(
-                "The merge stopped with conflicts in \(worktree.rootURL.path). Open the Worktree to resolve the conflicts and Continue, or abort to restore its earlier state."
-            )
+            Text("Resolve the conflicts in \(worktree.rootURL.path), or abort the merge to restore the target branch.")
         }
-        .interactiveDismissDisabled(model.isLoading)
-    }
-
-    private var predictionBranch: String? {
-        guard direction == .from, isDivergedSelection else { return nil }
-        return selectedBranch
-    }
-
-    private var isDivergedSelection: Bool {
-        divergence.map { $0.uniqueToCurrent > 0 && $0.uniqueToOther > 0 } == true
-    }
-
-    private var selectedWorktreeURL: URL? {
-        guard let selectedBranch else { return nil }
-        return model.localBranchWorktreeURLs[selectedBranch]
-    }
-
-    private var canCreateMergeCommitOut: Bool {
-        if selectedWorktreeURL != nil {
-            // Worktree 경로는 충돌해도 열어서 해결할 수 있으므로 예측과 무관하게 실행한다.
-            return true
-        }
-        return mergePrediction?.isClean == true
-    }
-
-    private func mergeIntoSelectedBranch() {
-        guard let selectedBranch else { return }
-        Task {
-            switch await model.mergeCurrentBranchIntoBranch(selectedBranch) {
-            case .completed:
-                dismiss()
-            case .conflictedInWorktree(let worktree):
-                conflictedWorktree = worktree
-            case .failed:
-                break
-            }
-        }
-    }
-
-    private func mergeInTemporaryWorktree() {
-        guard let selectedBranch else { return }
-        Task {
-            if await model.mergeInTemporaryWorktree(selectedBranch) {
-                dismiss()
-            }
-        }
-    }
-
-    private var divergenceDescription: String? {
-        guard let selectedBranch, let divergence else { return nil }
-        let ours = divergence.uniqueToCurrent
-        let theirs = divergence.uniqueToOther
-        switch direction {
-        case .into:
-            switch (ours, theirs) {
-            case (0, 0):
-                return "\(currentBranch) and \(selectedBranch) point at the same commit."
-            case (_, 0):
-                return "\(currentBranch) already contains every commit of \(selectedBranch). Switch to Update another branch to fast-forward \(selectedBranch) here."
-            case (0, _):
-                return "\(selectedBranch) is \(theirs) commit\(theirs == 1 ? "" : "s") ahead. Fast-Forward applies them to \(currentBranch)."
-            default:
-                return "Diverged · \(currentBranch) has \(ours) and \(selectedBranch) has \(theirs) unique commit\(theirs == 1 ? "" : "s"). Fast-Forward isn’t possible."
-            }
-        case .from:
-            switch (ours, theirs) {
-            case (0, 0):
-                return "\(currentBranch) and \(selectedBranch) point at the same commit — nothing to fast-forward."
-            case (_, 0):
-                return "\(selectedBranch) is \(ours) commit\(ours == 1 ? "" : "s") behind. Fast-Forward updates it to \(currentBranch) without switching."
-            case (0, _):
-                return "\(selectedBranch) is ahead of \(currentBranch) — there is nothing to bring into it."
-            default:
-                guard let mergePrediction else {
-                    return "Diverged · checking whether a merge commit would conflict…"
-                }
-                if mergePrediction.isClean {
-                    return "Diverged · a merge commit can bring \(currentBranch) into \(selectedBranch) without conflicts."
-                }
-                let paths = mergePrediction.conflictedPaths
-                let shown = paths.prefix(3).joined(separator: ", ")
-                return "Merging would conflict in \(paths.count) file\(paths.count == 1 ? "" : "s"): \(shown)\(paths.count > 3 ? ", …" : "")"
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var directionCaption: some View {
-        if direction == .into {
-            if hasCleanRepository {
-                Label(
-                    "Rebase rewrites commits unique to \(currentBranch); Gallae won’t force-push them.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .gallaeFont(.caption1)
-                .foregroundStyle(.secondary)
-            } else {
-                Label(
-                    "Commit or stash the current changes before creating a merge commit or rebasing.",
-                    systemImage: "exclamationmark.circle"
-                )
-                .gallaeFont(.caption1)
-                .foregroundStyle(.secondary)
-            }
-        } else if let worktreeURL = selectedWorktreeURL {
-            Label(
-                isDivergedSelection
-                    ? "The merge runs in the Worktree at \(worktreeURL.path). Conflicts can be resolved there in Gallae."
-                    : "Fast-Forward runs in the Worktree at \(worktreeURL.path) and updates its files.",
-                systemImage: "folder"
-            )
-            .gallaeFont(.caption1)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-            .help(worktreeURL.path)
-        } else if isDivergedSelection {
-            Label(
-                mergePrediction?.isClean == false
-                    ? "A temporary Worktree checks out \(selectedBranch ?? "the branch") so the conflicts can be resolved in Gallae."
-                    : "The merge commit is created without a checkout, so merge hooks don’t run. Only the selected branch reference moves.",
-                systemImage: "info.circle"
-            )
-            .gallaeFont(.caption1)
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-        } else {
-            Label(
-                "Only the selected branch reference moves. No working files change, and uncommitted changes here are fine.",
-                systemImage: "info.circle"
-            )
-            .gallaeFont(.caption1)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var canFastForward: Bool {
-        divergence.map { $0.uniqueToCurrent == 0 && $0.uniqueToOther > 0 } ?? true
-    }
-
-    private var canFastForwardOut: Bool {
-        divergence.map { $0.uniqueToCurrent > 0 && $0.uniqueToOther == 0 } ?? true
-    }
-
-    private var hasCommitsToIntegrate: Bool {
-        divergence.map { $0.uniqueToOther > 0 } ?? true
-    }
-
-    private func fastForwardSelectedBranch() {
-        guard let selectedBranch else { return }
-        Task {
-            if await model.fastForwardBranchToCurrent(selectedBranch) {
-                dismiss()
-            }
-        }
+        .interactiveDismissDisabled(isSubmitting)
     }
 
     @ViewBuilder
     private var branchContent: some View {
         switch model.localBranchesState {
         case .notLoaded, .loading:
-            ProgressView("Loading Branches…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("Loading Branches…").frame(maxWidth: .infinity)
         case .failed(let message):
-            ContentUnavailableView {
-                Label("Couldn’t Load Branches", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") {
-                    Task { await model.loadLocalBranches() }
+            Text(message).foregroundStyle(.secondary)
+            Button("Try Again") { Task { await model.loadLocalBranches() } }
+        case .loaded(let branches) where branches.count < 2:
+            Label("Create another local branch to merge or rebase.", systemImage: "arrow.triangle.branch")
+                .foregroundStyle(.secondary)
+        case .loaded(let branches):
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 16) {
+                    branchPicker("Update branch", selection: Binding(
+                        get: { target },
+                        set: { newTarget in
+                            let oldTarget = target
+                            target = newTarget
+                            if source == newTarget { source = oldTarget }
+                        }
+                    ), branches: branches)
+                    branchPicker("Using branch", selection: $source, branches: branches.filter { $0 != target })
                 }
-            }
-        case .loaded where availableBranches.isEmpty:
-            ContentUnavailableView(
-                "No Other Local Branches",
-                systemImage: "arrow.triangle.merge",
-                description: Text("Create or Fetch another branch before integrating.")
-            )
-        case .loaded:
-            List(availableBranches, id: \.self, selection: $selectedBranch) { branch in
-                HStack {
-                    Label(branch, systemImage: "arrow.triangle.branch")
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                        Label(
-                            worktreeURL.lastPathComponent == branch
-                                ? "Worktree"
-                                : worktreeURL.lastPathComponent,
-                            systemImage: "folder"
-                        )
-                        .gallaeFont(.caption1)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 140)
-                        .layoutPriority(2)
-                        .help(worktreeURL.path)
-                    }
+                Button {
+                    (target, source) = (source, target)
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
                 }
-                    .tag(branch)
-                    .contentShape(.rect)
-                    .accessibilityElement(children: .combine)
+                .accessibilityLabel("Swap source and target branches")
+                .help("Swap which branch receives the update")
+                .disabled(target == nil || source == nil)
             }
-            .listStyle(.plain)
-            .accessibilityLabel("Local Branches Available to Integrate")
+            .padding(16)
+            .background(theme.colors.badgeBackground, in: .rect(cornerRadius: 10))
+            .disabled(isSubmitting)
         }
     }
 
-    private var currentBranch: String {
-        guard case .branch(let branch) = model.repository?.head else {
-            return "the current branch"
+    private func branchPicker(_ title: String, selection: Binding<String?>, branches: [String]) -> some View {
+        HStack(spacing: 12) {
+            Text(title).gallaeFont(.callout, weight: .semibold)
+                .frame(width: 120, alignment: .leading)
+            Picker(title, selection: selection) {
+                if selection.wrappedValue == nil { Text("Choose a branch").tag(Optional<String>.none) }
+                ForEach(branches, id: \.self) { branch in
+                    Text(branchLabel(branch)).tag(Optional(branch))
+                }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(selection.wrappedValue ?? title)
         }
+    }
+
+    @ViewBuilder
+    private var comparison: some View {
+        if let message = comparisonError {
+            Label(message, systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+            Button("Retry Comparison") { retry += 1 }
+        } else if let preview = currentPreview {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(comparisonTitle(preview), systemImage: preview.divergence.uniqueToOther == 0 ? "checkmark.circle" : "arrow.triangle.branch")
+                    .gallaeFont(.body, weight: .semibold)
+                Text(comparisonDescription(preview))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if preview.divergence.uniqueToOther > 0 {
+                    Text(worktreeDescription(preview))
+                        .gallaeFont(.caption1)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } else {
+            ProgressView("Comparing branches…")
+        }
+    }
+
+    private var currentPreview: RepositoryBranchIntegrationPreview? {
+        guard let preview, preview.source == source, preview.target == target else { return nil }
+        return preview
+    }
+
+    private var comparisonRequest: ComparisonRequest? {
+        guard let source, let target, source != target else { return nil }
+        return .init(source: source, target: target, revision: model.repositoryRevision, retry: retry)
+    }
+
+    private func compareBranches() async {
+        comparisonError = nil
+        guard let request = comparisonRequest else {
+            preview = nil
+            previewRequest = nil
+            return
+        }
+        let isNewPair = previewRequest?.source != request.source || previewRequest?.target != request.target
+        if isNewPair { preview = nil }
+        do {
+            let result = try await model.previewIntegration(from: request.source, into: request.target, in: repositoryRootURL)
+            guard !Task.isCancelled, request == comparisonRequest else { return }
+            if isNewPair { action = result.isDiverged ? .mergeCommit : .fastForward }
+            preview = result
+            previewRequest = request
+        } catch {
+            guard !Task.isCancelled, request == comparisonRequest else { return }
+            comparisonError = error.localizedDescription
+        }
+    }
+
+    private func comparisonTitle(_ preview: RepositoryBranchIntegrationPreview) -> String {
+        if preview.divergence.uniqueToOther == 0 { return "Already up to date" }
+        return preview.isDiverged ? "Both branches have new commits" : "Ready to fast-forward"
+    }
+
+    private func comparisonDescription(_ preview: RepositoryBranchIntegrationPreview) -> String {
+        let ours = preview.divergence.uniqueToCurrent
+        let theirs = preview.divergence.uniqueToOther
+        if ours == 0 && theirs == 0 { return "\(preview.target) and \(preview.source) point at the same commit. No update is needed." }
+        if theirs == 0 { return "\(preview.target) already contains every commit from \(preview.source). Swap the branches to update \(preview.source)." }
+        if ours == 0 { return "Bring \(theirs) commit\(theirs == 1 ? "" : "s") from \(preview.source) into \(preview.target)." }
+        return "\(preview.target) has \(ours) and \(preview.source) has \(theirs) unique commits. Choose how to combine them."
+    }
+
+    private func worktreeDescription(_ preview: RepositoryBranchIntegrationPreview) -> String {
+        if let worktree = preview.targetWorktree {
+            return sameFileLocation(worktree.rootURL, repositoryRootURL)
+                ? "Updates files in the current working folder."
+                : "Updates the target Worktree at \(worktree.rootURL.path). Your current working folder stays open."
+        }
+        return "Uses a temporary Worktree for \(preview.target), removed after success. Your current working folder stays open."
+    }
+
+    private var actionTitle: String {
+        switch action {
+        case .fastForward: "Fast-Forward"
+        case .mergeCommit: "Create Merge Commit"
+        case .rebase: "Rebase"
+        }
+    }
+
+    private var methodDescription: String {
+        let target = target ?? "the target branch"
+        let source = source ?? "the source branch"
+        switch action {
+        case .fastForward: return "Move \(target) forward to \(source) without creating a commit."
+        case .mergeCommit: return "Merge \(source) into \(target), preserving both histories with a merge commit."
+        case .rebase: return "Replay commits unique to \(target) on top of \(source)."
+        }
+    }
+
+    private func branchLabel(_ branch: String) -> String {
+        if model.repository?.head == .branch(branch) { return "\(branch) · Current" }
+        if model.localBranchWorktreeURLs[branch] != nil { return "\(branch) · Worktree" }
         return branch
     }
 
-    private var availableBranches: [String] {
-        guard case .loaded(let branches) = model.localBranchesState else { return [] }
-        return branches.filter { $0 != currentBranch }
-    }
-
-    private var hasCleanRepository: Bool {
-        model.repository?.changes.isEmpty == true
-    }
-
     private func reconcileSelection() {
-        guard selectedBranch.map(availableBranches.contains) != true else { return }
-        selectedBranch = availableBranches.first
+        guard case .loaded(let branches) = model.localBranchesState else { return }
+        if target.map(branches.contains) != true { target = branches.first }
+        if source == target || source.map(branches.contains) != true { source = branches.first { $0 != target } }
     }
 
-    private func integrateBranch(_ action: RepositoryBranchIntegrationAction) {
-        guard let selectedBranch else { return }
+    private func submit() {
+        guard let preview = currentPreview, previewRequest == comparisonRequest,
+              preview.unavailableReason(for: action) == nil else { return }
+        let chosenAction = action
+        isSubmitting = true
         Task {
-            if await model.integrateBranch(
-                selectedBranch,
-                action: action,
-                in: repositoryRootURL
-            ) {
-                dismiss()
+            let result = await model.integrateBranches(preview, action: chosenAction)
+            isSubmitting = false
+            switch result {
+            case .completed: dismiss()
+            case .conflictedInWorktree(let worktree):
+                conflictedWorktree = worktree
+                retry += 1
+            case .failed: retry += 1
             }
         }
     }

@@ -430,11 +430,6 @@ struct RepositoryNavigatorView: View {
                     .disabled(model.isLoading || model.isSyncing)
                 }
 
-                Button("Integrate…", systemImage: "arrow.triangle.merge") {
-                    model.showIntegrateBranch(preselecting: branch)
-                }
-                .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
-
                 Divider()
 
                 if let worktreeURL {

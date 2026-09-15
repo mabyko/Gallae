@@ -6594,6 +6594,165 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testBranchPairIntegrationUpdatesChosenTargetAndKeepsWorkspace() async throws {
+        for action in [RepositoryBranchIntegrationAction.fastForward, .mergeCommit, .rebase] {
+            for checkedOut in [false, true] {
+                let root = try makeTemporaryDirectory()
+                let parent = try makeTemporaryDirectory()
+                defer {
+                    try? FileManager.default.removeItem(at: root)
+                    try? FileManager.default.removeItem(at: parent)
+                }
+                try initializeRepository(at: root)
+                try write("base\n", to: "base.txt", in: root)
+                try commitAll(in: root, message: "Base")
+                let base = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+                try runGit(["-C", root.path, "branch", "target"])
+                try runGit(["-C", root.path, "tag", "source"])
+                try runGit(["-C", root.path, "switch", "-c", "source"])
+                try write("source\n", to: "source.txt", in: root)
+                try commitAll(in: root, message: "Source")
+                let sourceID = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+                if action != .fastForward {
+                    try runGit(["-C", root.path, "switch", "target"])
+                    try write("target\n", to: "target.txt", in: root)
+                    try commitAll(in: root, message: "Target")
+                }
+                try runGit(["-C", root.path, "switch", "main"])
+                try write("keep current edits\n", to: "local.txt", in: root)
+                let worktree = parent.appending(path: "target")
+                if checkedOut { try runGit(["-C", root.path, "worktree", "add", worktree.path, "target"]) }
+                let suite = "GallaeTests-\(UUID().uuidString)"
+                let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+                defer { defaults.removePersistentDomain(forName: suite) }
+                let model = AppModel(store: LibraryStore(defaults: defaults))
+                let opened = await model.openRepository(at: root)
+                XCTAssertTrue(opened)
+                let preview = try await model.previewIntegration(from: "source", into: "target", in: root)
+                XCTAssertEqual(preview.sourceCommitID, sourceID.trimmingCharacters(in: .whitespacesAndNewlines))
+                XCTAssertEqual(preview.divergence.uniqueToOther, 1)
+                XCTAssertNil(preview.unavailableReason(for: action))
+                guard case .completed = await model.integrateBranches(preview, action: action) else {
+                    XCTFail("Branch pair integration failed: \(action), checked out: \(checkedOut)")
+                    continue
+                }
+                XCTAssertEqual(model.repository?.head, .branch("main"))
+                XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "HEAD"]), base)
+                XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "refs/heads/source"]), sourceID)
+                XCTAssertEqual(try String(contentsOf: root.appending(path: "local.txt"), encoding: .utf8), "keep current edits\n")
+                try runGit(["-C", root.path, "merge-base", "--is-ancestor", "refs/heads/source", "refs/heads/target"])
+                if action == .fastForward {
+                    XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "target"]), sourceID)
+                } else if action == .mergeCommit {
+                    XCTAssertEqual(try gitOutput(["-C", root.path, "rev-list", "--parents", "-n", "1", "target"]).split(separator: " ").count, 3)
+                } else {
+                    XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "target^"]), sourceID)
+                }
+                if checkedOut {
+                    XCTAssertEqual(try String(contentsOf: worktree.appending(path: "source.txt"), encoding: .utf8), "source\n")
+                }
+                let remaining = try await RepositoryInspector().worktrees(in: try XCTUnwrap(model.repository))
+                XCTAssertEqual(remaining.count, checkedOut ? 2 : 1)
+                XCTAssertTrue(model.temporaryWorktrees.isEmpty)
+            }
+        }
+    }
+
+    @MainActor
+    func testBranchPairIntegrationRejectsStaleComparisonAndDirtyTarget() async throws {
+        let root = try makeTemporaryDirectory()
+        let parent = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: parent)
+        }
+        try initializeRepository(at: root)
+        try write("base\n", to: "base.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "branch", "target"])
+        try runGit(["-C", root.path, "switch", "-c", "source"])
+        try write("source\n", to: "source.txt", in: root)
+        try commitAll(in: root, message: "Source")
+        try runGit(["-C", root.path, "switch", "target"])
+        try write("target\n", to: "target.txt", in: root)
+        try commitAll(in: root, message: "Target")
+        let targetID = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        try runGit(["-C", root.path, "switch", "main"])
+        let worktree = parent.appending(path: "target")
+        try runGit(["-C", root.path, "worktree", "add", worktree.path, "target"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        _ = await model.openRepository(at: root)
+        let preview = try await model.previewIntegration(from: "source", into: "target", in: root)
+        try write("uncommitted\n", to: "target.txt", in: worktree)
+        let dirtyPreview = try await model.previewIntegration(from: "source", into: "target", in: root)
+        XCTAssertNotNil(dirtyPreview.unavailableReason(for: .mergeCommit))
+        XCTAssertNotNil(dirtyPreview.unavailableReason(for: .rebase))
+        guard case .failed = await model.integrateBranches(preview, action: .mergeCommit) else { return XCTFail("Dirty target must be rejected") }
+        XCTAssertEqual(try String(contentsOf: worktree.appending(path: "target.txt"), encoding: .utf8), "uncommitted\n")
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "target"]), targetID)
+        try runGit(["-C", worktree.path, "restore", "target.txt"])
+        try runGit(["-C", root.path, "update-ref", "refs/heads/source", "refs/heads/main"])
+        guard case .failed = await model.integrateBranches(preview, action: .mergeCommit) else { return XCTFail("Stale comparison must be rejected") }
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "target"]), targetID)
+        let equal = try await model.previewIntegration(from: "source", into: "main", in: root)
+        XCTAssertNotNil(equal.unavailableReason(for: .fastForward))
+        do {
+            _ = try await model.previewIntegration(from: "main", into: "main", in: root)
+            XCTFail("Source and target must be different branches")
+        } catch RepositoryBranchError.unavailable { }
+    }
+
+    @MainActor
+    func testBranchPairMergePreservesTemporaryWorktreeConflicts() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "shared.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "branch", "target"])
+        try runGit(["-C", root.path, "switch", "-c", "source"])
+        try write("source\n", to: "shared.txt", in: root)
+        try commitAll(in: root, message: "Source")
+        try runGit(["-C", root.path, "switch", "target"])
+        try write("target\n", to: "shared.txt", in: root)
+        try commitAll(in: root, message: "Target")
+        let targetID = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        try runGit(["-C", root.path, "switch", "main"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        _ = await model.openRepository(at: root)
+        let preview = try await model.previewIntegration(from: "source", into: "target", in: root)
+        guard case .conflictedInWorktree(let worktree) = await model.integrateBranches(preview, action: .mergeCommit) else {
+            return XCTFail("Keep the conflicted target available for resolution")
+        }
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        XCTAssertEqual(worktree.operation?.kind, .merge)
+        XCTAssertTrue(worktree.changes.contains(where: \.isConflicted))
+        XCTAssertNotNil(model.temporaryWorktrees[worktree.rootURL])
+        await model.abortMergeInWorktree(worktree)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "target"]), targetID)
+        let removed = await model.removeWorktree(at: worktree.rootURL)
+        XCTAssertTrue(removed)
+        XCTAssertTrue(model.temporaryWorktrees.isEmpty)
+
+        // The same pair also preserves conflicts when its target is the current workspace.
+        let switched = await model.switchBranch(to: "target")
+        XCTAssertTrue(switched)
+        let currentTarget = try await model.previewIntegration(from: "source", into: "target", in: root)
+        guard case .completed = await model.integrateBranches(currentTarget, action: .mergeCommit) else {
+            return XCTFail("Current-target conflicts should be shown in Changes")
+        }
+        XCTAssertEqual(model.repository?.head, .branch("target"))
+        XCTAssertEqual(model.repository?.operation?.kind, .merge)
+        _ = try await RepositoryInspector().abortOperation(in: try XCTUnwrap(model.repository))
+    }
+
     func testMergesCurrentBranchInsideTargetWorktree() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         let worktreeParent = try makeTemporaryDirectory()

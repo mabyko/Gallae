@@ -261,7 +261,7 @@ struct RepositoryHistoryView: View {
         }
     }
 
-    /// Switch, Open Worktree, and Integrate for a branch; New Branch… for a tag or remote branch; Fetch, Fetch &
+    /// Switch and Open Worktree for a branch; New Branch… for a tag or remote branch; Fetch, Fetch &
     /// Prune, and Edit… for a remote. Removing a remote lives in its context menu and the Edit… sheet.
     @ViewBuilder
     private var headerTools: some View {
@@ -281,11 +281,6 @@ struct RepositoryHistoryView: View {
                 .help("Switch the working tree to \(name)")
                 .disabled(isBusy)
             }
-            Button("Integrate…") {
-                model.showIntegrateBranch(preselecting: name)
-            }
-            .help("Merge, rebase, or fast-forward between \(name) and the current branch")
-            .disabled(!model.canIntegrateBranch || isBusy)
         case .tag(let name), .remoteBranch(let name):
             Button("New Branch…") {
                 isCreatingBranch = true
@@ -434,6 +429,8 @@ struct RepositoryHistoryView: View {
                                 worktreeURLs: model.localBranchWorktreeURLs,
                                 localBranchesByUpstream: model.localBranchesByUpstream,
                                 isBusy: model.isLoading || model.isSyncing,
+                                folderURL: { model.folderURL(for: $0) },
+                                folderOpeningFailed: { model.present($0, title: "Couldn’t Open Folder") },
                                 canRemoveWorktree: { model.canRemoveWorktree(at: $0) },
                                 fastForward: { branch in
                                     Task { await model.fastForwardBranchToCurrent(branch) }
@@ -566,6 +563,8 @@ private struct RepositoryHistoryRow: View {
     var worktreeURLs: [String: URL] = [:]
     var localBranchesByUpstream: [String: [String]] = [:]
     var isBusy = false
+    var folderURL: (String) -> URL? = { _ in nil }
+    var folderOpeningFailed: (Error) -> Void = { _ in }
     var canRemoveWorktree: (URL) -> Bool = { _ in false }
     var fastForward: (String) -> Void = { _ in }
     var fastForwardCurrent: (String) -> Void = { _ in }
@@ -641,14 +640,14 @@ private struct RepositoryHistoryRow: View {
         }
         .contentShape(.rect)
         .contextMenu {
-            branchMenuSections
+            branchMenus
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))\(topologyAccessibilityLabel)\(referenceAccessibilityLabel)"
         )
         .accessibilityActions {
-            ForEach(localBranchReferences) { reference in
+            ForEach(localBranchReferences.filter { $0.name != currentBranchName }) { reference in
                 if let worktreeURL = worktreeURLs[reference.name] {
                     Button("Open Worktree for \(reference.name)") {
                         openWorktree(worktreeURL)
@@ -724,9 +723,35 @@ private struct RepositoryHistoryRow: View {
     }
 
     @ViewBuilder
-    private var branchMenuSections: some View {
+    private var branchMenus: some View {
         ForEach(localBranchReferences) { reference in
-            Section(reference.name) {
+            Menu {
+                localBranchActions(reference)
+            } label: {
+                Label(reference.name == currentBranchName ? "\(reference.name) · HEAD" : reference.name,
+                      systemImage: reference.name == currentBranchName ? "checkmark" : "arrow.triangle.branch")
+            }
+            .help(reference.name == currentBranchName ? "Current branch · \(reference.name)" : reference.name)
+        }
+        if !localBranchReferences.isEmpty && !remoteBranchReferences.isEmpty {
+            Divider()
+        }
+        ForEach(remoteBranchReferences) { reference in
+            Menu {
+                remoteBranchActions(reference)
+            } label: {
+                Label(reference.name, systemImage: "globe")
+            }
+            .help("Remote branch · \(reference.name)")
+        }
+    }
+
+    @ViewBuilder
+    private func localBranchActions(_ reference: RepositoryHistory.Reference) -> some View {
+        RepositoryFolderMenu(folderURL: folderURL(reference.name), onError: folderOpeningFailed)
+        if reference.name != currentBranchName {
+            Divider()
+            Group {
                 if let worktreeURL = worktreeURLs[reference.name] {
                     Button(
                         worktreeURL.lastPathComponent == reference.name
@@ -736,39 +761,36 @@ private struct RepositoryHistoryRow: View {
                     ) {
                         openWorktree(worktreeURL)
                     }
+                } else {
+                    Button("Switch", systemImage: "arrow.triangle.branch") {
+                        switchToBranch(reference.name)
+                    }
+                }
+                if let target = fastForwardTarget(for: reference) {
+                    Button("Fast-Forward \(reference.name) to \(target)", systemImage: "arrow.forward.to.line") {
+                        fastForward(reference.name)
+                    }
+                }
+                if let current = fastForwardCurrentTarget(for: reference) {
+                    Button("Fast-Forward \(current) to \(reference.name)", systemImage: "arrow.down.to.line") {
+                        fastForwardCurrent(reference.name)
+                    }
+                }
+                if let worktreeURL = worktreeURLs[reference.name] {
                     if canRemoveWorktree(worktreeURL) {
+                        Divider()
                         Button("Remove Worktree…", systemImage: "folder.badge.minus", role: .destructive) {
                             requestWorktreeRemoval(reference.name, worktreeURL)
                         }
                     }
                 } else {
-                    Button("Switch", systemImage: "arrow.triangle.branch") {
-                        switchToBranch(reference.name)
-                    }
+                    Divider()
                     Button("Remove Branch…", systemImage: "minus.circle", role: .destructive) {
                         requestBranchDeletion(reference.name)
                     }
                 }
-                if let target = fastForwardTarget(for: reference) {
-                    Button(
-                        "Fast-Forward \(reference.name) to \(target)",
-                        systemImage: "arrow.forward.to.line"
-                    ) {
-                        fastForward(reference.name)
-                    }
-                }
-                if let current = fastForwardCurrentTarget(for: reference) {
-                    Button(
-                        "Fast-Forward \(current) to \(reference.name)",
-                        systemImage: "arrow.down.to.line"
-                    ) {
-                        fastForwardCurrent(reference.name)
-                    }
-                }
             }
-        }
-        ForEach(remoteBranchReferences) { reference in
-            remoteBranchMenu(reference)
+            .disabled(isBusy)
         }
     }
 
@@ -791,8 +813,8 @@ private struct RepositoryHistoryRow: View {
         }
     }
 
-    private func remoteBranchMenu(_ reference: RepositoryHistory.Reference) -> some View {
-        Section(reference.name) {
+    private func remoteBranchActions(_ reference: RepositoryHistory.Reference) -> some View {
+        Group {
             trackingBranchesMenu(reference)
             Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
                 requestRemoteBranchDeletion(reference.name)
@@ -830,7 +852,7 @@ private struct RepositoryHistoryRow: View {
     }
 
     private var localBranchReferences: [RepositoryHistory.Reference] {
-        commit.references.filter { $0.kind == .branch && $0.name != currentBranchName }
+        commit.references.filter { $0.kind == .branch }
     }
 
     private var remoteBranchReferences: [RepositoryHistory.Reference] {

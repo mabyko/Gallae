@@ -447,7 +447,7 @@ struct RepositoryWorkspaceView: View {
 
         Divider()
 
-        Button("Integrate…", systemImage: "arrow.triangle.merge") {
+        Button("Merge / Rebase…", systemImage: "arrow.triangle.merge") {
             model.showIntegrateBranch()
         }
         .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)

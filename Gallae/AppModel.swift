@@ -1323,6 +1323,85 @@ final class AppModel {
         }
     }
 
+    func previewIntegration(from source: String, into target: String, in rootURL: URL) async throws -> RepositoryBranchIntegrationPreview {
+        guard let repository, sameFileLocation(repository.rootURL, rootURL) else {
+            throw RepositoryBranchError.unavailable
+        }
+        return try await inspector.previewIntegration(from: source, into: target, in: repository)
+    }
+
+    func integrateBranches(
+        _ preview: RepositoryBranchIntegrationPreview, action: RepositoryBranchIntegrationAction
+    ) async -> RepositoryMergeIntoBranchResult {
+        guard !isLoading, !isSyncing, let repository, sameFileLocation(repository.rootURL, preview.rootURL) else { return .failed }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
+        var temporaryURL: URL?
+
+        do {
+            let current = try await inspector.previewIntegration(from: preview.source, into: preview.target, in: repository)
+            guard generation == inspectionGeneration else { return .failed }
+            guard current.sourceCommitID == preview.sourceCommitID, current.targetCommitID == preview.targetCommitID,
+                  current.targetWorktree?.rootURL == preview.targetWorktree?.rootURL else {
+                throw RepositoryBranchError.mergeFailed("The branches changed. Review the updated comparison and try again.")
+            }
+            if let reason = current.unavailableReason(for: action) { throw RepositoryBranchError.mergeFailed(reason) }
+
+            let targetRepository: RepositorySummary
+            if let worktree = current.targetWorktree {
+                targetRepository = worktree
+            } else {
+                let url = try await inspector.addTemporaryWorktree(for: preview.target, in: repository)
+                temporaryURL = url
+                temporaryWorktrees[url] = repository.rootURL
+                targetRepository = try await inspector.inspect(at: url)
+            }
+            guard generation == inspectionGeneration else { throw CancellationError() }
+            guard targetRepository.head == .branch(preview.target) else { throw RepositoryBranchError.unavailable }
+
+            let updatedTarget: RepositorySummary
+            switch action {
+            case .fastForward:
+                updatedTarget = try await inspector.mergeBranch(preview.source, in: targetRepository)
+            case .mergeCommit:
+                updatedTarget = try await inspector.mergeBranchCreatingCommit(preview.source, in: targetRepository)
+            case .rebase:
+                updatedTarget = try await inspector.rebaseCurrentBranch(onto: preview.source, in: targetRepository)
+            }
+            if updatedTarget.operation != nil {
+                guard generation == inspectionGeneration else { return .failed }
+                if sameFileLocation(updatedTarget.rootURL, repository.rootURL) {
+                    apply(updatedTarget, showWorkspaceOnSuccess: false)
+                    return .completed
+                }
+                await loadLocalBranches()
+                return .conflictedInWorktree(updatedTarget)
+            }
+            if let url = temporaryURL {
+                _ = try await inspector.removeWorktree(at: url, in: repository)
+                temporaryWorktrees.removeValue(forKey: url)
+                temporaryURL = nil
+            }
+            let updatedRepository = try await inspector.inspect(at: repository.rootURL)
+            guard generation == inspectionGeneration else { return .failed }
+            selectedHistoryCommitID = nil
+            apply(updatedRepository, showWorkspaceOnSuccess: false)
+            library.invalidateActivity(at: updatedTarget.rootURL)
+            library.invalidateActivity(at: repository.rootURL)
+            return .completed
+        } catch {
+            // Remove only a clean temporary folder. Failed recovery or conflicts remain available in Worktrees.
+            if let url = temporaryURL, let worktree = try? await inspector.inspect(at: url),
+               worktree.operation == nil, worktree.changes.isEmpty,
+               (try? await inspector.removeWorktree(at: url, in: repository)) != nil {
+                temporaryWorktrees.removeValue(forKey: url)
+            }
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return .failed }
+            if !(error is CancellationError) { present(error, title: "Couldn’t Update \(preview.target)") }
+            return .failed
+        }
+    }
+
     func fastForwardBranchToCurrent(_ branch: String) async -> Bool {
         guard !isLoading, let repository else { return false }
 

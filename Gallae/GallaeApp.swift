@@ -103,7 +103,7 @@ private struct GallaeCommands: Commands {
 
             Divider()
 
-            Button("Integrate…") {
+            Button("Merge / Rebase…") {
                 model?.showIntegrateBranch()
             }
             .disabled(!canSync || model?.canIntegrateBranch != true)

@@ -325,6 +325,45 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
+    func previewIntegration(
+        from source: String, into target: String, in repository: RepositorySummary
+    ) async throws -> RepositoryBranchIntegrationPreview {
+        try Task.checkCancellation()
+        let preview = try await Task.detached(priority: .userInitiated) {
+            let branches = try Self.localBranchesSynchronously(in: repository)
+            guard source != target, branches.contains(source), branches.contains(target) else {
+                throw RepositoryBranchError.unavailable
+            }
+            func commitID(_ branch: String) throws -> String {
+                let result = try Self.runGit(["-C", repository.rootURL.path,
+                                             "rev-parse", "--verify", "refs/heads/\(branch)"])
+                guard result.status == 0 else { throw RepositoryBranchError.unreadable(result.standardError) }
+                return Self.line(from: result.standardOutput)
+            }
+            let sourceID = try commitID(source)
+            let targetID = try commitID(target)
+            let result = try Self.runGit(["-C", repository.rootURL.path, "rev-list", "--left-right", "--count",
+                                         "\(targetID)...\(sourceID)", "--"])
+            guard result.status == 0 else { throw RepositoryBranchError.unreadable(result.standardError) }
+            let counts = Self.line(from: result.standardOutput).split { $0 == "\t" || $0 == " " }
+            guard counts.count == 2, let ours = Int(counts[0]), let theirs = Int(counts[1]) else {
+                throw RepositoryInspectionError.invalidGitOutput
+            }
+            let worktrees = try Self.localBranchWorktreesSynchronously(in: repository)
+            let targetWorktree = try worktrees[target].map { try Self.inspectSynchronously(at: $0) }
+            guard targetWorktree == nil || targetWorktree?.head == .branch(target) else {
+                throw RepositoryBranchError.unavailable
+            }
+            return RepositoryBranchIntegrationPreview(
+                rootURL: repository.rootURL, source: source, target: target,
+                sourceCommitID: sourceID, targetCommitID: targetID,
+                divergence: .init(uniqueToCurrent: ours, uniqueToOther: theirs), targetWorktree: targetWorktree
+            )
+        }.value
+        try Task.checkCancellation()
+        return preview
+    }
+
     func mergeBranch(
         _ branch: String,
         in repository: RepositorySummary
@@ -1104,7 +1143,7 @@ struct RepositoryInspector: Sendable {
     ) throws -> [String] {
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "for-each-ref", "--format=%(refname:short)", "refs/heads"
+            "for-each-ref", "--format=%(refname)", "refs/heads"
         ])
         guard result.status == 0 else {
             throw RepositoryBranchError.unreadable(result.standardError)
@@ -1112,7 +1151,7 @@ struct RepositoryInspector: Sendable {
 
         var branches = text(from: result.standardOutput)
             .split(whereSeparator: \.isNewline)
-            .map(String.init)
+            .map { String($0.dropFirst("refs/heads/".count)) }
         if case .branch(let currentBranch) = repository.head,
            !branches.contains(currentBranch) {
             branches.append(currentBranch)
@@ -1324,7 +1363,7 @@ struct RepositoryInspector: Sendable {
 
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "merge", "--quiet", "--ff-only", "--", branch
+            "merge", "--quiet", "--ff-only", "--", "refs/heads/\(branch)"
         ])
         guard result.status == 0 else {
             throw RepositoryBranchError.mergeFailed(result.standardError)
@@ -1705,7 +1744,7 @@ struct RepositoryInspector: Sendable {
             throw RepositoryBranchError.mergeCommitRequiresCleanRepository
         }
 
-        for revisions in [["HEAD", branch], [branch, "HEAD"]] {
+        for revisions in [["HEAD", "refs/heads/\(branch)"], ["refs/heads/\(branch)", "HEAD"]] {
             let ancestry = try runGit([
                 "-C", repository.rootURL.path,
                 "merge-base", "--is-ancestor",
@@ -1728,7 +1767,7 @@ struct RepositoryInspector: Sendable {
 
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "merge", "--quiet", "--no-ff", "--no-edit", "--", branch
+            "merge", "--quiet", "--no-ff", "--no-edit", "--", "refs/heads/\(branch)"
         ])
         guard result.status == 0 else {
             // A normal conflict is an unfinished merge, not a failed operation to roll back.
@@ -1794,7 +1833,7 @@ struct RepositoryInspector: Sendable {
 
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "rebase", "--quiet", "--no-update-refs", branch
+            "rebase", "--quiet", "--no-update-refs", "refs/heads/\(branch)"
         ])
         guard result.status == 0 else {
             _ = try? runGit([
