@@ -585,6 +585,7 @@ struct RepositoryInspector: Sendable {
     func addRemoteAndPublish(
         named name: String,
         url: String,
+        branch: String? = nil,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
         let cancellation = GitProcessCancellation()
@@ -594,6 +595,7 @@ struct RepositoryInspector: Sendable {
                     try Self.addRemoteAndPublishSynchronously(
                         named: name,
                         url: url,
+                        branch: branch,
                         in: repository,
                         cancellation: cancellation
                     )
@@ -611,6 +613,7 @@ struct RepositoryInspector: Sendable {
 
     func publish(
         to remote: String,
+        branch: String? = nil,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
         let cancellation = GitProcessCancellation()
@@ -619,6 +622,7 @@ struct RepositoryInspector: Sendable {
                 let updatedRepository = try await Task.detached(priority: .userInitiated) {
                     try Self.publishSynchronously(
                         to: remote,
+                        branch: branch,
                         in: repository,
                         cancellation: cancellation
                     )
@@ -632,6 +636,14 @@ struct RepositoryInspector: Sendable {
         } onCancel: {
             cancellation.cancel()
         }
+    }
+
+    func validatePublishBranchName(_ name: String) async throws -> String {
+        let branch = try await Task.detached(priority: .userInitiated) {
+            try Self.validatedPublishBranchName(name)
+        }.value
+        try Task.checkCancellation()
+        return branch
     }
 
     func resolveConflict(
@@ -1885,10 +1897,30 @@ struct RepositoryInspector: Sendable {
         cancellation: GitProcessCancellation
     ) throws -> RepositorySummary {
         if repository.upstream != nil {
-            let result = try runGit([
-                "-C", repository.rootURL.path,
-                "push", "--quiet"
-            ], cancellation: cancellation)
+            var arguments = ["-C", repository.rootURL.path]
+            if case .branch(let branch) = repository.head {
+                let destinations = try runGit([
+                    "-C", repository.rootURL.path, "for-each-ref",
+                    "--format=%(upstream:remotename)%00%(push:remotename)%00%(upstream:remoteref)",
+                    "refs/heads/\(branch)"
+                ], cancellation: cancellation)
+                guard destinations.status == 0 else { throw RepositoryPushError.failed(destinations.standardError) }
+                let fields = line(from: destinations.standardOutput).components(separatedBy: "\0")
+                if fields.count == 3, !fields[0].isEmpty, fields[0] == fields[1], fields[2] != "refs/heads/\(branch)" {
+                    let pushDefault = try runGit([
+                        "-C", repository.rootURL.path, "config", "--get", "push.default"
+                    ], cancellation: cancellation)
+                    guard pushDefault.status == 0 || pushDefault.status == 1 else {
+                        throw RepositoryPushError.failed(pushDefault.standardError)
+                    }
+                    // Git's simple mode rejects a differently named upstream on the same remote.
+                    // Follow that upstream while preserving other modes and push destinations.
+                    if pushDefault.status == 1 || line(from: pushDefault.standardOutput) == "simple" {
+                        arguments += ["-c", "push.default=upstream"]
+                    }
+                }
+            }
+            let result = try runGit(arguments + ["push", "--quiet"], cancellation: cancellation)
             if cancellation.isCancelled {
                 throw CancellationError()
             }
@@ -1953,15 +1985,18 @@ struct RepositoryInspector: Sendable {
     private static func addRemoteAndPublishSynchronously(
         named name: String,
         url: String,
+        branch: String?,
         in repository: RepositorySummary,
         cancellation: GitProcessCancellation
     ) throws -> RepositorySummary {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let branch = try publishBranchName(branch, in: repository)
         try addRemoteSynchronously(named: name, url: url, in: repository, cancellation: cancellation)
 
         do {
             return try publishSynchronously(
                 to: name,
+                branch: branch,
                 in: repository,
                 cancellation: cancellation
             )
@@ -1977,17 +2012,19 @@ struct RepositoryInspector: Sendable {
 
     private static func publishSynchronously(
         to remote: String,
+        branch remoteBranch: String? = nil,
         in repository: RepositorySummary,
         cancellation: GitProcessCancellation
     ) throws -> RepositorySummary {
-        guard case .branch(let branch) = repository.head, !repository.isUnborn else {
+        let remoteBranch = try publishBranchName(remoteBranch, in: repository)
+        guard case .branch(let branch) = repository.head else {
             throw RepositoryPushError.publishUnavailable
         }
         let reference = "refs/heads/\(branch)"
         let result = try runGit([
             "-C", repository.rootURL.path,
             "push", "--quiet", "--set-upstream", "--",
-            remote, "\(reference):\(reference)"
+            remote, "\(reference):refs/heads/\(remoteBranch)"
         ], cancellation: cancellation)
         if cancellation.isCancelled {
             throw CancellationError()
@@ -1996,6 +2033,22 @@ struct RepositoryInspector: Sendable {
             throw RepositoryPushError.failed(result.standardError)
         }
         return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func publishBranchName(_ name: String?, in repository: RepositorySummary) throws -> String {
+        guard case .branch(let localBranch) = repository.head, !repository.isUnborn else {
+            throw RepositoryPushError.publishUnavailable
+        }
+        return try validatedPublishBranchName(name ?? localBranch)
+    }
+
+    private static func validatedPublishBranchName(_ name: String) throws -> String {
+        let branch = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !branch.isEmpty, !branch.contains("\0"), !branch.hasPrefix("-"), branch != "HEAD",
+              try runGit(["check-ref-format", "refs/heads/\(branch)"]).status == 0 else {
+            throw RepositoryPushError.invalidBranchName
+        }
+        return branch
     }
 
     static func inspectSynchronously(at selectedURL: URL) throws -> RepositorySummary {

@@ -13,6 +13,7 @@
 
 1. 사용자가 Push를 누른다.
 2. Gallae가 기존 `push.default`와 remote 설정이 고르는 목적지에 현재 branch를 보낸다.
+   - 단, `push.default`가 기본값 또는 `simple`이고 Push와 upstream의 remote가 같지만 branch 이름이 다르면, 해당 실행에만 `push.default=upstream`을 적용한다. Publish에서 지정한 이름을 계속 사용하며 저장소 설정 파일은 바꾸지 않는다. 다른 Push 모드, 별도 Push remote와 명시적인 remote refspec은 그대로 따른다.
 3. Push가 끝나면 Repository, Changes와 History를 다시 읽고, 캡슐이 보낸 commit 수(`Pushed N commits`)를 잠깐 보인다. 실행 중에는 툴바 Push 아이콘·창 제목 subtitle·캡슐이 진행을 보이고 Fetch·Pull과 branch 전환만 기다린다. Stage·Commit·조회는 계속 쓸 수 있다.
 4. 현재 HEAD·index·working tree와 local 수정은 그대로 유지된다.
 

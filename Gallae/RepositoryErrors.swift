@@ -478,6 +478,7 @@ enum RepositoryPushError: LocalizedError, Equatable {
     case noRemote
     case remoteSelectionRequired([String])
     case publishUnavailable
+    case invalidBranchName
     case failed(String)
 
     var errorDescription: String? {
@@ -488,6 +489,8 @@ enum RepositoryPushError: LocalizedError, Equatable {
             "Choose which Git remote should receive the current branch."
         case .publishUnavailable:
             "Publishing requires a committed local branch."
+        case .invalidBranchName:
+            "Enter a valid branch name, such as feature/login. Don’t use spaces or “..”."
         case .failed(let message):
             message.isEmpty
                 ? "Git couldn’t push the current branch to its configured destination."

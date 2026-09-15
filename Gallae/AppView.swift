@@ -184,12 +184,12 @@ struct AppView: View {
                     .accessibilityLabel(model.pushTitle)
                     .help(
                         model.repository?.upstream == nil
-                            ? "Publish the current branch to its remote and start tracking it"
+                            ? "Review the remote and branch name before publishing"
                             : "Push the current branch to its configured destination"
                     )
                     .accessibilityHint(
                         model.repository?.upstream == nil
-                            ? "Publish the current local branch to its only remote and start tracking it without force"
+                            ? "Choose a remote and confirm the branch name before publishing without force"
                             : "Push the current branch to its configured destination without force"
                     )
 
@@ -1105,9 +1105,11 @@ struct EditRemoteSheet: View {
 private struct AddRemoteSheet: View {
     private enum Field: Hashable {
         case url
+        case branch
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.gallaeTheme) private var theme
     @FocusState private var focusedField: Field?
     let model: AppModel
     let repositoryRootURL: URL
@@ -1116,26 +1118,33 @@ private struct AddRemoteSheet: View {
     @State private var isSubmitting = false
     @State private var remoteName = "origin"
     @State private var repositoryURL = ""
+    @State private var remoteBranch = ""
+    @State private var branchError: String?
 
     private var canSubmit: Bool {
         !remoteName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!publishAfterAdding || !remoteBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
-                Label("Add Remote", systemImage: "network")
+                Label(publishAfterAdding ? "Publish Branch" : "Add Remote", systemImage: "network")
                     .gallaeFont(.title2, weight: .bold)
                 Text(publishAfterAdding
-                     ? "Connect \(repositoryRootURL.lastPathComponent) to a remote, then publish the current branch."
+                     ? "Add a remote to publish this branch from \(repositoryRootURL.lastPathComponent)."
                      : "Save a remote URL for \(repositoryRootURL.lastPathComponent). This does not fetch or push.")
                     .foregroundStyle(.secondary)
             }
 
+            if publishAfterAdding, case .branch(let branch) = model.repository?.head {
+                PublishSourceSummary(branch: branch)
+            }
+
             Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
-                    Text("Name")
+                    Text("Remote Name")
                     TextField("Remote name", text: $remoteName)
                         .textFieldStyle(.roundedBorder)
                         .accessibilityHint("A short Git remote name, such as origin")
@@ -1147,6 +1156,30 @@ private struct AddRemoteSheet: View {
                         .focused($focusedField, equals: .url)
                         .accessibilityHint("HTTPS, SSH, or local Git Repository location")
                 }
+                if publishAfterAdding {
+                    GridRow {
+                        Text("Remote Branch")
+                        TextField("Remote branch name", text: $remoteBranch)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityLabel("Remote Branch")
+                            .accessibilityHint(branchError ?? "Branch name on the remote; the local branch keeps its name")
+                            .focused($focusedField, equals: .branch)
+                    }
+                    if let branchError {
+                        GridRow {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                            Label(branchError, systemImage: "exclamationmark.circle")
+                                .gallaeFont(.caption1)
+                                .foregroundStyle(theme.colors.statusConflict)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+
+            if publishAfterAdding, case .branch(let branch) = model.repository?.head {
+                Divider()
+                PublishDestinationSummary(remote: remoteName, branch: remoteBranch, localBranch: branch)
             }
 
             HStack {
@@ -1160,8 +1193,22 @@ private struct AddRemoteSheet: View {
                     let name = remoteName.trimmingCharacters(in: .whitespacesAndNewlines)
                     let url = repositoryURL.trimmingCharacters(in: .whitespacesAndNewlines)
                     if publishAfterAdding {
-                        dismiss()
-                        model.addRemoteAndPublish(named: name, url: url, in: repositoryRootURL)
+                        isSubmitting = true
+                        Task {
+                            defer { isSubmitting = false }
+                            do {
+                                let branch = try await model.validatePublishBranchName(remoteBranch)
+                                model.addRemoteAndPublish(named: name, url: url, branch: branch, in: repositoryRootURL)
+                                dismiss()
+                            } catch {
+                                branchError = error.localizedDescription
+                                focusedField = .branch
+                                NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested, userInfo: [
+                                    .announcement: error.localizedDescription,
+                                    .priority: NSAccessibilityPriorityLevel.high.rawValue
+                                ])
+                            }
+                        }
                     } else {
                         isSubmitting = true
                         Task {
@@ -1174,7 +1221,7 @@ private struct AddRemoteSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!canSubmit || isSubmitting || model.isLoading || model.isSyncing)
+                .disabled(!canSubmit || branchError != nil || isSubmitting || model.isLoading || model.isSyncing)
                 .accessibilityHint(publishAfterAdding ? "Add this remote and publish the current branch without force" : "Save this remote without fetching or pushing")
             }
         }
@@ -1184,8 +1231,15 @@ private struct AddRemoteSheet: View {
             get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(errorMessage ?? "") }
         .padding(24)
-        .frame(width: 520)
+        .frame(width: 560)
+        .onChange(of: remoteBranch) { branchError = nil }
+        .onChange(of: isSubmitting) {
+            if !isSubmitting, branchError != nil { focusedField = .branch }
+        }
+        .onChange(of: model.repository?.rootURL) { dismiss() }
+        .onChange(of: model.repository?.head) { if publishAfterAdding { dismiss() } }
         .onAppear {
+            if case .branch(let branch) = model.repository?.head { remoteBranch = branch }
             focusedField = .url
         }
     }
@@ -1332,9 +1386,8 @@ private struct ChooseRemoteSheet: View {
 
         var title: String {
             switch self {
-            case .fetch(let pruning):
-                pruning ? "Choose Fetch & Prune Remote" : "Choose Fetch Remote"
-            case .publish: "Choose Publish Remote"
+            case .fetch(let pruning): pruning ? "Choose Fetch & Prune Remote" : "Choose Fetch Remote"
+            case .publish: "Publish Branch"
             }
         }
 
@@ -1348,29 +1401,58 @@ private struct ChooseRemoteSheet: View {
         var buttonTitle: String {
             switch self {
             case .fetch(let pruning): pruning ? "Fetch & Prune" : "Fetch"
-            case .publish: "Publish"
+            case .publish: "Publish Branch"
             }
         }
     }
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.gallaeTheme) private var theme
+    @FocusState private var isBranchFocused: Bool
     let model: AppModel
     let repositoryRootURL: URL
     let remotes: [String]
     let purpose: Purpose
     @State private var selectedRemote: String
+    @State private var remoteBranch: String
+    @State private var branchError: String?
+    @State private var isValidating = false
 
-    init(
-        model: AppModel,
-        repositoryRootURL: URL,
-        remotes: [String],
-        purpose: Purpose
-    ) {
+    private var localBranch: String {
+        if case .branch(let branch) = model.repository?.head { return branch }
+        return ""
+    }
+
+    private var canSubmit: Bool {
+        guard !selectedRemote.isEmpty else { return false }
+        if case .publish = purpose {
+            return !remoteBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return true
+    }
+
+    private var remoteURL: String? {
+        guard case .loaded(let configuredRemotes) = model.remotesState else { return nil }
+        return configuredRemotes.first { $0.name == selectedRemote }?.pushURL
+    }
+
+    init(model: AppModel, repositoryRootURL: URL, remotes: [String], purpose: Purpose) {
         self.model = model
         self.repositoryRootURL = repositoryRootURL
         self.remotes = remotes
         self.purpose = purpose
-        _selectedRemote = State(initialValue: remotes.first ?? "")
+        let preferredRemote: String
+        if case .publish = purpose, remotes.contains("origin") {
+            preferredRemote = "origin"
+        } else {
+            preferredRemote = remotes.first ?? ""
+        }
+        _selectedRemote = State(initialValue: preferredRemote)
+        if case .branch(let branch) = model.repository?.head {
+            _remoteBranch = State(initialValue: branch)
+        } else {
+            _remoteBranch = State(initialValue: "")
+        }
     }
 
     var body: some View {
@@ -1382,41 +1464,124 @@ private struct ChooseRemoteSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            Picker("Remote", selection: $selectedRemote) {
-                ForEach(remotes, id: \.self) { remote in
-                    Text(remote).tag(remote)
+            if case .publish = purpose {
+                PublishSourceSummary(branch: localBranch)
+
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 16) {
+                    GridRow(alignment: .top) {
+                        Text("Remote").padding(.top, 3)
+                        VStack(alignment: .leading, spacing: 6) {
+                            if remotes.count == 1 {
+                                Text(selectedRemote).gallaeFont(.body, weight: .medium)
+                            } else {
+                                remotePicker.labelsHidden()
+                            }
+                            if let remoteURL {
+                                Text(remoteURL)
+                                    .gallaeFont(.caption1)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .help(remoteURL)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    GridRow(alignment: .top) {
+                        Text("Branch Name").padding(.top, 3)
+                        VStack(alignment: .leading, spacing: 6) {
+                            TextField("Remote branch name", text: $remoteBranch)
+                                .textFieldStyle(.roundedBorder)
+                                .accessibilityLabel("Remote Branch")
+                                .accessibilityHint(branchError ?? "Name of the branch to publish on the selected remote")
+                                .focused($isBranchFocused)
+                            if let branchError {
+                                Label(branchError, systemImage: "exclamationmark.circle")
+                                    .gallaeFont(.caption1)
+                                    .foregroundStyle(theme.colors.statusConflict)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text(remoteBranch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                     ? "Enter a name for the remote branch."
+                                     : "Edit this name to publish under a different name.")
+                                    .gallaeFont(.caption1)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
+
+                Divider()
+                PublishDestinationSummary(remote: selectedRemote, branch: remoteBranch, localBranch: localBranch)
+            } else {
+                remotePicker
             }
-            .pickerStyle(.menu)
-            .accessibilityHint(pickerAccessibilityHint)
 
             HStack {
                 Spacer()
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-
-                Button(purpose.buttonTitle) {
-                    dismiss()
-                    switch purpose {
-                    case .fetch(let pruning):
-                        model.fetch(
-                            from: selectedRemote,
-                            pruning: pruning,
-                            in: repositoryRootURL
-                        )
-                    case .publish:
-                        model.publish(to: selectedRemote, in: repositoryRootURL)
-                    }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(selectedRemote.isEmpty)
-                .accessibilityHint(actionAccessibilityHint)
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isValidating)
+                Button(purpose.buttonTitle) { submit() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSubmit || branchError != nil || model.isLoading || model.isSyncing || isValidating)
+                    .accessibilityHint(actionAccessibilityHint)
             }
         }
         .padding(24)
-        .frame(width: 520)
+        .frame(width: 560)
+        .interactiveDismissDisabled(isValidating)
+        .disabled(isValidating)
+        .onAppear { if case .publish = purpose { isBranchFocused = true } }
+        .onChange(of: remoteBranch) { branchError = nil }
+        .onChange(of: isValidating) {
+            if !isValidating, branchError != nil { isBranchFocused = true }
+        }
+        .onChange(of: model.repository?.rootURL) { dismiss() }
+        .onChange(of: model.repository?.head) { if case .publish = purpose { dismiss() } }
+    }
+
+    private var remotePicker: some View {
+        Picker("Remote", selection: $selectedRemote) {
+            ForEach(remotes, id: \.self) { Text($0).tag($0) }
+        }
+        .pickerStyle(.menu)
+    }
+
+    private var actionAccessibilityHint: String {
+        switch purpose {
+        case .fetch(let pruning):
+            pruning
+                ? "Fetch and prune only the selected Remote without changing local branches or working files"
+                : "Fetch only the selected Remote without changing the current branch or working tree"
+        case .publish: "Publish to the displayed destination and start tracking the remote branch"
+        }
+    }
+
+    private func submit() {
+        switch purpose {
+        case .fetch(let pruning):
+            model.fetch(from: selectedRemote, pruning: pruning, in: repositoryRootURL)
+            dismiss()
+        case .publish:
+            isValidating = true
+            Task {
+                defer { isValidating = false }
+                do {
+                    let branch = try await model.validatePublishBranchName(remoteBranch)
+                    model.publish(to: selectedRemote, branch: branch, in: repositoryRootURL)
+                    dismiss()
+                } catch {
+                    branchError = error.localizedDescription
+                    isBranchFocused = true
+                    NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested, userInfo: [
+                        .announcement: error.localizedDescription,
+                        .priority: NSAccessibilityPriorityLevel.high.rawValue
+                    ])
+                }
+            }
+        }
     }
 
     private var description: String {
@@ -1426,28 +1591,50 @@ private struct ChooseRemoteSheet: View {
                 ? "Fetch changes and remove stale local tracking references for \(repositoryRootURL.lastPathComponent) from the selected Remote."
                 : "Fetch changes for \(repositoryRootURL.lastPathComponent) from the selected Remote without changing local files."
         case .publish:
-            "Publish \(repositoryRootURL.lastPathComponent)’s current branch and start tracking it on the selected Remote."
+            "Choose a destination for this branch in \(repositoryRootURL.lastPathComponent)."
         }
     }
+}
 
-    private var pickerAccessibilityHint: String {
-        switch purpose {
-        case .fetch(let pruning):
-            pruning
-                ? "Choose which configured Git Remote to fetch and prune"
-                : "Choose which configured Git Remote to fetch from"
-        case .publish: "Choose which configured Git Remote receives the current branch"
+private struct PublishSourceSummary: View {
+    @Environment(\.gallaeTheme) private var theme
+    let branch: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Local Branch").gallaeFont(.caption1).foregroundStyle(.secondary)
+            Label(branch, systemImage: "arrow.triangle.branch")
+                .gallaeFont(.body, weight: .medium)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(theme.colors.badgeBackground, in: RoundedRectangle(cornerRadius: 8))
     }
+}
 
-    private var actionAccessibilityHint: String {
-        switch purpose {
-        case .fetch(let pruning):
-            pruning
-                ? "Fetch and prune only the selected Remote without changing local branches or working files"
-                : "Fetch only the selected Remote without changing the current branch or working tree"
-        case .publish: "Publish without force and start tracking the selected Remote branch"
+private struct PublishDestinationSummary: View {
+    let remote: String
+    let branch: String
+    let localBranch: String
+
+    private var branchName: String { branch.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Publish to").gallaeFont(.caption1).foregroundStyle(.secondary)
+            Text("\(remote.trimmingCharacters(in: .whitespacesAndNewlines))/\(branchName.isEmpty ? "…" : branchName)")
+                .gallaeFont(.body, weight: .medium)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(branchName == localBranch
+                 ? "Future pushes and pulls will use this branch."
+                 : "Your local branch keeps its current name.")
+                .gallaeFont(.caption1)
+                .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -18,8 +18,8 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
     case pull
     case publish
     case push
-    case addRemoteAndPublish(name: String, url: String)
-    case publishTo(remote: String)
+    case addRemoteAndPublish(name: String, url: String, branch: String? = nil)
+    case publishTo(remote: String, branch: String? = nil)
     case deleteRemoteBranch(trackingRef: String)
 
     /// Fetch, automatic Fetch, and Pull all bring remote refs down.
@@ -41,7 +41,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .publish: "Publishing Local Branch…"
         case .push: "Pushing Local Commits…"
         case .addRemoteAndPublish: "Adding Remote and Publishing…"
-        case .publishTo(let remote): "Publishing to \(remote)…"
+        case .publishTo(let remote, _): "Publishing to \(remote)…"
         case .deleteRemoteBranch(let trackingRef): "Deleting \(trackingRef) on Remote…"
         }
     }
@@ -106,8 +106,8 @@ extension RepositoryRemoteOperation {
                 "Pushed"
             }
         case .publish: "Published"
-        case .addRemoteAndPublish(let name, _): "Published to \(name)"
-        case .publishTo(let remote): "Published to \(remote)"
+        case .addRemoteAndPublish(let name, _, _): "Published to \(name)"
+        case .publishTo(let remote, _): "Published to \(remote)"
         case .deleteRemoteBranch(let trackingRef): "Deleted \(trackingRef) on remote"
         }
     }
@@ -728,6 +728,7 @@ final class AppModel {
     }
 
     func pushRepository() {
+        guard canPushRepository else { return }
         startRemoteOperation(repository?.upstream == nil ? .publish : .push)
     }
 
@@ -968,16 +969,20 @@ final class AppModel {
         await loadRemotes(in: rootURL)
     }
 
-    func addRemoteAndPublish(named name: String, url: String, in rootURL: URL) {
+    func addRemoteAndPublish(named name: String, url: String, branch: String? = nil, in rootURL: URL) {
         guard repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true else { return }
         repositorySheetRequest = nil
-        startRemoteOperation(.addRemoteAndPublish(name: name, url: url))
+        startRemoteOperation(.addRemoteAndPublish(name: name, url: url, branch: branch))
     }
 
-    func publish(to remote: String, in rootURL: URL) {
+    func publish(to remote: String, branch: String? = nil, in rootURL: URL) {
         guard repository.map({ sameFileLocation($0.rootURL, rootURL) }) == true else { return }
         repositorySheetRequest = nil
-        startRemoteOperation(.publishTo(remote: remote))
+        startRemoteOperation(.publishTo(remote: remote, branch: branch))
+    }
+
+    func validatePublishBranchName(_ name: String) async throws -> String {
+        try await inspector.validatePublishBranchName(name)
     }
 
     func cancelRemoteOperation() {
@@ -1025,6 +1030,18 @@ final class AppModel {
             }
 
             do {
+                if operation == .publish {
+                    let remotes = try await inspector.remotes(in: repository)
+                    guard acceptsCompletion() else { return }
+                    remotesState = .loaded(remotes)
+                    repositorySheetRequest = remotes.isEmpty
+                        ? .addRemote(repositoryRootURL: repository.rootURL)
+                        : .choosePublishRemote(
+                            repositoryRootURL: repository.rootURL,
+                            remotes: remotes.map(\.name)
+                        )
+                    return
+                }
                 let updatedRepository = switch operation {
                 case .fetch(let remote, let pruning):
                     try await inspector.fetch(
@@ -1039,14 +1056,15 @@ final class AppModel {
                     )
                 case .pull: try await inspector.pull(in: repository)
                 case .publish, .push: try await inspector.push(in: repository)
-                case .addRemoteAndPublish(let name, let url):
+                case .addRemoteAndPublish(let name, let url, let branch):
                     try await inspector.addRemoteAndPublish(
                         named: name,
                         url: url,
+                        branch: branch,
                         in: repository
                     )
-                case .publishTo(let remote):
-                    try await inspector.publish(to: remote, in: repository)
+                case .publishTo(let remote, let branch):
+                    try await inspector.publish(to: remote, branch: branch, in: repository)
                 case .deleteRemoteBranch(let trackingRef):
                     try await inspector.deleteRemoteBranch(trackingRef: trackingRef, in: repository)
                 }
@@ -1084,25 +1102,6 @@ final class AppModel {
                         remotes: remotes,
                         pruning: pruning
                     )
-                } else {
-                    present(error, title: operation.failureTitle)
-                }
-            } catch let error as RepositoryPushError {
-                guard acceptsCompletion() else { return }
-                if operation == .publish {
-                    switch error {
-                    case .noRemote:
-                        repositorySheetRequest = .addRemote(
-                            repositoryRootURL: repository.rootURL
-                        )
-                    case .remoteSelectionRequired(let remotes):
-                        repositorySheetRequest = .choosePublishRemote(
-                            repositoryRootURL: repository.rootURL,
-                            remotes: remotes
-                        )
-                    default:
-                        present(error, title: operation.failureTitle)
-                    }
                 } else {
                     present(error, title: operation.failureTitle)
                 }

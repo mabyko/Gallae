@@ -2238,6 +2238,201 @@ final class RepositoryInspectorTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testPublishWaitsForConfirmationWithAnyNumberOfRemotes() async throws {
+        func waitForSync(in model: AppModel) async throws {
+            for _ in 0..<1_000 {
+                if !model.isSyncing { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTFail("Remote operation did not finish")
+        }
+
+        for remoteCount in 0...2 {
+            let fixture = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: fixture) }
+            let root = fixture.appending(path: "repository")
+            let remote = fixture.appending(path: "remote.git")
+            try initializeRepository(at: root)
+            try write("initial\n", to: "file.txt", in: root)
+            try commitAll(in: root, message: "Initial")
+            try runGit(["-C", root.path, "config", "push.default", "simple"])
+            try runGit(["init", "--bare", "--quiet", remote.path])
+            let names = Array(["origin", "backup"].prefix(remoteCount)).sorted()
+            for name in names {
+                try runGit(["-C", root.path, "remote", "add", name, remote.path])
+            }
+            let suite = "GallaeTests-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let model = AppModel(store: LibraryStore(defaults: defaults))
+            let opened = await model.openRepository(at: root)
+            XCTAssertTrue(opened)
+
+            model.pushRepository()
+            try await waitForSync(in: model)
+            let repositoryRootURL = try XCTUnwrap(model.repository?.rootURL)
+            let expected: RepositorySheetRequest = names.isEmpty
+                ? .addRemote(repositoryRootURL: repositoryRootURL)
+                : .choosePublishRemote(repositoryRootURL: repositoryRootURL, remotes: names)
+            XCTAssertEqual(model.repositorySheetRequest, expected)
+            XCTAssertNil(model.repository?.upstream)
+            XCTAssertEqual(try gitOutput(["--git-dir", remote.path, "for-each-ref"]), "")
+
+            // Dismissing and reopening must not publish or register a remote.
+            model.repositorySheetRequest = nil
+            XCTAssertEqual(try gitOutput(["-C", root.path, "remote"]).split(separator: "\n").map(String.init), names)
+            model.pushRepository()
+            try await waitForSync(in: model)
+            XCTAssertEqual(model.repositorySheetRequest, expected)
+            XCTAssertEqual(try gitOutput(["--git-dir", remote.path, "for-each-ref"]), "")
+
+            let publishedBranch = remoteCount == 1 ? "main" : "review/publish"
+            let selectedRemote = names.first ?? "origin"
+            if names.isEmpty {
+                model.addRemoteAndPublish(named: selectedRemote, url: remote.path, branch: publishedBranch, in: root)
+            } else {
+                model.publish(to: selectedRemote, branch: publishedBranch, in: root)
+            }
+            try await waitForSync(in: model)
+            XCTAssertNil(model.errorMessage)
+            XCTAssertNil(model.repositorySheetRequest)
+            XCTAssertEqual(model.repository?.head, .branch("main"))
+            XCTAssertEqual(model.repository?.upstream?.name, "\(selectedRemote)/\(publishedBranch)")
+            XCTAssertEqual(
+                try gitOutput(["--git-dir", remote.path, "rev-parse", "refs/heads/\(publishedBranch)"]),
+                try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+            )
+
+            try write("next\n", to: "file.txt", in: root)
+            try commitAll(in: root, message: "Next")
+            await model.refreshRepository()
+            model.pushRepository()
+            try await waitForSync(in: model)
+            XCTAssertNil(model.repositorySheetRequest, "An established upstream uses ordinary Push")
+            XCTAssertEqual(model.repository?.upstream?.ahead, 0)
+            XCTAssertEqual(
+                try gitOutput(["--git-dir", remote.path, "rev-parse", "refs/heads/\(publishedBranch)"]),
+                try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+            )
+        }
+    }
+
+    func testPublishValidatesRemoteBranchBeforeAddingRemoteOrPushing() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "repository")
+        let remote = fixture.appending(path: "remote.git")
+        try initializeRepository(at: root)
+        try write("initial\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try runGit(["init", "--bare", "--quiet", remote.path])
+        try runGit(["-C", root.path, "remote", "add", "origin", remote.path])
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        for branch in ["", " ", "bad name", "x:y", "*", "@{-1}", "HEAD", "-branch", "foo.lock", "bad\0name"] {
+            do {
+                _ = try await inspector.validatePublishBranchName(branch)
+                XCTFail("Preflight accepted invalid branch: \(branch)")
+            } catch let error as RepositoryPushError {
+                XCTAssertEqual(error, .invalidBranchName)
+            }
+            do {
+                _ = try await inspector.publish(to: "origin", branch: branch, in: repository)
+                XCTFail("Accepted invalid branch: \(branch)")
+            } catch let error as RepositoryPushError {
+                XCTAssertEqual(error, .invalidBranchName)
+            }
+            do {
+                _ = try await inspector.addRemoteAndPublish(named: "new", url: remote.path, branch: branch, in: repository)
+                XCTFail("Added a remote for invalid branch: \(branch)")
+            } catch let error as RepositoryPushError {
+                XCTAssertEqual(error, .invalidBranchName)
+            }
+        }
+        XCTAssertEqual(try gitOutput(["-C", root.path, "remote"]), "origin\n")
+        XCTAssertEqual(try gitOutput(["--git-dir", remote.path, "for-each-ref"]), "")
+        let unchanged = try await inspector.inspect(at: root)
+        XCTAssertNil(unchanged.upstream)
+        let normalized = try await inspector.validatePublishBranchName(" feature/login ")
+        XCTAssertEqual(normalized, "feature/login")
+    }
+
+    func testRenamedPublishPreservesPushSettingsAndPullsItsUpstream() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "repository")
+        let origin = fixture.appending(path: "origin.git")
+        let fork = fixture.appending(path: "fork.git")
+        try initializeRepository(at: root)
+        try write("initial\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        for (name, remote) in [("origin", origin), ("fork", fork)] {
+            try runGit(["init", "--bare", "--quiet", remote.path])
+            try runGit(["-C", root.path, "remote", "add", name, remote.path])
+        }
+        let inspector = RepositoryInspector()
+        var repository = try await inspector.inspect(at: root)
+        repository = try await inspector.publish(to: "origin", branch: " review/topic ", in: repository)
+        let initial = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        XCTAssertEqual(repository.upstream?.name, "origin/review/topic")
+        try write("next\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Next")
+        let next = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        repository = try await inspector.inspect(at: root)
+
+        try runGit(["-C", root.path, "config", "push.default", "nothing"])
+        do {
+            _ = try await inspector.push(in: repository)
+            XCTFail("push.default=nothing must still refuse Push")
+        } catch is RepositoryPushError {}
+        try runGit(["-C", root.path, "config", "push.default", "current"])
+        _ = try await inspector.push(in: repository)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "main"]), next)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "review/topic"]), initial)
+
+        try runGit(["-C", root.path, "config", "push.default", "simple"])
+        try runGit(["-C", root.path, "config", "branch.main.pushRemote", "fork"])
+        _ = try await inspector.push(in: repository)
+        XCTAssertEqual(try gitOutput(["--git-dir", fork.path, "rev-parse", "main"]), next)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "review/topic"]), initial)
+        try runGit(["-C", root.path, "config", "--unset", "branch.main.pushRemote"])
+        try runGit(["-C", root.path, "config", "remote.origin.push", "refs/heads/main:refs/heads/explicit"])
+        _ = try await inspector.push(in: repository)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "explicit"]), next)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "review/topic"]), initial)
+        try runGit(["-C", root.path, "config", "--unset", "remote.origin.push"])
+        repository = try await inspector.push(in: repository)
+        XCTAssertEqual(repository.upstream?.ahead, 0)
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "review/topic"]), next)
+        XCTAssertEqual(try gitOutput(["-C", root.path, "config", "push.default"]), "simple\n")
+
+        try runGit(["-C", root.path, "switch", "-c", "peer"])
+        try write("incoming\n", to: "incoming.txt", in: root)
+        try commitAll(in: root, message: "Incoming")
+        try runGit(["-C", root.path, "push", "origin", "HEAD:refs/heads/review/topic"])
+        try runGit(["-C", root.path, "switch", "main"])
+        repository = try await inspector.pull(in: repository)
+        XCTAssertEqual(repository.head, .branch("main"))
+        XCTAssertEqual(repository.upstream?.behind, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appending(path: "incoming.txt").path))
+
+        try write("local\n", to: "local.txt", in: root)
+        try commitAll(in: root, message: "Local")
+        try runGit(["-C", root.path, "switch", "peer"])
+        try write("remote\n", to: "remote.txt", in: root)
+        try commitAll(in: root, message: "Remote")
+        try runGit(["-C", root.path, "push", "origin", "HEAD:refs/heads/review/topic"])
+        let remoteHead = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        try runGit(["-C", root.path, "switch", "main"])
+        repository = try await inspector.inspect(at: root)
+        do {
+            _ = try await inspector.publish(to: "origin", branch: "review/topic", in: repository)
+            XCTFail("Publishing to a divergent branch must not force push")
+        } catch is RepositoryPushError {}
+        XCTAssertEqual(try gitOutput(["--git-dir", origin.path, "rev-parse", "review/topic"]), remoteHead)
+    }
+
     func testPublishesCurrentBranchAndSetsUpstream() async throws {
         let fixtureURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixtureURL) }
