@@ -445,6 +445,7 @@ private struct RepositoryIntegrateBranchSheet: View {
     let repositoryRootURL: URL
     @State private var target: String?
     @State private var source: String?
+    @State private var arrowPointsLeft = false
     @State private var action: RepositoryBranchIntegrationAction = .fastForward
     @State private var preview: RepositoryBranchIntegrationPreview?
     @State private var previewRequest: ComparisonRequest?
@@ -465,26 +466,32 @@ private struct RepositoryIntegrateBranchSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Label("Merge / Rebase", systemImage: "arrow.triangle.merge")
                     .gallaeFont(.title2, weight: .bold)
-                Text("Choose which branch to update and where its commits come from.")
+                Text("Choose branches and how to combine their commits.")
+                    .gallaeFont(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            branchContent
+            VStack(alignment: .leading, spacing: 16) {
+                branchContent
+                if target != nil && source != nil { comparison }
+            }
 
             if target != nil && source != nil {
-                comparison
                 if let preview = currentPreview, preview.divergence.uniqueToOther > 0 {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Method").gallaeFont(.body, weight: .semibold)
-                        Picker("Method", selection: $action) {
-                            Text("Fast-Forward").tag(RepositoryBranchIntegrationAction.fastForward)
-                            Text("Merge Commit").tag(RepositoryBranchIntegrationAction.mergeCommit)
-                            Text("Rebase").tag(RepositoryBranchIntegrationAction.rebase)
+                        HStack {
+                            Text("Method").gallaeFont(.callout, weight: .semibold)
+                            Spacer(minLength: 16)
+                            Picker("Method", selection: $action) {
+                                Text("Fast-Forward").tag(RepositoryBranchIntegrationAction.fastForward)
+                                Text("Merge Commit").tag(RepositoryBranchIntegrationAction.mergeCommit)
+                                Text("Rebase").tag(RepositoryBranchIntegrationAction.rebase)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .accessibilityLabel("Update method")
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .accessibilityLabel("Update method")
                         Text(methodDescription)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -501,6 +508,22 @@ private struct RepositoryIntegrateBranchSheet: View {
                     }
                     .gallaeFont(.callout)
                     .disabled(isSubmitting)
+
+                    DisclosureGroup {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if let worktree = preview.targetWorktree {
+                                Text(worktree.rootURL.path)
+                                    .textSelection(.enabled)
+                            }
+                            Text(worktreeDescription(preview))
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 4)
+                    } label: {
+                        Label(worktreeSummary(preview), systemImage: "folder")
+                    }
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -565,47 +588,89 @@ private struct RepositoryIntegrateBranchSheet: View {
             Label("Create another local branch to merge or rebase.", systemImage: "arrow.triangle.branch")
                 .foregroundStyle(.secondary)
         case .loaded(let branches):
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 16) {
-                    branchPicker("Update branch", selection: Binding(
-                        get: { target },
-                        set: { newTarget in
-                            let oldTarget = target
-                            target = newTarget
-                            if source == newTarget { source = oldTarget }
-                        }
-                    ), branches: branches)
-                    branchPicker("Using branch", selection: $source, branches: branches.filter { $0 != target })
-                }
+            HStack(alignment: .bottom, spacing: 12) {
+                branchPicker(updatesTarget: arrowPointsLeft, branches: branches)
                 Button {
                     (target, source) = (source, target)
+                    arrowPointsLeft.toggle()
                 } label: {
-                    Image(systemName: "arrow.up.arrow.down")
+                    Image(systemName: arrowPointsLeft ? "arrow.left" : "arrow.right")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(width: 28, height: 28)
                 }
-                .accessibilityLabel("Swap source and target branches")
-                .help("Swap which branch receives the update")
+                .accessibilityLabel("Reverse update direction")
+                .accessibilityValue("Using \(source ?? "no branch") to update \(target ?? "no branch")")
+                .accessibilityHint("Changes the update direction without running a merge or rebase.")
+                .help("Reverse direction to update \(source ?? "the source branch") using \(target ?? "the target branch")")
                 .disabled(target == nil || source == nil)
+                branchPicker(updatesTarget: !arrowPointsLeft, branches: branches)
             }
-            .padding(16)
-            .background(theme.colors.badgeBackground, in: .rect(cornerRadius: 10))
             .disabled(isSubmitting)
         }
     }
 
-    private func branchPicker(_ title: String, selection: Binding<String?>, branches: [String]) -> some View {
-        HStack(spacing: 12) {
-            Text(title).gallaeFont(.callout, weight: .semibold)
-                .frame(width: 120, alignment: .leading)
-            Picker(title, selection: selection) {
-                if selection.wrappedValue == nil { Text("Choose a branch").tag(Optional<String>.none) }
-                ForEach(branches, id: \.self) { branch in
-                    Text(branchLabel(branch)).tag(Optional(branch))
+    private func branchPicker(updatesTarget: Bool, branches: [String]) -> some View {
+        let title = updatesTarget ? "Update branch" : "Using branch"
+        let selection = Binding<String?>(
+            get: { updatesTarget ? target : source },
+            set: { branch in
+                if updatesTarget {
+                    let oldTarget = target
+                    target = branch
+                    if source == branch { source = oldTarget }
+                } else {
+                    source = branch
                 }
             }
-            .labelsHidden()
-            .frame(maxWidth: .infinity, alignment: .leading)
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title).gallaeFont(.callout, weight: .semibold)
+                Spacer(minLength: 4)
+                if let branch = selection.wrappedValue {
+                    if model.repository?.head == .branch(branch) {
+                        Text("Current").gallaeFont(.caption1).foregroundStyle(.secondary)
+                    } else if model.localBranchWorktreeURLs[branch] != nil {
+                        Text("Worktree").gallaeFont(.caption1).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Menu {
+                Picker(title, selection: selection) {
+                    if selection.wrappedValue == nil { Text("Choose a branch").tag(Optional<String>.none) }
+                    ForEach(branches.filter { updatesTarget || $0 != target }, id: \.self) { branch in
+                        Text(branchLabel(branch)).tag(Optional(branch))
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    Text(selection.wrappedValue ?? "Choose a branch")
+                        .gallaeFont(.body, weight: .medium)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.down")
+                        .gallaeFont(.caption2, weight: .semibold)
+                        .accessibilityHidden(true)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity)
+                .contentShape(.rect)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .background(theme.colors.badgeBackground, in: .rect(cornerRadius: 6))
+            .accessibilityLabel(title)
+            .accessibilityValue(selection.wrappedValue.map(branchLabel) ?? "Choose a branch")
             .help(selection.wrappedValue ?? title)
         }
+        .frame(maxWidth: .infinity)
     }
 
     @ViewBuilder
@@ -615,19 +680,19 @@ private struct RepositoryIntegrateBranchSheet: View {
                 .foregroundStyle(.secondary)
             Button("Retry Comparison") { retry += 1 }
         } else if let preview = currentPreview {
-            VStack(alignment: .leading, spacing: 6) {
-                Label(comparisonTitle(preview), systemImage: preview.divergence.uniqueToOther == 0 ? "checkmark.circle" : "arrow.triangle.branch")
-                    .gallaeFont(.body, weight: .semibold)
-                Text(comparisonDescription(preview))
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: preview.divergence.uniqueToOther == 0 ? "checkmark.circle" : "arrow.triangle.branch")
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if preview.divergence.uniqueToOther > 0 {
-                    Text(worktreeDescription(preview))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(comparisonTitle(preview)).gallaeFont(.callout, weight: .semibold)
+                    Text(comparisonDescription(preview))
                         .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
         } else {
             ProgressView("Comparing branches…")
@@ -674,7 +739,7 @@ private struct RepositoryIntegrateBranchSheet: View {
         let ours = preview.divergence.uniqueToCurrent
         let theirs = preview.divergence.uniqueToOther
         if ours == 0 && theirs == 0 { return "\(preview.target) and \(preview.source) point at the same commit. No update is needed." }
-        if theirs == 0 { return "\(preview.target) already contains every commit from \(preview.source). Swap the branches to update \(preview.source)." }
+        if theirs == 0 { return "\(preview.target) already contains every commit from \(preview.source). Reverse the arrow to update \(preview.source)." }
         if ours == 0 { return "Bring \(theirs) commit\(theirs == 1 ? "" : "s") from \(preview.source) into \(preview.target)." }
         return "\(preview.target) has \(ours) and \(preview.source) has \(theirs) unique commits. Choose how to combine them."
     }
@@ -683,9 +748,16 @@ private struct RepositoryIntegrateBranchSheet: View {
         if let worktree = preview.targetWorktree {
             return sameFileLocation(worktree.rootURL, repositoryRootURL)
                 ? "Updates files in the current working folder."
-                : "Updates the target Worktree at \(worktree.rootURL.path). Your current working folder stays open."
+                : "Changes files in this Worktree. Your current working folder stays open."
         }
         return "Uses a temporary Worktree for \(preview.target), removed after success. Your current working folder stays open."
+    }
+
+    private func worktreeSummary(_ preview: RepositoryBranchIntegrationPreview) -> String {
+        guard let worktree = preview.targetWorktree else { return "Uses a temporary Worktree" }
+        return sameFileLocation(worktree.rootURL, repositoryRootURL)
+            ? "Updates the current working folder"
+            : "Updates Worktree: \(worktree.rootURL.lastPathComponent)"
     }
 
     private var actionTitle: String {
@@ -700,8 +772,8 @@ private struct RepositoryIntegrateBranchSheet: View {
         let target = target ?? "the target branch"
         let source = source ?? "the source branch"
         switch action {
-        case .fastForward: return "Move \(target) forward to \(source) without creating a commit."
-        case .mergeCommit: return "Merge \(source) into \(target), preserving both histories with a merge commit."
+        case .fastForward: return "Moves the target forward without creating a commit."
+        case .mergeCommit: return "Creates a merge commit and preserves both histories."
         case .rebase: return "Replay commits unique to \(target) on top of \(source)."
         }
     }

@@ -13,6 +13,7 @@
 
 1. 사용자가 상단 도구 막대나 branch 메뉴에서 `Merge / Rebase…`를 누른다.
 2. Gallae가 `Update branch`에 현재 branch를 기본 선택하고, `Using branch`에 다른 local branch를 선택한다. 양쪽 모두 변경할 수 있으며 같은 branch를 동시에 선택하지 않는다.
+   - 두 branch를 좌우로 배치하고 화살표가 `Update branch`를 가리킨다. 화살표 버튼을 누르면 branch 위치를 유지한 채 적용 방향과 역할을 뒤집고 비교 결과를 갱신한다.
 3. 사용자가 두 branch와 비교 결과를 확인하고 `Method → Fast-Forward`를 선택한 뒤 Fast-Forward 또는 Return으로 실행한다.
 4. Gallae가 선택한 target branch를 `--ff-only`로 갱신한 뒤 Repository, Changes, History와 Reflog를 다시 읽는다.
 
