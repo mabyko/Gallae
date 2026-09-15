@@ -148,14 +148,14 @@ struct AppView: View {
                         model.pullRepository()
                     } label: {
                         Label {
-                            Text("Pull")
+                            Text(model.pullTitle)
                         } icon: {
                             syncIcon("arrow.down.to.line", running: model.remoteOperation == .pull)
                         }
                         .labelStyle(.titleAndIcon)
                     }
                     .disabled(!model.canPullRepository || model.isLoading || model.isSyncing)
-                    .accessibilityLabel("Pull")
+                    .accessibilityLabel(model.pullTitle)
                     .help(
                         model.canPullRepository
                             ? "Fast-forward the current branch from its tracking branch"

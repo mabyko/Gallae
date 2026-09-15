@@ -207,6 +207,29 @@ struct RepositoryInspector: Sendable {
         return branches
     }
 
+    func localBranchesByUpstream(in repository: RepositorySummary) async throws -> [String: [String]] {
+        try Task.checkCancellation()
+        let branches = try await Task.detached(priority: .userInitiated) {
+            let result = try Self.runGit([
+                "-C", repository.rootURL.path,
+                "for-each-ref", "--format=%(refname:lstrip=2)%09%(upstream)", "refs/heads/"
+            ])
+            guard result.status == 0 else {
+                throw RepositoryBranchError.unreadable(result.standardError)
+            }
+            var branches: [String: [String]] = [:]
+            for line in Self.text(from: result.standardOutput).split(whereSeparator: \.isNewline) {
+                let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                guard fields.count == 2, fields[1].hasPrefix("refs/remotes/") else { continue }
+                let upstream = String(fields[1].dropFirst("refs/remotes/".count))
+                branches[upstream, default: []].append(String(fields[0]))
+            }
+            return branches.mapValues { $0.sorted { $0.localizedStandardCompare($1) == .orderedAscending } }
+        }.value
+        try Task.checkCancellation()
+        return branches
+    }
+
     func remotes(in repository: RepositorySummary) async throws -> [RepositoryRemote] {
         try Task.checkCancellation()
         let remotes = try await Task.detached(priority: .userInitiated) {

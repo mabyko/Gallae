@@ -302,6 +302,7 @@ final class AppModel {
     var tagsState: RepositoryTagsLoadState = .notLoaded
     var localBranchesState: RepositoryLocalBranchesLoadState = .notLoaded
     private(set) var localBranches: [String] = []
+    private(set) var localBranchesByUpstream: [String: [String]] = [:]
     private(set) var remoteBranchesByRemote: [String: [String]] = [:]
     private(set) var worktrees: [RepositoryWorktree] = []
     private(set) var selectedWorktreeURL: URL?
@@ -376,6 +377,11 @@ final class AppModel {
     private(set) var temporaryWorktrees: [URL: URL] = [:]
     var pendingTemporaryWorktreeRemovalURL: URL?
     private(set) var repositoryRevision = 0
+
+    var pullTitle: String {
+        guard let behind = repository?.upstream?.behind, behind > 0 else { return "Pull" }
+        return "Pull \(behind)"
+    }
 
     var pushTitle: String {
         guard let upstream = repository?.upstream else { return "Publish" }
@@ -1141,6 +1147,7 @@ final class AppModel {
         guard let repository else {
             localBranchesState = .notLoaded
             localBranches = []
+            localBranchesByUpstream = [:]
             worktrees = []
             selectedWorktreeURL = nil
             return
@@ -1155,7 +1162,8 @@ final class AppModel {
         do {
             async let branchesRequest = inspector.localBranches(in: repository)
             async let worktreesRequest = inspector.worktrees(in: repository)
-            let (branches, worktrees) = try await (branchesRequest, worktreesRequest)
+            async let upstreamsRequest = inspector.localBranchesByUpstream(in: repository)
+            let (branches, worktrees, upstreams) = try await (branchesRequest, worktreesRequest, upstreamsRequest)
             guard
                 !Task.isCancelled, generation == localBranchesGeneration,
                 revision == repositoryRevision,
@@ -1171,6 +1179,7 @@ final class AppModel {
             }
             self.worktrees = worktrees
             localBranches = branches
+            localBranchesByUpstream = upstreams
             localBranchesState = .loaded(branches)
             if case .branch(let name) = historySelection, !branches.contains(name) {
                 historySelection = nil
@@ -1186,6 +1195,7 @@ final class AppModel {
                 return
             }
             localBranchesState = .failed(Self.message(for: error))
+            localBranchesByUpstream = [:]
         }
     }
 
@@ -2667,6 +2677,7 @@ final class AppModel {
             localBranchesState = .notLoaded
             localBranches = []
             remoteBranchesByRemote = [:]
+            localBranchesByUpstream = [:]
             worktrees = []
             selectedWorktreeURL = nil
             remotesState = .notLoaded

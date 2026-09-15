@@ -500,6 +500,15 @@ struct RepositoryNavigatorView: View {
                     .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remoteBranch(branch), isFocused: isReferenceListFocused, sidebar: true)
                     .accessibilityLabel("Remote branch \(branch)")
                     .contextMenu {
+                        RepositoryTrackingBranchesMenu(
+                            branches: model.localBranchesByUpstream[branch] ?? [],
+                            currentBranch: currentBranch,
+                            worktreeURLs: model.localBranchWorktreeURLs,
+                            isBusy: model.isLoading || model.isSyncing,
+                            switchToBranch: { branch in Task { await model.switchBranch(to: branch) } },
+                            openWorktree: { url in Task { await model.openWorktree(at: url) } }
+                        )
+                        Divider()
                         Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
                             pendingRemoteBranchDeletion = branch
                         }
@@ -738,6 +747,47 @@ private struct RemoteBranchDialogs: ViewModifier {
                     "This removes only the local tracking reference \(trackingRef). The branch on the remote is not changed, and Fetch can restore the reference."
                 )
             }
+    }
+}
+
+struct RepositoryTrackingBranchesMenu: View {
+    let branches: [String]
+    let currentBranch: String?
+    let worktreeURLs: [String: URL]
+    let isBusy: Bool
+    let switchToBranch: (String) -> Void
+    let openWorktree: (URL) -> Void
+
+    static func supplementaryBranches(
+        _ branches: [String], references: [RepositoryHistory.Reference]
+    ) -> [String] {
+        branches.filter { branch in
+            !references.contains { $0.kind == .branch && $0.name == branch }
+        }
+    }
+
+    var body: some View {
+        if branches.isEmpty {
+            Text("No Tracking Local Branches")
+        } else {
+            ForEach(branches, id: \.self) { branch in
+                if branch == currentBranch {
+                    Button("\(branch) · Current Branch", systemImage: "checkmark") {}
+                        .disabled(true)
+                } else if let url = worktreeURLs[branch] {
+                    Button("Open Worktree for \(branch) (\(url.lastPathComponent))", systemImage: "folder") {
+                        openWorktree(url)
+                    }
+                    .help(url.path)
+                    .disabled(isBusy)
+                } else {
+                    Button("Switch to \(branch)", systemImage: "arrow.triangle.branch") {
+                        switchToBranch(branch)
+                    }
+                    .disabled(isBusy)
+                }
+            }
+        }
     }
 }
 

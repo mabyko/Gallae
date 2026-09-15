@@ -432,6 +432,8 @@ struct RepositoryHistoryView: View {
                                 canFastForwardCurrentHere: commit.id != history.headCommitID
                                     && descendantCommitIDs.contains(commit.id),
                                 worktreeURLs: model.localBranchWorktreeURLs,
+                                localBranchesByUpstream: model.localBranchesByUpstream,
+                                isBusy: model.isLoading || model.isSyncing,
                                 canRemoveWorktree: { model.canRemoveWorktree(at: $0) },
                                 fastForward: { branch in
                                     Task { await model.fastForwardBranchToCurrent(branch) }
@@ -562,6 +564,8 @@ private struct RepositoryHistoryRow: View {
     var canFastForwardBranchRefs = false
     var canFastForwardCurrentHere = false
     var worktreeURLs: [String: URL] = [:]
+    var localBranchesByUpstream: [String: [String]] = [:]
+    var isBusy = false
     var canRemoveWorktree: (URL) -> Bool = { _ in false }
     var fastForward: (String) -> Void = { _ in }
     var fastForwardCurrent: (String) -> Void = { _ in }
@@ -674,6 +678,7 @@ private struct RepositoryHistoryRow: View {
                 }
             }
             ForEach(remoteBranchReferences) { reference in
+                trackingBranchesMenu(reference)
                 Button("Delete \(reference.name) on Remote") {
                     requestRemoteBranchDeletion(reference.name)
                 }
@@ -720,20 +725,6 @@ private struct RepositoryHistoryRow: View {
 
     @ViewBuilder
     private var branchMenuSections: some View {
-        ForEach(remoteBranchReferences) { reference in
-            Section(reference.name) {
-                Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
-                    requestRemoteBranchDeletion(reference.name)
-                }
-                Button(
-                    "Remove Tracking Reference…",
-                    systemImage: "minus.circle",
-                    role: .destructive
-                ) {
-                    requestTrackingReferenceRemoval(reference.name)
-                }
-            }
-        }
         ForEach(localBranchReferences) { reference in
             Section(reference.name) {
                 if let worktreeURL = worktreeURLs[reference.name] {
@@ -774,6 +765,40 @@ private struct RepositoryHistoryRow: View {
                         fastForwardCurrent(reference.name)
                     }
                 }
+            }
+        }
+        ForEach(remoteBranchReferences) { reference in
+            remoteBranchMenu(reference)
+        }
+    }
+
+    @ViewBuilder
+    private func trackingBranchesMenu(_ reference: RepositoryHistory.Reference) -> some View {
+        let branches = RepositoryTrackingBranchesMenu.supplementaryBranches(
+            localBranchesByUpstream[reference.name] ?? [],
+            references: localBranchReferences
+        )
+        if !branches.isEmpty {
+            RepositoryTrackingBranchesMenu(
+                branches: branches,
+                currentBranch: currentBranchName,
+                worktreeURLs: worktreeURLs,
+                isBusy: isBusy,
+                switchToBranch: switchToBranch,
+                openWorktree: openWorktree
+            )
+            Divider()
+        }
+    }
+
+    private func remoteBranchMenu(_ reference: RepositoryHistory.Reference) -> some View {
+        Section(reference.name) {
+            trackingBranchesMenu(reference)
+            Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
+                requestRemoteBranchDeletion(reference.name)
+            }
+            Button("Remove Tracking Reference…", systemImage: "minus.circle", role: .destructive) {
+                requestTrackingReferenceRemoval(reference.name)
             }
         }
     }

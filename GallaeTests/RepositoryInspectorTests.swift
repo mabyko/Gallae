@@ -4,6 +4,120 @@ import XCTest
 @testable import Gallae
 
 final class RepositoryInspectorTests: XCTestCase {
+    @MainActor
+    func testPullCountAndTrackingMenuAcrossWorktreeNavigation() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let root = fixture.appending(path: "primary")
+        let linked = fixture.appending(path: "linked")
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "remote", "add", "origin", root.path])
+        try runGit(["-C", root.path, "worktree", "add", "-b", "topic", linked.path])
+        for index in 1...3 {
+            try write("\(index)\n", to: "file.txt", in: linked)
+            try commitAll(in: linked, message: "Incoming \(index)")
+        }
+        try runGit(["-C", root.path, "update-ref", "refs/remotes/origin/main", "refs/heads/topic"])
+        for branch in ["main", "topic"] {
+            try runGit(["-C", root.path, "branch", "--set-upstream-to=origin/main", branch])
+        }
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        await model.loadNavigator()
+        XCTAssertEqual(model.repository?.upstream?.behind, 3)
+        XCTAssertEqual(model.pullTitle, "Pull 3")
+
+        let moved = await model.openWorktree(at: linked)
+        XCTAssertTrue(moved)
+        await model.loadNavigator()
+        await model.loadHistory()
+        XCTAssertEqual(model.pullTitle, "Pull")
+        XCTAssertEqual(model.localBranchesByUpstream["origin/main"], ["main", "topic"])
+        XCTAssertEqual(model.localBranchWorktreeURLs["main"], root.standardizedFileURL)
+        guard case .loaded(let history) = model.historyState,
+              let remoteCommit = history.commits.first(where: { $0.references.contains(.init(name: "origin/main", kind: .remoteBranch)) })
+        else { return XCTFail("Expected the remote branch in History") }
+        XCTAssertEqual(RepositoryTrackingBranchesMenu.supplementaryBranches(
+            model.localBranchesByUpstream["origin/main"] ?? [], references: remoteCommit.references
+        ), ["main"])
+
+        let returned = await model.openWorktree(at: root)
+        XCTAssertTrue(returned)
+        XCTAssertEqual(model.pullTitle, "Pull 3")
+        try runGit(["-C", root.path, "branch", "--unset-upstream", "main"])
+        await model.refreshRepository()
+        XCTAssertEqual(model.pullTitle, "Pull")
+    }
+
+    func testTrackingMenuOnlySupplementsBranchesWithoutLocalMenuEntries() {
+        let tracking = ["main", "review/topic"]
+        XCTAssertEqual(RepositoryTrackingBranchesMenu.supplementaryBranches(tracking, references: [
+            .init(name: "main", kind: .branch),
+            .init(name: "review/topic", kind: .tag),
+            .init(name: "origin/main", kind: .remoteBranch)
+        ]), ["review/topic"])
+        XCTAssertEqual(RepositoryTrackingBranchesMenu.supplementaryBranches(tracking, references: [
+            .init(name: "origin/main", kind: .remoteBranch)
+        ]), tracking)
+        XCTAssertTrue(RepositoryTrackingBranchesMenu.supplementaryBranches(tracking, references: [
+            .init(name: "main", kind: .branch),
+            .init(name: "review/topic", kind: .branch)
+        ]).isEmpty)
+    }
+
+    @MainActor
+    func testTrackingLocalBranchesUseUpstreamAndRefreshWithRepository() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["-C", root.path, "remote", "add", "origin", root.path])
+        try runGit(["-C", root.path, "remote", "add", "other", root.path])
+        for remote in ["origin", "other"] {
+            try runGit(["-C", root.path, "update-ref", "refs/remotes/\(remote)/main", "HEAD"])
+        }
+        try runGit(["-C", root.path, "branch", "--set-upstream-to=origin/main", "main"])
+        try runGit(["-C", root.path, "branch", "--track", "review/topic", "origin/main"])
+        try runGit(["-C", root.path, "branch", "--track", "other-main", "other/main"])
+        try runGit(["-C", root.path, "branch", "--no-track", "untracked", "HEAD"])
+        try runGit(["-C", root.path, "branch", "--track", "local-only", "main"])
+        // A colliding tag must not change the local branch name returned by Git.
+        try runGit(["-C", root.path, "tag", "--no-sign", "main"])
+        try write("ahead\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Local main is ahead")
+
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let opened = await model.openRepository(at: root)
+        XCTAssertTrue(opened)
+        await model.loadLocalBranches()
+        XCTAssertEqual(model.localBranchesByUpstream, [
+            "origin/main": ["main", "review/topic"],
+            "other/main": ["other-main"]
+        ])
+
+        try runGit(["-C", root.path, "branch", "--unset-upstream", "review/topic"])
+        await model.loadLocalBranches()
+        XCTAssertEqual(model.localBranchesByUpstream["origin/main"], ["main"])
+
+        let other = root.appending(path: "empty-repository")
+        try initializeRepository(at: other)
+        let openedOther = await model.openRepository(at: other)
+        XCTAssertTrue(openedOther)
+        XCTAssertTrue(model.localBranchesByUpstream.isEmpty)
+        await model.loadLocalBranches()
+        XCTAssertTrue(model.localBranchesByUpstream.isEmpty)
+    }
+
     func testCommandRunnerPreservesInputAndCapturesBothLargeOutputStreams() throws {
         let literal = "폴더 'quoted' \"double\" $HOME $(not-a-command)"
         let input = Data("input\n\0tail".utf8)
