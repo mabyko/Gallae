@@ -69,6 +69,12 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 
 세 응답은 별개 테마가 아니라 한 테마의 Semantic 매핑 세 벌이다. 사용자는 테마를 고르지 않고, 설정에서 Translucent Sidebar and Toolbar, Compact Rows와 UI·코드 폰트를 조정한다. 대비 증가는 시스템 설정을 따르며 앱 설정으로 켜지 않는다.
 
+## 툴바 묶음과 History 헤더
+
+상단 툴바는 탐색(Navigator·Library), 통합(Merge / Rebase), 동기화·새로고침(Fetch·Pull·Push·Refresh)을 구분한다. Refresh는 Pull·Push와 함께 둔다. macOS 26 이상에서는 `ToolbarItem`·`ToolbarItemGroup`을 그대로 두고 각 항목에 `.sharedBackgroundVisibility(.hidden)`을 붙여 항상 보이는 유리 캡슐을 없앤 뒤, 버튼과 Fetch 메뉴 뒤에 `toolbarBezel()`로 무광 bezel을 그린다. bezel은 `controlColor`를 30% 불투명도로 옅게 채우고 `.separator` 1pt 테두리를 두른 모서리 8pt 둥근 사각형이며, 컨트롤 프레임보다 위아래 2pt씩 안쪽에 그린다. 유리·그림자 없이 콘텐츠 패널의 조용한 버튼보다 한 단계 더 가볍다. 툴바의 `.buttonStyle(.bordered)`는 macOS 26 툴바 안에서 아무것도 그리지 않아 쓰지 않는다. 장식 사각형은 background에만 있어 클릭을 가로채지 않고 접근성 트리에도 오르지 않는다. 두 색은 시스템 의미 색이므로 Light·Dark와 Increase Contrast에 따라 바뀐다. hover·누름·키보드 포커스·비활성·메뉴·overflow는 시스템 그대로다. 묶음 사이의 `ToolbarSpacer(.fixed)`가 통합과 동기화를 간격으로 구분한다. Library 화면의 Choose Folder도 같은 처리를 받는다. 창 단위 `toolbarBackgroundVisibility`는 Reduced Transparency의 불투명 툴바 배경을 맡는 별개 설정이며 버튼 캡슐과 무관하다. 좁은 창에서 시스템이 만드는 overflow(») 버튼의 유리 원형은 공개 API로 바꿀 수 없다. SwiftUI의 `toolbarOverflowMenu`는 macOS에서 사용할 수 없고 `NSToolbar`에도 overflow 모양 속성이 없으므로 시스템 모습을 그대로 둔다. macOS 15에서는 한 개짜리 `ControlGroup`과 `ToolbarDivider`를 사용한 기존 배치를 유지한다. 두 경로는 같은 버튼 정의를 공유하므로 이름·단축키·도움말·접근성 이름은 OS에 따라 달라지지 않는다.
+
+History 헤더는 두 줄이다. 첫 줄은 조회 범위 메뉴(`History · All Branches & Tags` 또는 `History · Filter: <ref>`)이며, 필터가 있을 때만 옆에 작은 Clear Filter 버튼이 붙는다. 둘째 줄은 Navigator에서 고른 ref의 이름과 종류(`feature/x · Local branch`, `v1.2 · Tag`)로, 옆의 Switch·Check Out·Fetch가 무엇을 대상으로 하는지 밝힌다. 작업 브랜치는 그 위의 Working on 메뉴가 맡고, HEAD인 선택은 `· HEAD`를 덧붙여 구분한다. 상하 배치의 검토 막대는 Expand Review로 목록이 가려졌을 때만 범위 이름을 반복하고, 평소에는 순번과 이동·확장 버튼만 둔다.
+
 ## 현재 시안
 
 시안 2(`prototype/gallae-workspace`)는 정보 구조 후보 A·B·C를 비교한다. 시안 5는 채택한 구조 위에서 세 Material Response와 밀도를 비교하는 로컬 일회용 HTML이며 저장소에 넣지 않는다. 시안 5의 토큰은 `:root[data-theme]`로 응답별 Semantic 값을 덮어쓰고 Light·Dark를 각각 가지며, 설정 창 목업의 두 토글과 시스템 접근성 토글 시뮬레이션으로 응답 전환을 확인한다. 제품에서는 시스템 설정과 두 개의 앱 설정으로만 응답이 결정된다.

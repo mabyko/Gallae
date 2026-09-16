@@ -104,30 +104,26 @@ struct RepositoryWorkspaceView: View {
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar {
-            // One capsule, two controls: a divider between the sidebar toggle and Library keeps them from
-            // reading as one button.
-            // Two one-control groups in an HStack: a single ControlGroup either drifts to the trailing end
-            // (default style) or spaces its controls too widely (navigation style); this keeps the leading
-            // placement, the tight divider, and each button's own accessibility name.
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 0) {
-                    ControlGroup {
-                        navigatorToolbarItem
-                    }
-
-                    ToolbarDivider(inset: 0)
-
-                    ControlGroup {
-                    Button {
-                        model.showLibrary()
-                    } label: {
-                        Label("Library", systemImage: "chevron.backward")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .help("Return to the Repository Library in this window (⇧⌘L)")
-                    .accessibilityLabel("Library")
-                    .accessibilityHint("Return to the Repository Library in this window")
-                    .disabled(model.isLoading)
+            if #available(macOS 26, *) {
+                // Individually accessible controls without the always-visible glass capsule but with the same
+                // matte bezel as the repository actions on the trailing side; the system still draws hover,
+                // press and focus.
+                ToolbarItem(placement: .navigation) { navigatorToolbarItem.toolbarBezel() }
+                    .sharedBackgroundVisibility(.hidden)
+                ToolbarSpacer(.fixed, placement: .navigation)
+                ToolbarItem(placement: .navigation) { libraryToolbarItem.toolbarBezel() }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                // One capsule, two controls: a divider between the sidebar toggle and Library keeps them from
+                // reading as one button.
+                // Two one-control groups in an HStack: a single ControlGroup either drifts to the trailing end
+                // (default style) or spaces its controls too widely (navigation style); this keeps the leading
+                // placement, the tight divider, and each button's own accessibility name.
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 0) {
+                        ControlGroup { navigatorToolbarItem }
+                        ToolbarDivider(inset: 0)
+                        ControlGroup { libraryToolbarItem }
                     }
                 }
             }
@@ -519,6 +515,19 @@ struct RepositoryWorkspaceView: View {
         case .toolbarMenu: "Choose a destination, branch, remote, or tag"
         case .locationMenu: "Widen the window past \(Int(navigatorFoldWidth)) points to show the Navigator, or use the location menu in the context bar"
         }
+    }
+
+    private var libraryToolbarItem: some View {
+        Button {
+            model.showLibrary()
+        } label: {
+            Label("Library", systemImage: "chevron.backward")
+                .labelStyle(.titleAndIcon)
+        }
+        .help("Return to the Repository Library in this window (⇧⌘L)")
+        .accessibilityLabel("Library")
+        .accessibilityHint("Return to the Repository Library in this window")
+        .disabled(model.isLoading)
     }
 
     @ViewBuilder

@@ -25,7 +25,14 @@ struct RepositoryHistoryView: View {
                 VStack(spacing: 7) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            historyScopeMenu
+                            HStack(spacing: 8) {
+                                historyScopeMenu
+                                if scope != nil {
+                                    Button("Clear Filter") { scope = nil }
+                                        .controlSize(.small)
+                                        .help("Show all branches and tags again")
+                                }
+                            }
                             Text(headerSubtitle)
                                 .gallaeFont(.caption1)
                                 .foregroundStyle(.secondary)
@@ -57,14 +64,6 @@ struct RepositoryHistoryView: View {
                         }
                     }
 
-                    if scope != nil {
-                        HStack {
-                            Label("Filtered history", systemImage: "line.3.horizontal.decrease")
-                            Spacer()
-                            Button("Clear Filter") { scope = nil }
-                        }
-                        .gallaeFont(.caption1)
-                    }
                     if let message = model.historyNavigationMessage {
                         HStack {
                             Text(message).foregroundStyle(.secondary)
@@ -234,28 +233,30 @@ struct RepositoryHistoryView: View {
         scope?.name ?? "History"
     }
 
+    /// The Navigator selection, named: the working branch lives in the Working on menu above, so this line
+    /// says which ref the tools beside it act on.
     private var headerSubtitle: String {
         switch model.historySelection {
         case .branch(let name):
             if name == currentBranchName {
-                "Local branch · HEAD"
+                "\(name) · Local branch · HEAD"
             } else if let worktreeURL = model.localBranchWorktreeURLs[name] {
-                "Local branch · Worktree at \(worktreeURL.path)"
+                "\(name) · Local branch · Worktree at \(worktreeURL.path)"
             } else {
-                "Local branch"
+                "\(name) · Local branch"
             }
-        case .tag:
-            "Tag"
+        case .tag(let name):
+            "\(name) · Tag"
         case .remote(let name):
             if case .loaded(let remotes) = model.remotesState, let remote = remotes.first(where: { $0.name == name }) {
-                "Remote · \(remote.fetchURL)"
+                "\(name) · Remote · \(remote.fetchURL)"
             } else {
-                "Remote"
+                "\(name) · Remote"
             }
-        case .remoteBranch:
-            "Remote branch"
+        case .remoteBranch(let name):
+            "\(name) · Remote branch"
         case nil:
-            "All branches and tags · select a branch to jump to its tip"
+            "Select a branch or tag to jump to its tip"
         }
     }
 
@@ -326,11 +327,13 @@ struct RepositoryHistoryView: View {
 
     private var reviewControls: some View {
         HStack(spacing: 8) {
-            Text(searchText.isEmpty ? headerTitle : "\(headerTitle) · Filtered")
-                .gallaeFont(.caption1, weight: .medium)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .help(searchText.isEmpty ? headerTitle : "\(headerTitle) · Search: \(searchText)")
+            if isReviewExpanded {
+                Text(searchText.isEmpty ? headerTitle : "\(headerTitle) · Filtered")
+                    .gallaeFont(.caption1, weight: .medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(searchText.isEmpty ? headerTitle : "\(headerTitle) · Search: \(searchText)")
+            }
             if let selected = model.selectedHistoryCommitID,
                let index = visibleHistoryCommitIDs.firstIndex(of: selected) {
                 Text("\(index + 1) of \(visibleHistoryCommitIDs.count)")

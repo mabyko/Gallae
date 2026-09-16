@@ -20,6 +20,21 @@ struct ToolbarDivider: View {
     }
 }
 
+/// Subtle matte rounded rectangle behind a macOS 26 toolbar control whose shared glass capsule is hidden, so it
+/// still reads as a button at rest. Decoration only: the native Button or Menu keeps all interaction and accessibility.
+extension View {
+    func toolbarBezel() -> some View {
+        background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlColor).opacity(0.3))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+                .padding(.vertical, 2)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 struct AppView: View {
     enum FolderSelection {
         case openOrAdd
@@ -105,129 +120,42 @@ struct AppView: View {
         }
         .toolbar {
             if model.screen == .library {
-                ToolbarItemGroup {
-                    Button("Choose Folder…", systemImage: "folder.badge.plus") {
-                        chooseFolder()
-                    }
-                    .help("Open a Git Repository, or add the selected folder to the Library")
-                    .accessibilityHint(
-                        "Open a Git Repository, or add the selected folder to the Library"
-                    )
+                if #available(macOS 26, *) {
+                    ToolbarItem { chooseFolderButton.toolbarBezel() }
+                        .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem { chooseFolderButton }
                 }
             } else {
-                ToolbarItem {
-                    Button("Merge / Rebase…", systemImage: "arrow.triangle.merge") {
-                        model.showIntegrateBranch()
+                if #available(macOS 26, *) {
+                    // Hide the always-visible glass capsule so the buttons sit flat on the toolbar like the
+                    // dense content below, and give each a matte bezel so it still reads as a button at rest.
+                    // The fixed spacer keeps Merge / Rebase apart from the sync group, and Refresh stays with
+                    // Pull and Push.
+                    ToolbarItem { integrateButton.toolbarBezel() }
+                        .sharedBackgroundVisibility(.hidden)
+                    ToolbarSpacer(.fixed)
+                    ToolbarItemGroup {
+                        fetchMenu.toolbarBezel()
+                        pullButton.toolbarBezel()
+                        pushButton.toolbarBezel()
+                        refreshButton.toolbarBezel()
                     }
-                    .labelStyle(.titleAndIcon)
-                    .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
-                    .help(model.canIntegrateBranch
-                          ? "Choose a local branch to merge, rebase, or fast-forward"
-                          : "Merge / Rebase needs a local branch with at least one commit")
-                }
-                ToolbarItemGroup {
-                    Menu {
-                        Button("Fetch & Prune", systemImage: "scissors") {
-                            model.fetchRepository(pruning: true)
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem { integrateButton }
+                    ToolbarItemGroup {
+                        fetchMenu
+
+                        // One-control groups in a zero-spacing HStack: each button keeps its own accessibility
+                        // name, and only the buttons' own padding sits around the dividers, as in Fetch's menu.
+                        HStack(spacing: 0) {
+                            ControlGroup { pullButton }
+                            ToolbarDivider(inset: 0)
+                            ControlGroup { pushButton }
+                            ToolbarDivider(inset: 0)
+                            ControlGroup { refreshButton }
                         }
-                        .accessibilityHint(
-                            "Fetch and remove stale local tracking references for the selected Remote"
-                        )
-
-                        Divider()
-
-                        Toggle(
-                            "Fetch Automatically",
-                            isOn: Binding(
-                                get: { model.automaticFetchEnabled },
-                                set: { model.setAutomaticFetchEnabled($0) }
-                            )
-                        )
-                        .accessibilityHint(
-                            "Fetch Git’s configured default Remote every five minutes while this Workspace and Gallae are active"
-                        )
-                    } label: {
-                        Label {
-                            Text("Fetch")
-                        } icon: {
-                            syncIcon("arrow.down.circle", running: model.remoteOperation?.isFetch == true)
-                        }
-                        .labelStyle(.titleAndIcon)
-                    } primaryAction: {
-                        model.fetchRepository()
-                    }
-                    .disabled(model.repository == nil || model.isLoading || model.isSyncing)
-                    .help("Fetch Remote changes (⌥⌘F) · the menu has Fetch & Prune and automatic Fetch")
-                    .accessibilityHint(
-                        "Fetch Remote changes, or open the menu to also prune stale tracking references"
-                    )
-
-                    // One-control groups in a zero-spacing HStack: each button keeps its own accessibility
-                    // name, and only the buttons' own padding sits around the dividers, as in Fetch's menu.
-                    HStack(spacing: 0) {
-                    ControlGroup {
-                    Button {
-                        model.pullRepository()
-                    } label: {
-                        Label {
-                            Text(model.pullTitle)
-                        } icon: {
-                            syncIcon("arrow.down.to.line", running: model.remoteOperation == .pull)
-                        }
-                        .labelStyle(.titleAndIcon)
-                    }
-                    .disabled(!model.canPullRepository || model.isLoading || model.isSyncing)
-                    .accessibilityLabel(model.pullTitle)
-                    .help(
-                        model.canPullRepository
-                            ? "Fast-forward the current branch from its tracking branch"
-                            : "Pull needs a local branch with a tracking branch"
-                    )
-                    .accessibilityHint(
-                        "Fast-forward the current branch from its tracking branch without merging or rebasing"
-                    )
-
-                    }
-
-                    ToolbarDivider(inset: 0)
-
-                    ControlGroup {
-                    Button {
-                        model.pushRepository()
-                    } label: {
-                        Label {
-                            Text(model.pushTitle)
-                        } icon: {
-                            syncIcon("arrow.up.to.line", running: model.remoteOperation?.isPush == true)
-                        }
-                        .labelStyle(.titleAndIcon)
-                    }
-                    .disabled(!model.canPushRepository || model.isLoading || model.isSyncing)
-                    .accessibilityLabel(model.pushTitle)
-                    .help(
-                        model.repository?.upstream == nil
-                            ? "Review the remote and branch name before publishing"
-                            : "Push the current branch to its configured destination"
-                    )
-                    .accessibilityHint(
-                        model.repository?.upstream == nil
-                            ? "Choose a remote and confirm the branch name before publishing without force"
-                            : "Push the current branch to its configured destination without force"
-                    )
-
-                    }
-
-                    ToolbarDivider(inset: 0)
-
-                    ControlGroup {
-                    Button("Refresh Repository", systemImage: "arrow.clockwise") {
-                        Task { await model.refreshRepository() }
-                    }
-                    .disabled(model.repository == nil || model.isLoading)
-                    .accessibilityLabel("Refresh Repository")
-                    .help("Refresh · read the current Repository state again (⌘R)")
-                    .accessibilityHint("Read the current Repository state again")
-                    }
                     }
                 }
             }
@@ -405,6 +333,127 @@ struct AppView: View {
             .background(.regularMaterial, in: .capsule)
             .padding(12)
             .accessibilityElement(children: .contain)
+    }
+
+    // MARK: - Toolbar actions
+
+    // One definition per action, shared by the macOS 26 and earlier toolbar layouts.
+
+    private var chooseFolderButton: some View {
+        Button("Choose Folder…", systemImage: "folder.badge.plus") {
+            chooseFolder()
+        }
+        .help("Open a Git Repository, or add the selected folder to the Library")
+        .accessibilityHint(
+            "Open a Git Repository, or add the selected folder to the Library"
+        )
+    }
+
+    private var integrateButton: some View {
+        Button("Merge / Rebase…", systemImage: "arrow.triangle.merge") {
+            model.showIntegrateBranch()
+        }
+        .labelStyle(.titleAndIcon)
+        .disabled(!model.canIntegrateBranch || model.isLoading || model.isSyncing)
+        .help(model.canIntegrateBranch
+              ? "Choose a local branch to merge, rebase, or fast-forward"
+              : "Merge / Rebase needs a local branch with at least one commit")
+    }
+
+    private var fetchMenu: some View {
+        Menu {
+            Button("Fetch & Prune", systemImage: "scissors") {
+                model.fetchRepository(pruning: true)
+            }
+            .accessibilityHint(
+                "Fetch and remove stale local tracking references for the selected Remote"
+            )
+
+            Divider()
+
+            Toggle(
+                "Fetch Automatically",
+                isOn: Binding(
+                    get: { model.automaticFetchEnabled },
+                    set: { model.setAutomaticFetchEnabled($0) }
+                )
+            )
+            .accessibilityHint(
+                "Fetch Git’s configured default Remote every five minutes while this Workspace and Gallae are active"
+            )
+        } label: {
+            Label {
+                Text("Fetch")
+            } icon: {
+                syncIcon("arrow.down.circle", running: model.remoteOperation?.isFetch == true)
+            }
+            .labelStyle(.titleAndIcon)
+        } primaryAction: {
+            model.fetchRepository()
+        }
+        .disabled(model.repository == nil || model.isLoading || model.isSyncing)
+        .help("Fetch Remote changes (⌥⌘F) · the menu has Fetch & Prune and automatic Fetch")
+        .accessibilityHint(
+            "Fetch Remote changes, or open the menu to also prune stale tracking references"
+        )
+    }
+
+    private var pullButton: some View {
+        Button {
+            model.pullRepository()
+        } label: {
+            Label {
+                Text(model.pullTitle)
+            } icon: {
+                syncIcon("arrow.down.to.line", running: model.remoteOperation == .pull)
+            }
+            .labelStyle(.titleAndIcon)
+        }
+        .disabled(!model.canPullRepository || model.isLoading || model.isSyncing)
+        .accessibilityLabel(model.pullTitle)
+        .help(
+            model.canPullRepository
+                ? "Fast-forward the current branch from its tracking branch"
+                : "Pull needs a local branch with a tracking branch"
+        )
+        .accessibilityHint(
+            "Fast-forward the current branch from its tracking branch without merging or rebasing"
+        )
+    }
+
+    private var pushButton: some View {
+        Button {
+            model.pushRepository()
+        } label: {
+            Label {
+                Text(model.pushTitle)
+            } icon: {
+                syncIcon("arrow.up.to.line", running: model.remoteOperation?.isPush == true)
+            }
+            .labelStyle(.titleAndIcon)
+        }
+        .disabled(!model.canPushRepository || model.isLoading || model.isSyncing)
+        .accessibilityLabel(model.pushTitle)
+        .help(
+            model.repository?.upstream == nil
+                ? "Review the remote and branch name before publishing"
+                : "Push the current branch to its configured destination"
+        )
+        .accessibilityHint(
+            model.repository?.upstream == nil
+                ? "Choose a remote and confirm the branch name before publishing without force"
+                : "Push the current branch to its configured destination without force"
+        )
+    }
+
+    private var refreshButton: some View {
+        Button("Refresh Repository", systemImage: "arrow.clockwise") {
+            Task { await model.refreshRepository() }
+        }
+        .disabled(model.repository == nil || model.isLoading)
+        .accessibilityLabel("Refresh Repository")
+        .help("Refresh · read the current Repository state again (⌘R)")
+        .accessibilityHint("Read the current Repository state again")
     }
 
     @ViewBuilder
