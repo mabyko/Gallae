@@ -130,33 +130,35 @@ struct AppView: View {
                 if #available(macOS 26, *) {
                     // Hide the always-visible glass capsule so the buttons sit flat on the toolbar like the
                     // dense content below, and give each a matte bezel so it still reads as a button at rest.
-                    // The fixed spacer keeps Merge / Rebase apart from the sync group, and Refresh stays with
-                    // Pull and Push.
-                    ToolbarItem { integrateButton.toolbarBezel() }
-                        .sharedBackgroundVisibility(.hidden)
-                    ToolbarSpacer(.fixed)
+                    // Order: sync group, Merge / Rebase, then Refresh alone at the end; the fixed spacers keep
+                    // the three apart.
                     ToolbarItemGroup {
                         fetchMenu.toolbarBezel()
                         pullButton.toolbarBezel()
                         pushButton.toolbarBezel()
-                        refreshButton.toolbarBezel()
                     }
                     .sharedBackgroundVisibility(.hidden)
+                    ToolbarSpacer(.fixed)
+                    ToolbarItem { integrateButton.toolbarBezel() }
+                        .sharedBackgroundVisibility(.hidden)
+                    ToolbarSpacer(.fixed)
+                    ToolbarItem { refreshButton.toolbarBezel() }
+                        .sharedBackgroundVisibility(.hidden)
                 } else {
-                    ToolbarItem { integrateButton }
+                    // Same order as macOS 26: sync group, Merge / Rebase, then Refresh alone at the end.
                     ToolbarItemGroup {
                         fetchMenu
 
                         // One-control groups in a zero-spacing HStack: each button keeps its own accessibility
-                        // name, and only the buttons' own padding sits around the dividers, as in Fetch's menu.
+                        // name, and only the buttons' own padding sits around the divider, as in Fetch's menu.
                         HStack(spacing: 0) {
                             ControlGroup { pullButton }
                             ToolbarDivider(inset: 0)
                             ControlGroup { pushButton }
-                            ToolbarDivider(inset: 0)
-                            ControlGroup { refreshButton }
                         }
                     }
+                    ToolbarItem { integrateButton }
+                    ToolbarItem { refreshButton }
                 }
             }
         }
