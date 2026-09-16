@@ -8,7 +8,7 @@ struct NavigatorToggleCommand {
 }
 
 extension FocusedValues {
-    @Entry var openRepository: (() -> Void)?
+    @Entry var openRepository: AppView.OpenRepositoryAction?
     @Entry var appModel: AppModel?
     /// nil inside the Workspace while a branch, remote, or tag is selected in the Navigator.
     @Entry var workspaceSection: Binding<RepositoryWorkspaceSection?>?

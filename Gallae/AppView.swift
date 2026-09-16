@@ -21,10 +21,22 @@ struct ToolbarDivider: View {
 }
 
 struct AppView: View {
-    private enum FolderSelection {
+    enum FolderSelection {
         case openOrAdd
         case repository(replacing: URL?)
         case libraryFolder(replacing: URL?)
+    }
+
+    /// Open Repository… (⌘O) as a focused scene value. Carries the importer's bindings instead of a
+    /// closure so SwiftUI can compare it and the menu doesn't invalidate on every body pass.
+    struct OpenRepositoryAction {
+        let selection: Binding<FolderSelection?>
+        let isPresented: Binding<Bool>
+
+        func callAsFunction() {
+            selection.wrappedValue = .repository(replacing: nil)
+            isPresented.wrappedValue = true
+        }
     }
 
     @Environment(\.scenePhase) private var scenePhase
@@ -312,9 +324,10 @@ struct AppView: View {
             Task { await model.openRepository(at: url) }
         }
         .focusedSceneValue(\.appModel, model)
-        .focusedSceneValue(\.openRepository) {
-            chooseRepository()
-        }
+        .focusedSceneValue(
+            \.openRepository,
+            OpenRepositoryAction(selection: $folderSelection, isPresented: $isFolderImporterPresented)
+        )
         // Not `scenePhase`: on macOS it stays `.active` while another app is frontmost, so a window coming
         // back to the front never fires it and the working tree stays as it was when the window opened.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in

@@ -742,6 +742,7 @@ private struct RepositoryHistoryRow: View {
             } label: {
                 Label(reference.name == currentBranchName ? "\(reference.name) · HEAD" : reference.name,
                       systemImage: reference.name == currentBranchName ? "checkmark" : "arrow.triangle.branch")
+                    .labelStyle(.titleAndIcon)
             }
             .help(reference.name == currentBranchName ? "Current branch · \(reference.name)" : reference.name)
         }
@@ -753,6 +754,7 @@ private struct RepositoryHistoryRow: View {
                 remoteBranchActions(reference)
             } label: {
                 Label(reference.name, systemImage: "globe")
+                    .labelStyle(.titleAndIcon)
             }
             .help("Remote branch · \(reference.name)")
         }

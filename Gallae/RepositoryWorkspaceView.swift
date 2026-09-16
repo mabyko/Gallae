@@ -423,6 +423,7 @@ struct RepositoryWorkspaceView: View {
                             }
                         }
                     }
+                    .labelStyle(.titleAndIcon)
                 }
             }
         }
@@ -589,6 +590,7 @@ struct RepositoryWorkspaceView: View {
                         scopeMenuItem(.branch(branch))
                     }
                 }
+                .labelStyle(.titleAndIcon)
             }
         }
         if case .loaded(let remotes) = model.remotesState, !remotes.isEmpty {
@@ -610,6 +612,7 @@ struct RepositoryWorkspaceView: View {
     private func destinationMenuItem(_ section: RepositoryWorkspaceSection, count: Int) -> some View {
         Toggle(isOn: Binding(get: { workspaceSection == section }, set: { if $0 { show(section) } })) {
             Label(count > 0 ? "\(section.title) (\(count))" : section.title, systemImage: section.systemImage)
+                .labelStyle(.titleAndIcon)
         }
     }
 
@@ -628,6 +631,7 @@ struct RepositoryWorkspaceView: View {
             )
         ) {
             Label(target.name, systemImage: target.systemImage)
+                .labelStyle(.titleAndIcon)
         }
     }
 

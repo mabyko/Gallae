@@ -842,7 +842,7 @@ struct RepositoryTrackingBranchesMenu: View {
     let switchToBranch: (String) -> Void
     let openWorktree: (URL) -> Void
 
-    static func supplementaryBranches(
+    nonisolated static func supplementaryBranches(
         _ branches: [String], references: [RepositoryHistory.Reference]
     ) -> [String] {
         branches.filter { branch in
