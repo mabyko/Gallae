@@ -411,14 +411,14 @@ struct RepositoryWorkspaceView: View {
         if case .loaded(let branches) = model.localBranchesState {
             let otherBranches = branches.filter { $0 != currentBranch }
             if !otherBranches.isEmpty {
-                Section("Switch To") {
+                Section("Branches") {
                     ForEach(otherBranches, id: \.self) { branch in
                         if let worktreeURL = model.localBranchWorktreeURLs[branch] {
-                            Button(branch, systemImage: "folder") {
+                            Button("\(model.openWorktreeTitle(at: worktreeURL)): \(branch)", systemImage: "folder") {
                                 Task { _ = await model.openWorktree(at: worktreeURL) }
                             }
                         } else {
-                            Button(branch, systemImage: "arrow.triangle.branch") {
+                            Button("Switch to \(branch)", systemImage: "arrow.triangle.branch") {
                                 Task { _ = await model.switchBranch(to: branch) }
                             }
                         }

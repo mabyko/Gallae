@@ -311,6 +311,7 @@ struct RepositoryInspector: Sendable {
     func createBranch(
         named branch: String,
         at startPoint: String? = nil,
+        tracking: Bool = false,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
         try Task.checkCancellation()
@@ -318,6 +319,7 @@ struct RepositoryInspector: Sendable {
             try Self.createBranchSynchronously(
                 named: branch,
                 at: startPoint,
+                tracking: tracking,
                 in: repository
             )
         }.value
@@ -1327,6 +1329,7 @@ struct RepositoryInspector: Sendable {
     private static func createBranchSynchronously(
         named branch: String,
         at startPoint: String?,
+        tracking: Bool,
         in repository: RepositorySummary
     ) throws -> RepositorySummary {
         guard !branch.isEmpty else {
@@ -1337,6 +1340,7 @@ struct RepositoryInspector: Sendable {
             "-C", repository.rootURL.path,
             "switch", "--quiet", "--create=\(branch)"
         ]
+        if tracking { arguments.append("--track=direct") }
         if let startPoint { arguments.append(startPoint) }
         let result = try runGit(arguments)
         guard result.status == 0 else {

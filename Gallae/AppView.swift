@@ -264,6 +264,8 @@ struct AppView: View {
                 AddRemoteSheet(model: model, repositoryRootURL: repositoryRootURL, publishAfterAdding: publishAfterAdding)
             case .createTag(let repositoryRootURL):
                 CreateTagSheet(model: model, repositoryRootURL: repositoryRootURL)
+            case .checkOutRemoteBranch(let repositoryRootURL, let branch):
+                CreateBranchSheet(model: model, trackingRemoteBranch: branch, repositoryRootURL: repositoryRootURL)
             case .createStash(let repositoryRootURL):
                 CreateStashSheet(model: model, repositoryRootURL: repositoryRootURL)
             case .integrateBranch(let repositoryRootURL, let branch):
@@ -560,7 +562,7 @@ private struct RepositoryIntegrateBranchSheet: View {
             titleVisibility: .visible,
             presenting: conflictedWorktree
         ) { worktree in
-            Button("Open Worktree") {
+            Button(model.openWorktreeTitle(at: worktree.rootURL)) {
                 Task { if await model.openRepository(at: worktree.rootURL) { dismiss() } }
             }
             Button("Abort Merge", role: .destructive) {

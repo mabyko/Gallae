@@ -18,6 +18,7 @@ struct RepositoryNavigatorView: View {
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
     @State private var pendingRemoteBranchDeletion: String?
+    @State private var pendingTrackingBranchSelection: String?
     @State private var pendingTrackingReferenceRemoval: String?
     @State private var pendingRemoteRemoval: String?
     @State private var removalErrorMessage: String?
@@ -26,6 +27,31 @@ struct RepositoryNavigatorView: View {
     @State private var worktreeCreation: WorktreeCreationRequest?
 
     var body: some View {
+        navigatorContent
+        .confirmationDialog(
+            "Choose Tracking Branch",
+            isPresented: Binding(
+                get: { pendingTrackingBranchSelection != nil },
+                set: { if !$0 { pendingTrackingBranchSelection = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingTrackingBranchSelection
+        ) { remoteBranch in
+            RepositoryTrackingBranchesMenu(
+                branches: model.localBranchesByUpstream[remoteBranch] ?? [],
+                currentBranch: currentBranch,
+                worktreeURLs: model.localBranchWorktreeURLs,
+                openWorktreeTitle: model.openWorktreeTitle(at:),
+                isBusy: model.isLoading || model.isSyncing,
+                switchToBranch: { performPrimaryAction(for: $0) },
+                openWorktree: { url in Task { await model.openWorktree(at: url) } }
+            )
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: model.repository?.rootURL) { pendingTrackingBranchSelection = nil }
+    }
+
+    private var navigatorContent: some View {
         VStack(spacing: 0) {
             // Two lists, two selections: the screen list keeps its selection while a scope is chosen, and macOS
             // draws the list without keyboard focus in gray. The screen list is four rows, so it is a plain stack
@@ -411,8 +437,8 @@ struct RepositoryNavigatorView: View {
             }
             if !isCurrent {
                 Divider()
-                if worktreeURL != nil {
-                    Button("Open Worktree", systemImage: "folder") {
+                if let worktreeURL {
+                    Button(model.openWorktreeTitle(at: worktreeURL), systemImage: "folder") {
                         performPrimaryAction(for: branch)
                     }
                     .disabled(model.isLoading || model.isSyncing)
@@ -494,15 +520,37 @@ struct RepositoryNavigatorView: View {
                     .tag(RepositoryNavigatorSelection.reference(.remoteBranch(branch)))
                     .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remoteBranch(branch), isFocused: isReferenceListFocused, sidebar: true)
                     .accessibilityLabel("Remote branch \(branch)")
+                    .accessibilityHint("Double-click to check out or open a tracking local branch")
+                    .accessibilityAction {
+                        performRemoteBranchPrimaryAction(for: branch)
+                    }
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            scopeSelection.wrappedValue = .remoteBranch(branch)
+                        }
+                    )
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            performRemoteBranchPrimaryAction(for: branch)
+                        }
+                    )
                     .contextMenu {
-                        RepositoryTrackingBranchesMenu(
-                            branches: model.localBranchesByUpstream[branch] ?? [],
-                            currentBranch: currentBranch,
-                            worktreeURLs: model.localBranchWorktreeURLs,
-                            isBusy: model.isLoading || model.isSyncing,
-                            switchToBranch: { branch in Task { await model.switchBranch(to: branch) } },
-                            openWorktree: { url in Task { await model.openWorktree(at: url) } }
-                        )
+                        if (model.localBranchesByUpstream[branch] ?? []).isEmpty {
+                            Button("Check Out…", systemImage: "arrow.triangle.branch") {
+                                model.showRemoteBranchCheckout(branch)
+                            }
+                            .disabled(model.isLoading || model.isSyncing)
+                        } else {
+                            RepositoryTrackingBranchesMenu(
+                                branches: model.localBranchesByUpstream[branch] ?? [],
+                                currentBranch: currentBranch,
+                                worktreeURLs: model.localBranchWorktreeURLs,
+                                openWorktreeTitle: model.openWorktreeTitle(at:),
+                                isBusy: model.isLoading || model.isSyncing,
+                                switchToBranch: { branch in Task { await model.switchBranch(to: branch) } },
+                                openWorktree: { url in Task { await model.openWorktree(at: url) } }
+                            )
+                        }
                         Divider()
                         Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
                             pendingRemoteBranchDeletion = branch
@@ -606,6 +654,18 @@ struct RepositoryNavigatorView: View {
         }
     }
 
+    private func performRemoteBranchPrimaryAction(for branch: String) {
+        guard !model.isLoading, !model.isSyncing else { return }
+        let trackingBranches = model.localBranchesByUpstream[branch] ?? []
+        if trackingBranches.isEmpty {
+            model.showRemoteBranchCheckout(branch)
+        } else if trackingBranches.count == 1, let localBranch = trackingBranches.first {
+            performPrimaryAction(for: localBranch)
+        } else {
+            pendingTrackingBranchSelection = branch
+        }
+    }
+
     /// Switch in this folder, or navigate to an existing Worktree, retaining the History scope in either case.
     private func performPrimaryAction(for branch: String) {
         guard branch != currentBranch, !model.isLoading, !model.isSyncing else { return }
@@ -630,23 +690,35 @@ struct CreateBranchSheet: View {
     /// Git start point for the branch; nil starts at HEAD. `startPointLabel` is what the sheet calls it.
     var startPoint: String? = nil
     var startPointLabel: String? = nil
+    var trackingRemoteBranch: String? = nil
+    var repositoryRootURL: URL? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @FocusState private var isNameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("New Branch")
+            Text(trackingRemoteBranch.map { "Check Out \($0)" } ?? "New Branch")
                 .gallaeFont(.headline)
-            Text("Creates a local branch from \(startPointLabel ?? model.repository?.head.label ?? "the current HEAD") and switches to it.")
+            Text("Creates a local branch from \(trackingRemoteBranch ?? startPointLabel ?? model.repository?.head.label ?? "the current HEAD") and switches to it.")
                 .gallaeFont(.caption1)
                 .foregroundStyle(.secondary)
 
-            TextField("Branch Name", text: $name)
+            TextField(trackingRemoteBranch == nil ? "Branch Name" : "Local Branch Name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .focused($isNameFocused)
                 .onSubmit(createBranch)
                 .accessibilityLabel("New Branch Name")
+
+            if let trackingRemoteBranch {
+                LabeledContent("Tracks", value: trackingRemoteBranch)
+                    .gallaeFont(.caption1)
+            }
+            if nameAlreadyExists {
+                Text("A local branch named “\(trimmedName)” already exists. Choose another name.")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.red)
+            }
 
             HStack {
                 Spacer()
@@ -655,7 +727,7 @@ struct CreateBranchSheet: View {
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Create") {
+                Button(trackingRemoteBranch == nil ? "Create" : "Create & Switch") {
                     createBranch()
                 }
                 .buttonStyle(.borderedProminent)
@@ -667,18 +739,34 @@ struct CreateBranchSheet: View {
         .padding(20)
         .frame(width: 360)
         .onAppear {
+            if let trackingRemoteBranch, name.isEmpty {
+                name = model.suggestedLocalBranchName(tracking: trackingRemoteBranch)
+            }
             isNameFocused = true
         }
+        .task { await model.loadLocalBranches() }
     }
 
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private var nameAlreadyExists: Bool { model.localBranches.contains(trimmedName) }
+
     private var canCreate: Bool {
-        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !model.isLoading
+        !trimmedName.isEmpty && !nameAlreadyExists && !model.isLoading && !model.isSyncing
+            && (repositoryRootURL.map { root in
+                model.repository.map { sameFileLocation($0.rootURL, root) } == true
+            } ?? true)
     }
 
     private func createBranch() {
         guard canCreate else { return }
         Task {
-            if await model.createBranch(named: name, at: startPoint) {
+            if await model.createBranch(
+                named: name,
+                at: trackingRemoteBranch.map { "refs/remotes/\($0)" } ?? startPoint,
+                tracking: trackingRemoteBranch != nil,
+                in: repositoryRootURL
+            ) {
                 dismiss()
             }
         }
@@ -749,6 +837,7 @@ struct RepositoryTrackingBranchesMenu: View {
     let branches: [String]
     let currentBranch: String?
     let worktreeURLs: [String: URL]
+    let openWorktreeTitle: (URL) -> String
     let isBusy: Bool
     let switchToBranch: (String) -> Void
     let openWorktree: (URL) -> Void
@@ -770,7 +859,7 @@ struct RepositoryTrackingBranchesMenu: View {
                     Button("\(branch) · Current Branch", systemImage: "checkmark") {}
                         .disabled(true)
                 } else if let url = worktreeURLs[branch] {
-                    Button("Open Worktree for \(branch) (\(url.lastPathComponent))", systemImage: "folder") {
+                    Button("\(openWorktreeTitle(url)) for \(branch) (\(url.lastPathComponent))", systemImage: "folder") {
                         openWorktree(url)
                     }
                     .help(url.path)

@@ -5,6 +5,127 @@ import XCTest
 
 final class RepositoryInspectorTests: XCTestCase {
     @MainActor
+    func testSameCommitBranchesUseActualWorktreeOccupancy() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let primary = fixture.appending(path: "primary")
+        let linked = fixture.appending(path: "linked")
+        try initializeRepository(at: primary)
+        try write("base\n", to: "file.txt", in: primary)
+        try commitAll(in: primary, message: "Same commit")
+        try runGit(["-C", primary.path, "branch", "free"])
+        try runGit(["-C", primary.path, "worktree", "add", "-b", "twin", linked.path])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        model.setAutomaticFetchEnabled(false)
+        let opened = await model.openRepository(at: linked)
+        XCTAssertTrue(opened)
+        await model.loadNavigator()
+        XCTAssertEqual(Set(model.worktrees.map(\.headID)).count, 1)
+        XCTAssertEqual(model.repository?.head, .branch("twin"))
+        XCTAssertEqual(model.localBranchWorktreeURLs["main"], primary.standardizedFileURL)
+        XCTAssertEqual(model.localBranchWorktreeURLs["twin"], linked.standardizedFileURL)
+        XCTAssertNil(model.localBranchWorktreeURLs["free"])
+        XCTAssertEqual(model.openWorktreeTitle(at: primary), "Open Primary Worktree")
+        XCTAssertEqual(model.openWorktreeTitle(at: linked), "Open Worktree")
+
+        // Sharing a commit does not allow a branch already checked out in another folder to switch here.
+        let occupied = await model.switchBranch(to: "main")
+        XCTAssertFalse(occupied)
+        XCTAssertEqual(model.repository?.head, .branch("twin"))
+        let moved = await model.openWorktree(at: primary)
+        XCTAssertTrue(moved)
+        await model.loadNavigator()
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        let switched = await model.switchBranch(to: "free")
+        XCTAssertTrue(switched)
+
+        // Once the primary folder leaves main, main can be checked out in the linked folder instead.
+        let returned = await model.openWorktree(at: linked)
+        XCTAssertTrue(returned)
+        await model.loadNavigator()
+        XCTAssertNil(model.localBranchWorktreeURLs["main"])
+        let mainSwitched = await model.switchBranch(to: "main")
+        XCTAssertTrue(mainSwitched)
+        await model.loadNavigator()
+        XCTAssertEqual(model.repository?.head, .branch("main"))
+        XCTAssertEqual(model.localBranchWorktreeURLs["main"], linked.standardizedFileURL)
+        XCTAssertEqual(model.localBranchWorktreeURLs["free"], primary.standardizedFileURL)
+        XCTAssertEqual(model.openWorktreeTitle(at: primary), "Open Primary Worktree")
+        XCTAssertEqual(model.openWorktreeTitle(at: linked), "Open Worktree")
+    }
+
+    @MainActor
+    func testRemoteCheckoutCreatesNamedTrackingBranchesAndRejectsUnsafeSwitches() async throws {
+        let fixture = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let remote = fixture.appending(path: "remote")
+        let local = fixture.appending(path: "local")
+        try initializeRepository(at: remote)
+        try write("base\n", to: "file.txt", in: remote)
+        try commitAll(in: remote, message: "Base")
+        try runGit(["-C", remote.path, "branch", "feature/topic"])
+        try runGit(["clone", "--quiet", remote.path, local.path])
+        try runGit(["-C", local.path, "switch", "--quiet", "-c", "work"])
+        try runGit(["-C", local.path, "branch", "-D", "main"])
+        try runGit(["-C", local.path, "config", "branch.autoSetupMerge", "false"])
+        try runGit(["-C", local.path, "remote", "add", "team/upstream", remote.path])
+        try runGit(["-C", local.path, "fetch", "--quiet", "team/upstream"])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        model.setAutomaticFetchEnabled(false)
+        let opened = await model.openRepository(at: local)
+        XCTAssertTrue(opened)
+        await model.loadNavigator()
+        let root = try XCTUnwrap(model.repository?.rootURL)
+        XCTAssertFalse(model.localBranches.contains("main"))
+        XCTAssertNil(model.localBranchesByUpstream["origin/main"])
+        XCTAssertEqual(model.suggestedLocalBranchName(tracking: "origin/main"), "main")
+        XCTAssertEqual(model.suggestedLocalBranchName(tracking: "origin/feature/topic"), "feature/topic")
+        XCTAssertEqual(model.suggestedLocalBranchName(tracking: "team/upstream/feature/topic"), "feature/topic")
+        model.showRemoteBranchCheckout("origin/main")
+        XCTAssertEqual(model.repositorySheetRequest, .checkOutRemoteBranch(repositoryRootURL: root, branch: "origin/main"))
+
+        // Both the default and a custom name explicitly track the remote, even with auto setup disabled.
+        for name in ["main", "review/main"] {
+            let created = await model.createBranch(named: name, at: "refs/remotes/origin/main", tracking: true, in: root)
+            XCTAssertTrue(created)
+            XCTAssertEqual(model.repository?.head, .branch(name))
+            XCTAssertEqual(model.repository?.upstream?.name, "origin/main")
+            XCTAssertTrue(model.localBranchesByUpstream["origin/main"]?.contains(name) == true)
+            XCTAssertEqual(try gitOutput(["-C", local.path, "config", "branch.\(name).remote"]).trimmingCharacters(in: .whitespacesAndNewlines), "origin")
+            XCTAssertEqual(try gitOutput(["-C", local.path, "config", "branch.\(name).merge"]).trimmingCharacters(in: .whitespacesAndNewlines), "refs/heads/main")
+            _ = await model.switchBranch(to: "work")
+        }
+        let originalMain = try gitOutput(["-C", local.path, "rev-parse", "refs/heads/main"])
+        let duplicate = await model.createBranch(named: "main", at: "refs/remotes/origin/main", tracking: true, in: root)
+        XCTAssertFalse(duplicate)
+        XCTAssertEqual(model.repository?.head, .branch("work"))
+        XCTAssertEqual(try gitOutput(["-C", local.path, "rev-parse", "refs/heads/main"]), originalMain)
+        let invalid = await model.createBranch(named: "bad..name", at: "refs/remotes/origin/main", tracking: true, in: root)
+        XCTAssertFalse(invalid)
+        let missing = await model.createBranch(named: "missing", at: "refs/remotes/origin/missing", tracking: true, in: root)
+        XCTAssertFalse(missing)
+        let wrongRepository = await model.createBranch(named: "wrong-repository", at: "refs/remotes/origin/main", tracking: true, in: remote)
+        XCTAssertFalse(wrongRepository)
+
+        try write("remote change\n", to: "file.txt", in: remote)
+        try commitAll(in: remote, message: "Remote change")
+        try runGit(["-C", local.path, "fetch", "--quiet", "origin"])
+        try write("local uncommitted change\n", to: "file.txt", in: local)
+        let dirty = await model.createBranch(named: "blocked", at: "refs/remotes/origin/main", tracking: true, in: root)
+        XCTAssertFalse(dirty)
+        XCTAssertEqual(model.repository?.head, .branch("work"))
+        XCTAssertEqual(try String(contentsOf: local.appending(path: "file.txt"), encoding: .utf8), "local uncommitted change\n")
+        let branches = try await RepositoryInspector().localBranches(in: XCTUnwrap(model.repository))
+        XCTAssertEqual(Set(branches), ["main", "review/main", "work"])
+    }
+
+    @MainActor
     func testPullCountAndTrackingMenuAcrossWorktreeNavigation() async throws {
         let fixture = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: fixture) }

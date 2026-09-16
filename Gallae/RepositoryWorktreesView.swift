@@ -97,7 +97,7 @@ struct RepositoryWorktreesSection: View {
         .simultaneousGesture(TapGesture().onEnded { select(worktree) })
         .simultaneousGesture(TapGesture(count: 2).onEnded { open(worktree) })
         .contextMenu {
-            Button("Open Worktree", systemImage: "folder") { open(worktree) }
+            Button(model.openWorktreeTitle(at: worktree.url), systemImage: "folder") { open(worktree) }
                 .disabled(current || !worktree.isAvailable || model.isLoading || model.isSyncing)
             RepositoryFolderMenu(folderURL: worktree.isAvailable ? worktree.url : nil) {
                 model.present($0, title: "Couldn’t Open Folder")
@@ -111,7 +111,7 @@ struct RepositoryWorktreesSection: View {
                 .help(worktree.removalRestriction(currentURL: model.repository?.rootURL ?? worktree.url) ?? "")
             }
         }
-        .accessibilityAction(named: "Open Worktree") { open(worktree) }
+        .accessibilityAction(named: model.openWorktreeTitle(at: worktree.url)) { open(worktree) }
     }
 
     private func open(_ worktree: RepositoryWorktree) {

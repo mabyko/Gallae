@@ -183,8 +183,6 @@ struct RepositoryHistoryView: View {
             switch model.historySelection {
             case .tag(let tag):
                 CreateBranchSheet(model: model, startPoint: "refs/tags/\(tag)", startPointLabel: tag)
-            case .remoteBranch(let name):
-                CreateBranchSheet(model: model, startPoint: "refs/remotes/\(name)", startPointLabel: name)
             default:
                 EmptyView()
             }
@@ -261,7 +259,7 @@ struct RepositoryHistoryView: View {
         }
     }
 
-    /// Switch and Open Worktree for a branch; New Branch… for a tag or remote branch; Fetch, Fetch &
+    /// Switch and Open Worktree for a branch; New Branch… for a tag; Check Out… for a remote branch; Fetch, Fetch &
     /// Prune, and Edit… for a remote. Removing a remote lives in its context menu and the Edit… sheet.
     @ViewBuilder
     private var headerTools: some View {
@@ -269,7 +267,7 @@ struct RepositoryHistoryView: View {
         switch model.historySelection {
         case .branch(let name) where name != currentBranchName:
             if let worktreeURL = model.localBranchWorktreeURLs[name] {
-                Button("Open Worktree") {
+                Button(model.openWorktreeTitle(at: worktreeURL)) {
                     Task { _ = await model.openWorktree(at: worktreeURL) }
                 }
                 .help("Open the Worktree at \(worktreeURL.path)")
@@ -281,12 +279,16 @@ struct RepositoryHistoryView: View {
                 .help("Switch the working tree to \(name)")
                 .disabled(isBusy)
             }
-        case .tag(let name), .remoteBranch(let name):
+        case .tag(let name):
             Button("New Branch…") {
                 isCreatingBranch = true
             }
             .help("Create a local branch at \(name) and switch to it")
             .disabled(isBusy || model.repository == nil)
+        case .remoteBranch(let name):
+            Button("Check Out…") { model.showRemoteBranchCheckout(name) }
+                .help("Create a local branch tracking \(name) and switch to it")
+                .disabled(isBusy || model.repository == nil)
         case .remote(let name):
             Button("Fetch") {
                 fetch(from: name, pruning: false)
@@ -427,6 +429,7 @@ struct RepositoryHistoryView: View {
                                 canFastForwardCurrentHere: commit.id != history.headCommitID
                                     && descendantCommitIDs.contains(commit.id),
                                 worktreeURLs: model.localBranchWorktreeURLs,
+                                openWorktreeTitle: model.openWorktreeTitle(at:),
                                 localBranchesByUpstream: model.localBranchesByUpstream,
                                 isBusy: model.isLoading || model.isSyncing,
                                 folderURL: { model.folderURL(for: $0) },
@@ -464,6 +467,7 @@ struct RepositoryHistoryView: View {
                                 requestBranchDeletion: { branch in
                                     pendingBranchDeletion = branch
                                 },
+                                requestRemoteBranchCheckout: { model.showRemoteBranchCheckout($0) },
                                 requestRemoteBranchDeletion: { trackingRef in
                                     pendingRemoteBranchDeletion = trackingRef
                                 },
@@ -561,6 +565,7 @@ private struct RepositoryHistoryRow: View {
     var canFastForwardBranchRefs = false
     var canFastForwardCurrentHere = false
     var worktreeURLs: [String: URL] = [:]
+    var openWorktreeTitle: (URL) -> String = { _ in "Open Worktree" }
     var localBranchesByUpstream: [String: [String]] = [:]
     var isBusy = false
     var folderURL: (String) -> URL? = { _ in nil }
@@ -572,6 +577,7 @@ private struct RepositoryHistoryRow: View {
     var openWorktree: (URL) -> Void = { _ in }
     var requestWorktreeRemoval: (String, URL) -> Void = { _, _ in }
     var requestBranchDeletion: (String) -> Void = { _ in }
+    var requestRemoteBranchCheckout: (String) -> Void = { _ in }
     var requestRemoteBranchDeletion: (String) -> Void = { _ in }
     var requestTrackingReferenceRemoval: (String) -> Void = { _ in }
 
@@ -649,7 +655,7 @@ private struct RepositoryHistoryRow: View {
         .accessibilityActions {
             ForEach(localBranchReferences.filter { $0.name != currentBranchName }) { reference in
                 if let worktreeURL = worktreeURLs[reference.name] {
-                    Button("Open Worktree for \(reference.name)") {
+                    Button("\(openWorktreeTitle(worktreeURL)) for \(reference.name)") {
                         openWorktree(worktreeURL)
                     }
                     if canRemoveWorktree(worktreeURL) {
@@ -677,6 +683,12 @@ private struct RepositoryHistoryRow: View {
                 }
             }
             ForEach(remoteBranchReferences) { reference in
+                if (localBranchesByUpstream[reference.name] ?? []).isEmpty {
+                    Button("Check Out \(reference.name)…") {
+                        requestRemoteBranchCheckout(reference.name)
+                    }
+                    .disabled(isBusy)
+                }
                 trackingBranchesMenu(reference)
                 Button("Delete \(reference.name) on Remote") {
                     requestRemoteBranchDeletion(reference.name)
@@ -755,8 +767,8 @@ private struct RepositoryHistoryRow: View {
                 if let worktreeURL = worktreeURLs[reference.name] {
                     Button(
                         worktreeURL.lastPathComponent == reference.name
-                            ? "Open Worktree"
-                            : "Open Worktree (\(worktreeURL.lastPathComponent))",
+                            ? openWorktreeTitle(worktreeURL)
+                            : "\(openWorktreeTitle(worktreeURL)) (\(worktreeURL.lastPathComponent))",
                         systemImage: "folder"
                     ) {
                         openWorktree(worktreeURL)
@@ -805,6 +817,7 @@ private struct RepositoryHistoryRow: View {
                 branches: branches,
                 currentBranch: currentBranchName,
                 worktreeURLs: worktreeURLs,
+                openWorktreeTitle: openWorktreeTitle,
                 isBusy: isBusy,
                 switchToBranch: switchToBranch,
                 openWorktree: openWorktree
@@ -815,6 +828,13 @@ private struct RepositoryHistoryRow: View {
 
     private func remoteBranchActions(_ reference: RepositoryHistory.Reference) -> some View {
         Group {
+            if (localBranchesByUpstream[reference.name] ?? []).isEmpty {
+                Button("Check Out…", systemImage: "arrow.triangle.branch") {
+                    requestRemoteBranchCheckout(reference.name)
+                }
+                .disabled(isBusy)
+                Divider()
+            }
             trackingBranchesMenu(reference)
             Button("Delete on Remote…", systemImage: "trash", role: .destructive) {
                 requestRemoteBranchDeletion(reference.name)

@@ -130,6 +130,7 @@ extension RepositoryRemoteOperation {
 enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
     case addRemote(repositoryRootURL: URL, publishAfterAdding: Bool = true)
     case createTag(repositoryRootURL: URL)
+    case checkOutRemoteBranch(repositoryRootURL: URL, branch: String)
     case createStash(repositoryRootURL: URL)
     case integrateBranch(repositoryRootURL: URL, branch: String?)
     case chooseFetchRemote(repositoryRootURL: URL, remotes: [String], pruning: Bool)
@@ -141,6 +142,8 @@ enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
             "add:\(repositoryRootURL.path):\(publishAfterAdding)"
         case .createTag(let repositoryRootURL):
             "create-tag:\(repositoryRootURL.path)"
+        case .checkOutRemoteBranch(let repositoryRootURL, let branch):
+            "check-out:\(repositoryRootURL.path):\(branch)"
         case .createStash(let repositoryRootURL):
             "create-stash:\(repositoryRootURL.path)"
         case .integrateBranch(let repositoryRootURL, _):
@@ -1135,6 +1138,11 @@ final class AppModel {
         }
     }
 
+    func openWorktreeTitle(at url: URL) -> String {
+        worktrees.contains { $0.isPrimary && sameFileLocation($0.url, url) }
+            ? "Open Primary Worktree" : "Open Worktree"
+    }
+
     func folderURL(for branch: String) -> URL? {
         guard let repository else { return nil }
         if repository.head == .branch(branch) { return repository.rootURL }
@@ -1226,9 +1234,29 @@ final class AppModel {
         }
     }
 
-    func createBranch(named name: String, at startPoint: String? = nil) async -> Bool {
+    func showRemoteBranchCheckout(_ branch: String) {
+        guard !isLoading, !isSyncing, let repository else { return }
+        repositorySheetRequest = .checkOutRemoteBranch(repositoryRootURL: repository.rootURL, branch: branch)
+    }
+
+    func suggestedLocalBranchName(tracking branch: String) -> String {
+        // Remote names can contain slashes; prefer the actual remote over splitting at the first slash.
+        let remote = remoteBranchesByRemote.keys
+            .filter { branch.hasPrefix("\($0)/") }
+            .max { $0.count < $1.count }
+        if let remote { return String(branch.dropFirst(remote.count + 1)) }
+        return branch.split(separator: "/", maxSplits: 1).dropFirst().joined(separator: "/")
+    }
+
+    func createBranch(
+        named name: String,
+        at startPoint: String? = nil,
+        tracking: Bool = false,
+        in rootURL: URL? = nil
+    ) async -> Bool {
         let branch = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isLoading, !branch.isEmpty, let repository else {
+        guard !isLoading, !isSyncing, !branch.isEmpty, let repository,
+              rootURL.map({ sameFileLocation(repository.rootURL, $0) }) ?? true else {
             return false
         }
 
@@ -1239,12 +1267,14 @@ final class AppModel {
             let updatedRepository = try await inspector.createBranch(
                 named: branch,
                 at: startPoint,
+                tracking: tracking,
                 in: repository
             )
             guard generation == inspectionGeneration else { return false }
             selectedHistoryCommitID = nil
             apply(updatedRepository, showWorkspaceOnSuccess: false)
             library.invalidateActivity(at: updatedRepository.rootURL)
+            await loadLocalBranches()
             return true
         } catch {
             guard generation == inspectionGeneration else { return false }
