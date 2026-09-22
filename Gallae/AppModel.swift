@@ -18,6 +18,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
     case pull
     case publish
     case push
+    case pushTo(RepositoryPushPreview)
     case addRemoteAndPublish(name: String, url: String, branch: String? = nil)
     case publishTo(remote: String, branch: String? = nil)
     case deleteRemoteBranch(trackingRef: String)
@@ -40,6 +41,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .pull: "Pulling Remote Changes…"
         case .publish: "Publishing Local Branch…"
         case .push: "Pushing Local Commits…"
+        case .pushTo(let preview): "Pushing to \(preview.destination)…"
         case .addRemoteAndPublish: "Adding Remote and Publishing…"
         case .publishTo(let remote, _): "Publishing to \(remote)…"
         case .deleteRemoteBranch(let trackingRef): "Deleting \(trackingRef) on Remote…"
@@ -52,7 +54,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .automaticFetch: "Cancel Automatic Fetch"
         case .pull: "Cancel Pull"
         case .publish: "Cancel Publish"
-        case .push: "Cancel Push"
+        case .push, .pushTo: "Cancel Push"
         case .addRemoteAndPublish: "Cancel Publish"
         case .publishTo: "Cancel Publish"
         case .deleteRemoteBranch: "Cancel Remote Deletion"
@@ -64,7 +66,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .fetch: "Couldn’t Fetch"
         case .automaticFetch: "Couldn’t Fetch Automatically"
         case .pull: "Couldn’t Pull"
-        case .push: "Couldn’t Push"
+        case .push, .pushTo: "Couldn’t Push"
         case .publish, .addRemoteAndPublish, .publishTo: "Couldn’t Publish"
         case .deleteRemoteBranch: "Couldn’t Delete Remote Branch"
         }
@@ -76,7 +78,7 @@ enum RepositoryRemoteOperation: Equatable, Sendable {
         case .automaticFetch: "Stop this automatic Fetch and keep the Repository open"
         case .pull: "Stop the current Pull and keep the Repository open"
         case .publish: "Stop publishing the current branch and keep the Repository open"
-        case .push: "Stop the current Push and keep the Repository open"
+        case .push, .pushTo: "Stop the current Push and keep the Repository open"
         case .addRemoteAndPublish:
             "Stop publishing the current branch and keep the Repository open"
         case .publishTo:
@@ -108,6 +110,7 @@ extension RepositoryRemoteOperation {
         case .publish: "Published"
         case .addRemoteAndPublish(let name, _, _): "Published to \(name)"
         case .publishTo(let remote, _): "Published to \(remote)"
+        case .pushTo(let preview): "Pushed to \(preview.destination)"
         case .deleteRemoteBranch(let trackingRef): "Deleted \(trackingRef) on remote"
         }
     }
@@ -121,7 +124,7 @@ extension RepositoryRemoteOperation {
 
     var isPush: Bool {
         switch self {
-        case .push, .publish, .addRemoteAndPublish, .publishTo: true
+        case .push, .pushTo, .publish, .addRemoteAndPublish, .publishTo: true
         default: false
         }
     }
@@ -135,6 +138,7 @@ enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
     case integrateBranch(repositoryRootURL: URL, branch: String?)
     case chooseFetchRemote(repositoryRootURL: URL, remotes: [String], pruning: Bool)
     case choosePublishRemote(repositoryRootURL: URL, remotes: [String])
+    case pushTo(repositoryRootURL: URL, remotes: [String], source: String)
 
     var id: String {
         switch self {
@@ -152,6 +156,8 @@ enum RepositorySheetRequest: Identifiable, Equatable, Sendable {
             "choose-fetch:\(repositoryRootURL.path):\(pruning)"
         case .choosePublishRemote(let repositoryRootURL, _):
             "choose-publish:\(repositoryRootURL.path)"
+        case .pushTo(let repositoryRootURL, _, let source):
+            "push-to:\(repositoryRootURL.path):\(source)"
         }
     }
 }
@@ -397,6 +403,8 @@ final class AppModel {
         guard case .branch = repository.head else { return false }
         return true
     }
+
+    var canPushToRepository: Bool { repository.map { !$0.isUnborn } ?? false }
 
     var canPullRepository: Bool {
         guard let repository, repository.upstream != nil else { return false }
@@ -735,6 +743,36 @@ final class AppModel {
         startRemoteOperation(repository?.upstream == nil ? .publish : .push)
     }
 
+    func showPushTo(source: String? = nil) {
+        guard canPushToRepository, !isLoading, !isSyncing, let repository else { return }
+        let source = source ?? {
+            if case .branch(let branch) = repository.head { return "refs/heads/\(branch)" }
+            return "HEAD"
+        }()
+        Task {
+            do {
+                let remotes = try await inspector.remotes(in: repository)
+                guard self.repository?.rootURL == repository.rootURL, !isLoading, !isSyncing else { return }
+                guard !remotes.isEmpty else { throw RepositoryPushError.noRemote }
+                remotesState = .loaded(remotes)
+                repositorySheetRequest = .pushTo(
+                    repositoryRootURL: repository.rootURL, remotes: remotes.map(\.name), source: source
+                )
+            } catch { present(error, title: "Couldn’t Prepare Push") }
+        }
+    }
+
+    func previewPush(source: String, to remote: String, branch: String, in rootURL: URL) async throws -> RepositoryPushPreview {
+        guard let repository, sameFileLocation(repository.rootURL, rootURL) else { throw CancellationError() }
+        return try await inspector.previewPush(source: source, to: remote, branch: branch, in: repository)
+    }
+
+    func push(_ preview: RepositoryPushPreview) {
+        guard let repository, sameFileLocation(repository.rootURL, preview.rootURL), preview.canPush else { return }
+        guard startRemoteOperation(.pushTo(preview)) != nil else { return }
+        repositorySheetRequest = nil
+    }
+
     func showIntegrateBranch(preselecting branch: String? = nil) {
         guard canIntegrateBranch, let repository else { return }
         repositorySheetRequest = .integrateBranch(repositoryRootURL: repository.rootURL, branch: branch)
@@ -1059,6 +1097,7 @@ final class AppModel {
                     )
                 case .pull: try await inspector.pull(in: repository)
                 case .publish, .push: try await inspector.push(in: repository)
+                case .pushTo(let preview): try await inspector.push(preview, in: repository)
                 case .addRemoteAndPublish(let name, let url, let branch):
                     try await inspector.addRemoteAndPublish(
                         named: name,

@@ -181,6 +181,27 @@ enum RepositoryCommitSignature: Equatable, Sendable {
     }
 }
 
+struct RepositoryPushPreview: Equatable, Sendable {
+    struct Commit: Equatable, Identifiable, Sendable {
+        let id: String
+        let subject: String
+    }
+
+    let rootURL: URL
+    let source: String
+    let commitID: String
+    let remote: String
+    let branch: String
+    let pushURL: String
+    let destinationCommitID: String?
+    let ahead: Int
+    let behind: Int
+    let commits: [Commit]
+
+    var destination: String { "\(remote)/\(branch)" }
+    var canPush: Bool { ahead > 0 && behind == 0 }
+}
+
 struct RepositoryHistory: Equatable, Sendable {
     struct GraphEdge: Equatable, Sendable {
         let fromLane: Int

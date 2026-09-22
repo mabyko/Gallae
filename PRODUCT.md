@@ -35,7 +35,7 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 | 저장소 탐색 | Repository 직접 열기, Library Folder 등록·탐색, 최근 항목, 마지막 Workspace 복원 |
 | 변경 검토·커밋 | 텍스트 diff, 파일·hunk·줄 단위 Stage/Unstage, Commit·Amend, 확인을 거치는 Discard |
 | History | 커밋 목록·그래프·검색, branch·tag 범위 조회, 파일별 patch, Revert·Reset |
-| 동기화 | Fetch·Fetch & Prune·자동 Fetch, fast-forward Pull, Push·Publish, Remote 관리 |
+| 동기화 | Fetch·Fetch & Prune·자동 Fetch, fast-forward Pull, Push·Push to…·Publish, Remote 관리 |
 | 복구 | Stash 조회·생성·적용·삭제, Reflog 조회·복구 branch 생성 |
 | 분기 작업 | branch 생성·전환, Merge·Rebase, 충돌 버전 비교·해결, Continue·Abort, Interactive Rebase 계획·실행 |
 

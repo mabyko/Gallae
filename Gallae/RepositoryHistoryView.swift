@@ -435,6 +435,7 @@ struct RepositoryHistoryView: View {
                                 openWorktreeTitle: model.openWorktreeTitle(at:),
                                 localBranchesByUpstream: model.localBranchesByUpstream,
                                 isBusy: model.isLoading || model.isSyncing,
+                                pushTo: { model.showPushTo(source: commit.id) },
                                 folderURL: { model.folderURL(for: $0) },
                                 folderOpeningFailed: { model.present($0, title: "Couldn’t Open Folder") },
                                 canRemoveWorktree: { model.canRemoveWorktree(at: $0) },
@@ -571,6 +572,7 @@ private struct RepositoryHistoryRow: View {
     var openWorktreeTitle: (URL) -> String = { _ in "Open Worktree" }
     var localBranchesByUpstream: [String: [String]] = [:]
     var isBusy = false
+    var pushTo: () -> Void = {}
     var folderURL: (String) -> URL? = { _ in nil }
     var folderOpeningFailed: (Error) -> Void = { _ in }
     var canRemoveWorktree: (URL) -> Bool = { _ in false }
@@ -649,6 +651,9 @@ private struct RepositoryHistoryRow: View {
         }
         .contentShape(.rect)
         .contextMenu {
+            Button("Push to…", systemImage: "arrow.up.to.line", action: pushTo)
+                .disabled(isBusy)
+            Divider()
             branchMenus
         }
         .accessibilityElement(children: .combine)
@@ -656,6 +661,7 @@ private struct RepositoryHistoryRow: View {
             "\(isHEAD ? "HEAD, " : "")\(commit.subject), \(commit.authorName), \(commit.committedAt.formatted(date: .abbreviated, time: .shortened)), revision \(commit.id.prefix(8))\(topologyAccessibilityLabel)\(referenceAccessibilityLabel)"
         )
         .accessibilityActions {
+            Button("Push this commit to…", action: pushTo).disabled(isBusy)
             ForEach(localBranchReferences.filter { $0.name != currentBranchName }) { reference in
                 if let worktreeURL = worktreeURLs[reference.name] {
                     Button("\(openWorktreeTitle(worktreeURL)) for \(reference.name)") {

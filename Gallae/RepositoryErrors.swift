@@ -493,8 +493,8 @@ enum RepositoryPushError: LocalizedError, Equatable {
             "Enter a valid branch name, such as feature/login. Don’t use spaces or “..”."
         case .failed(let message):
             message.isEmpty
-                ? "Git couldn’t push the current branch to its configured destination."
-                : "Git couldn’t push the current branch to its configured destination.\n\n\(message)"
+                ? "Git couldn’t complete the push."
+                : "Git couldn’t complete the push.\n\n\(message)"
         }
     }
 }

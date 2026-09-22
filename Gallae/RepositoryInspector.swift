@@ -606,6 +606,159 @@ struct RepositoryInspector: Sendable {
         }.value
     }
 
+    func previewPush(
+        source: String, to remote: String, branch: String, in repository: RepositorySummary
+    ) async throws -> RepositoryPushPreview {
+        let cancellation = GitProcessCancellation()
+        return try await withTaskCancellationHandler {
+            do {
+                let preview = try await Task.detached(priority: .userInitiated) {
+                    try Self.previewPushSynchronously(
+                        source: source, remote: remote, branch: branch, in: repository, cancellation: cancellation
+                    )
+                }.value
+                try Task.checkCancellation()
+                return preview
+            } catch {
+                try Task.checkCancellation()
+                throw error
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    func push(_ preview: RepositoryPushPreview, in repository: RepositorySummary) async throws -> RepositorySummary {
+        let cancellation = GitProcessCancellation()
+        return try await withTaskCancellationHandler {
+            do {
+                let updated = try await Task.detached(priority: .userInitiated) {
+                    guard preview.rootURL == repository.rootURL, preview.canPush else {
+                        throw RepositoryPushError.failed("Review a fast-forward update before pushing.")
+                    }
+                    let pushURL = try Self.pushDestinationURL(
+                        remote: preview.remote, in: repository, cancellation: cancellation
+                    )
+                    guard pushURL == preview.pushURL,
+                          try Self.pushDestinationCommit(
+                            url: pushURL, branch: preview.branch, in: repository, cancellation: cancellation
+                          ) == preview.destinationCommitID else {
+                        throw RepositoryPushError.failed("The destination changed after review. Review the push again.")
+                    }
+                    let result = try Self.runGit([
+                        "-C", repository.rootURL.path, "-c", "remote.\(preview.remote).mirror=false",
+                        "push", "--quiet", "--no-force", "--no-follow-tags", "--",
+                        preview.remote, "\(preview.commitID):refs/heads/\(preview.branch)"
+                    ], cancellation: cancellation)
+                    guard result.status == 0 else { throw RepositoryPushError.failed(result.standardError) }
+                    return try Self.inspectSynchronously(at: repository.rootURL)
+                }.value
+                try Task.checkCancellation()
+                return updated
+            } catch {
+                try Task.checkCancellation()
+                throw error
+            }
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
+
+    private static func pushDestinationURL(
+        remote: String, in repository: RepositorySummary, cancellation: GitProcessCancellation
+    ) throws -> String {
+        let remotes = try runGit(["-C", repository.rootURL.path, "remote"], cancellation: cancellation)
+        guard remotes.status == 0,
+              text(from: remotes.standardOutput).split(whereSeparator: \.isNewline).contains(Substring(remote)) else {
+            throw RepositoryPushError.failed("The selected remote is no longer configured.")
+        }
+        let result = try runGit([
+            "-C", repository.rootURL.path, "remote", "get-url", "--push", "--all", "--", remote
+        ], cancellation: cancellation)
+        guard result.status == 0 else { throw RepositoryPushError.failed(result.standardError) }
+        let urls = text(from: result.standardOutput).split(whereSeparator: \.isNewline)
+        guard urls.count == 1, let url = urls.first else {
+            throw RepositoryPushError.failed("Push to… requires a remote with one Push URL so its destination can be reviewed.")
+        }
+        return String(url)
+    }
+
+    private static func pushDestinationCommit(
+        url: String, branch: String, in repository: RepositorySummary, cancellation: GitProcessCancellation
+    ) throws -> String? {
+        let reference = "refs/heads/\(branch)"
+        let result = try runGit([
+            "-C", repository.rootURL.path, "ls-remote", "--refs", "--", url, reference
+        ], cancellation: cancellation)
+        guard result.status == 0 else { throw RepositoryPushError.failed(result.standardError) }
+        let rows = text(from: result.standardOutput).split(whereSeparator: \.isNewline)
+        if rows.isEmpty { return nil }
+        let fields = rows[0].split(separator: "\t")
+        guard rows.count == 1, fields.count == 2, fields[1] == reference else {
+            throw RepositoryPushError.failed("Git returned an unexpected destination reference.")
+        }
+        return String(fields[0])
+    }
+
+    private static func previewPushSynchronously(
+        source: String, remote: String, branch: String,
+        in repository: RepositorySummary, cancellation: GitProcessCancellation
+    ) throws -> RepositoryPushPreview {
+        let branch = try validatedPublishBranchName(branch)
+        let source = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty, !source.contains("\0") else {
+            throw RepositoryPushError.failed("Choose a source branch, tag, or commit.")
+        }
+        let pushURL = try pushDestinationURL(remote: remote, in: repository, cancellation: cancellation)
+        // Refresh remote source refs before freezing the reviewed commit.
+        let fetched = try runGit([
+            "-C", repository.rootURL.path, "fetch", "--quiet", "--no-tags", "--no-prune",
+            "--no-write-fetch-head", "--", remote
+        ], cancellation: cancellation)
+        guard fetched.status == 0 else { throw RepositoryPushError.failed(fetched.standardError) }
+        let resolved = try runGit([
+            "-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(source)^{commit}"
+        ], cancellation: cancellation)
+        guard resolved.status == 0 else { throw RepositoryPushError.failed("Choose an existing source commit.\n\n\(resolved.standardError)") }
+        let commitID = line(from: resolved.standardOutput)
+        let destinationID = try pushDestinationCommit(
+            url: pushURL, branch: branch, in: repository, cancellation: cancellation
+        )
+        if let destinationID {
+            // Push and Fetch URLs may differ. Download the actual destination's objects without moving refs.
+            let fetchedDestination = try runGit([
+                "-C", repository.rootURL.path, "fetch", "--quiet", "--no-tags", "--no-write-fetch-head",
+                "--refmap=", "--", pushURL, destinationID
+            ], cancellation: cancellation)
+            guard fetchedDestination.status == 0 else { throw RepositoryPushError.failed(fetchedDestination.standardError) }
+        }
+        let counts = try runGit([
+            "-C", repository.rootURL.path, "rev-list", "--count", "--left-right",
+            destinationID.map { "\($0)...\(commitID)" } ?? commitID, "--"
+        ], cancellation: cancellation)
+        let fields = text(from: counts.standardOutput).split(whereSeparator: \.isWhitespace)
+        guard counts.status == 0, fields.count == 2,
+              let behind = Int(fields[0]), let ahead = Int(fields[1]) else {
+            throw RepositoryPushError.failed("Couldn’t compare the source and destination commits.")
+        }
+        let log = try runGit([
+            "-C", repository.rootURL.path, "log", "-100", "--no-show-signature", "--format=%H%x00%s", "-z",
+            destinationID.map { "\($0)..\(commitID)" } ?? commitID, "--"
+        ], cancellation: cancellation)
+        guard log.status == 0 else { throw RepositoryPushError.failed(log.standardError) }
+        var messages = log.standardOutput.split(separator: 0, omittingEmptySubsequences: false)
+        if messages.last?.isEmpty == true { messages.removeLast() }
+        guard messages.count.isMultiple(of: 2) else {
+            throw RepositoryPushError.failed("Couldn’t read the outgoing commits.")
+        }
+        let commits = stride(from: 0, to: messages.count, by: 2).map {
+            RepositoryPushPreview.Commit(id: text(from: Data(messages[$0])), subject: text(from: Data(messages[$0 + 1])))
+        }
+        return .init(rootURL: repository.rootURL, source: source, commitID: commitID,
+                     remote: remote, branch: branch, pushURL: pushURL, destinationCommitID: destinationID,
+                     ahead: ahead, behind: behind, commits: commits)
+    }
+
     func createTag(named name: String, at target: String, in repository: RepositorySummary) async throws -> RepositorySummary {
         try Task.checkCancellation()
         return try await Task.detached(priority: .userInitiated) {

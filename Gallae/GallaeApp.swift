@@ -101,6 +101,9 @@ private struct GallaeCommands: Commands {
             .keyboardShortcut(.upArrow, modifiers: [.command, .option])
             .disabled(!canSync || model?.canPushRepository != true)
 
+            Button("Push to…") { model?.showPushTo() }
+                .disabled(!canSync || model?.canPushToRepository != true)
+
             Divider()
 
             Button("Merge / Rebase…") {

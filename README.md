@@ -22,7 +22,7 @@ History layout and diff layout can be chosen independently. Click either screens
 | **Review and commit** | Unified and split diffs, file/hunk/line staging and unstaging, commits, amend, and discard with confirmation |
 | **History** | Graph across branches and tags, search by message/author/SHA/ref, per-file patches, author and signature details, revert, and reset |
 | **Worktrees** | Browse primary and linked working folders, create worktrees with new or existing branches, open and remove worktrees |
-| **Sync** | Fetch, fetch and prune, automatic fetch, fast-forward pull, push, publish, and remote management |
+| **Sync** | Fetch, fetch and prune, automatic fetch, fast-forward pull, push, Push to…, publish, and remote management |
 | **Merge and recovery** | Merge, rebase, conflict comparison, external merge tools, continue/abort, interactive rebase, stashes, and reflog |
 | **External apps** | Open working folders in Finder, terminals, or editors; copy paths; install the `gallae [path]` command |
 
@@ -62,6 +62,8 @@ VS Code and Sublime Merge use the command-line tools included in their installed
 External merging is available for regular files present on both sides. Direct VS Code and Sublime Merge integrations support UTF-8 text. Resolve deletion conflicts, symbolic links, and submodules using **Use Ours / Use Theirs** or a terminal. **Mark Resolved does not check for remaining conflict markers, so review the saved file first.** Once all conflicts are resolved, choose **Continue** to finish or **Abort…** to stop the merge.
 
 Pull is **fast-forward only**. If histories have diverged, it stops without automatically merging.
+
+**Push to…** in the Push menu or a History commit’s context menu sends a reviewed commit to a chosen remote branch while preserving tracking. Review fetches the selected remote and compares against the actual Push URL. It shows outgoing commits and requires a fast-forward update, or explicitly creates a new branch. For example, keep `main` tracking `origin/main` and update `release` only when ready. Ordinary Push keeps its existing destination.
 
 ## Git configuration
 
