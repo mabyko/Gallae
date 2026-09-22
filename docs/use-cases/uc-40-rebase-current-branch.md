@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 선택한 target branch의 고유 commit을 다른 local branch 위에 다시 적용해 선형 history로 만든다. |
 | 시작 조건 | commit이 있는 local Repository가 열려 있고, 대상 Worktree에 진행 중인 작업이나 미커밋 변경이 없다. |
-| 진입점 | 상단 Fetch 왼쪽의 `Merge / Rebase…`, 문맥 바 branch 메뉴·Repository 메뉴의 `Merge / Rebase…` |
+| 진입점 | 상단 도구 막대의 `Merge`, 문맥 바 branch 메뉴의 `Merge / Rebase`, Repository 메뉴의 `Merge / Rebase…` |
 | 완료 상태 | target branch 이름은 유지되고 고유 commit이 선택한 branch tip 위의 새 commit으로 바뀌며 Workspace가 갱신된다. |
 
 ## 정상 흐름
 
-1. 사용자가 상단 도구 막대나 branch 메뉴에서 `Merge / Rebase…`를 누른다.
+1. 사용자가 상단 도구 막대의 `Merge`나 branch 메뉴의 `Merge / Rebase`를 눌러 설정창을 연다.
 2. 사용자가 `Update branch`에서 다시 쓸 target을, `Using branch`에서 기준 source를 고른다. 현재 checkout과 무관하게 두 local branch를 선택할 수 있다.
 3. 사용자가 commit ID가 바뀌고 Gallae가 force-push하지 않는다는 설명을 확인한다.
 4. 사용자가 `Method → Rebase`를 선택하고 `Rebase`를 누른다.

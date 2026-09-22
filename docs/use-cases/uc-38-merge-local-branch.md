@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 다른 local branch의 직선상 commit을 target branch에 안전하게 반영한다. |
 | 시작 조건 | commit이 있는 attached local branch의 Repository Workspace가 열려 있다. |
-| 진입점 | 상단 Fetch 왼쪽의 `Merge / Rebase…`, 문맥 바 branch 메뉴·Repository 메뉴의 `Merge / Rebase…` |
+| 진입점 | 상단 도구 막대의 `Merge`, 문맥 바 branch 메뉴의 `Merge / Rebase`, Repository 메뉴의 `Merge / Rebase…` |
 | 완료 상태 | target branch가 선택한 source branch commit으로 fast-forward되고 Workspace가 갱신된다. |
 
 ## 정상 흐름
 
-1. 사용자가 상단 도구 막대나 branch 메뉴에서 `Merge / Rebase…`를 누른다.
+1. 사용자가 상단 도구 막대의 `Merge`나 branch 메뉴의 `Merge / Rebase`를 눌러 설정창을 연다.
 2. Gallae가 `Update branch`에 현재 branch를 기본 선택하고, `Using branch`에 다른 local branch를 선택한다. 양쪽 모두 변경할 수 있으며 같은 branch를 동시에 선택하지 않는다.
    - 두 branch를 좌우로 배치하고 화살표가 `Update branch`를 가리킨다. 화살표 버튼을 누르면 branch 위치를 유지한 채 적용 방향과 역할을 뒤집고 비교 결과를 갱신한다.
 3. 사용자가 두 branch와 비교 결과를 확인하고 `Method → Fast-Forward`를 선택한 뒤 Fast-Forward 또는 Return으로 실행한다.

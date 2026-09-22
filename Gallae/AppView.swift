@@ -92,7 +92,7 @@ struct AppView: View {
                 .navigationTitle("Gallae for Git")
             }
         }
-        .frame(minWidth: 720, minHeight: 480)
+        .frame(minWidth: 780, minHeight: 480)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { width in
@@ -130,7 +130,7 @@ struct AppView: View {
                 if #available(macOS 26, *) {
                     // Hide the always-visible glass capsule so the buttons sit flat on the toolbar like the
                     // dense content below, and give each a matte bezel so it still reads as a button at rest.
-                    // Order: sync group, Merge / Rebase, then Refresh alone at the end; the fixed spacers keep
+                    // Order: sync group, Merge, then Refresh alone at the end; the fixed spacers keep
                     // the three apart.
                     ToolbarItemGroup {
                         fetchMenu.toolbarBezel()
@@ -145,7 +145,7 @@ struct AppView: View {
                     ToolbarItem { refreshButton.toolbarBezel() }
                         .sharedBackgroundVisibility(.hidden)
                 } else {
-                    // Same order as macOS 26: sync group, Merge / Rebase, then Refresh alone at the end.
+                    // Same order as macOS 26: sync group, Merge, then Refresh alone at the end.
                     ToolbarItemGroup {
                         fetchMenu
 
@@ -357,7 +357,7 @@ struct AppView: View {
     }
 
     private var integrateButton: some View {
-        Button("Merge / Rebase…", systemImage: "arrow.triangle.merge") {
+        Button("Merge", systemImage: "arrow.triangle.merge") {
             model.showIntegrateBranch()
         }
         .labelStyle(.titleAndIcon)

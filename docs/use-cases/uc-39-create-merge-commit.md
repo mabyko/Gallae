@@ -6,12 +6,12 @@
 | --- | --- |
 | 사용자 목표 | 서로 갈라진 다른 local branch의 commit을 target branch에 명시적인 merge commit으로 합친다. |
 | 시작 조건 | commit이 있는 local Repository가 열려 있고, 대상 Worktree에 진행 중인 작업이나 미커밋 변경이 없다. |
-| 진입점 | 상단 Fetch 왼쪽의 `Merge / Rebase…`, 문맥 바 branch 메뉴·Repository 메뉴의 `Merge / Rebase…` |
+| 진입점 | 상단 도구 막대의 `Merge`, 문맥 바 branch 메뉴의 `Merge / Rebase`, Repository 메뉴의 `Merge / Rebase…` |
 | 완료 상태 | target branch에 두 branch를 parent로 둔 merge commit이 생기고 Workspace가 갱신된다. |
 
 ## 정상 흐름
 
-1. 사용자가 상단 도구 막대나 branch 메뉴에서 `Merge / Rebase…`를 누른다.
+1. 사용자가 상단 도구 막대의 `Merge`나 branch 메뉴의 `Merge / Rebase`를 눌러 설정창을 연다.
 2. 사용자가 `Update branch`에서 변경할 target을, `Using branch`에서 가져올 source를 고른다. 현재 checkout과 무관하게 두 local branch를 선택할 수 있다.
 3. 사용자가 `Method → Merge Commit`을 선택하고 `Create Merge Commit`을 누른다.
 4. Gallae가 두 branch의 history가 실제로 갈라졌는지 다시 확인한다.
