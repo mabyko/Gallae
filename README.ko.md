@@ -91,15 +91,13 @@ GALLAE_BUNDLE_ID[config=Debug] = <your-debug-bundle-id>
 DEVELOPMENT_TEAM = <your-team-id>
 ```
 
-명령줄에서:
+앱 동작을 바꾼 뒤에는 로컬에서 테스트한다:
 
 ```sh
-xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS'
+xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO
 ```
 
 **요구 사항** — macOS 15 이상, Xcode, 시스템 Git(Xcode Command Line Tools).
-
-[CI workflow](.github/workflows/ci.yml)는 PR과 `main` push에서 빌드·테스트를 실행한다.
 
 ## 문서
 

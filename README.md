@@ -93,15 +93,13 @@ GALLAE_BUNDLE_ID[config=Debug] = <your-debug-bundle-id>
 DEVELOPMENT_TEAM = <your-team-id>
 ```
 
-Run tests from the command line:
+Run tests locally after changing app behavior:
 
 ```sh
-xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS'
+xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO
 ```
 
 **Requirements:** macOS 15 or later, Xcode, and system Git (Xcode Command Line Tools).
-
-The [CI workflow](.github/workflows/ci.yml) builds and runs tests for pull requests and pushes to `main`.
 
 ## Documentation
 
