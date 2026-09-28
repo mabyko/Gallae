@@ -260,6 +260,25 @@ final class AppModel {
     let library: RepositoryLibraryModel
     var screen: AppScreen = .library
     var repository: RepositorySummary?
+    private(set) var lastDiscardRecovery: RepositoryDiscardRecovery?
+    private var discardRecoveryGeneration = 0
+    var availableDiscardRecovery: RepositoryDiscardRecovery? {
+        guard let lastDiscardRecovery,
+              repository?.rootURL.resolvingSymlinksInPath() == lastDiscardRecovery.rootURL else { return nil }
+        return lastDiscardRecovery
+    }
+    /// Session-only drafts belong to working folders, including linked Worktrees.
+    private var commitDrafts: [URL: RepositoryCommitMessage] = [:]
+    var commitDraft: RepositoryCommitMessage {
+        get {
+            repository.flatMap { commitDrafts[$0.rootURL] }
+                ?? RepositoryCommitMessage(subject: "", body: "")
+        }
+        set {
+            guard let repository else { return }
+            commitDrafts[repository.rootURL] = newValue.subject.isEmpty && newValue.body.isEmpty ? nil : newValue
+        }
+    }
     var selectedChangeID: String? {
         didSet {
             guard selectedChangeID != oldValue else { return }
@@ -359,6 +378,7 @@ final class AppModel {
     var stashFilesState: RepositoryCommitFilesLoadState = .noSelection
     private(set) var stashPatchState: RepositoryCommitPatchLoadState = .noSelection
     var isLoading = false
+    private var pendingRepositoryRefresh: URL?
     var isWritingRepository = false
     var activeMergeTool: String?
     var remoteOperation: RepositoryRemoteOperation?
@@ -636,6 +656,7 @@ final class AppModel {
         repository.map {
             $0.changes.contains(where: { $0.staged != nil })
                 && !$0.changes.contains(where: \.isConflicted)
+                && $0.operation?.kind != .cherryPick
         } ?? false
     }
 
@@ -694,7 +715,12 @@ final class AppModel {
     }
 
     func refreshRepository() async {
-        guard !isLoading, let rootURL = repository?.rootURL else { return }
+        guard let rootURL = repository?.rootURL else { return }
+        guard !isLoading else {
+            pendingRepositoryRefresh = rootURL
+            return
+        }
+        pendingRepositoryRefresh = nil
         _ = await inspect(
             rootURL,
             rememberOnSuccess: false,
@@ -1839,6 +1865,33 @@ final class AppModel {
         }
     }
 
+    func cherryPickCommit(
+        _ commit: RepositoryHistory.Commit,
+        in confirmedRepository: RepositorySummary,
+        expectedHeadCommitID: String
+    ) async {
+        guard !isLoading, let repository,
+              sameFileLocation(repository.rootURL, confirmedRepository.rootURL),
+              selectedHistoryCommit?.id == commit.id else { return }
+        let generation = beginRepositoryActivity()
+        defer { finishRepositoryActivity(generation) }
+        library.invalidateActivity(at: repository.rootURL)
+        do {
+            let updated = try await inspector.cherryPickCommit(
+                commit, in: confirmedRepository, expectedHeadCommitID: expectedHeadCommitID
+            )
+            guard generation == inspectionGeneration else { return }
+            selectedHistoryCommitID = nil
+            apply(updated, showWorkspaceOnSuccess: false)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
+            if self.repository?.operation?.kind == .cherryPick { selectedHistoryCommitID = nil }
+            present(error, title: "Couldn’t Complete Cherry-pick")
+        }
+    }
+
     func revertCommit(
         _ commit: RepositoryHistory.Commit,
         mainlineParent: Int? = nil
@@ -1956,7 +2009,7 @@ final class AppModel {
         }
     }
 
-    func discardChange(id: RepositorySummary.Change.ID) async {
+    func discardChange(id: RepositorySummary.Change.ID, hunk: RepositoryDiff.Hunk? = nil) async {
         guard
             !isLoading,
             let repository,
@@ -1966,14 +2019,28 @@ final class AppModel {
             return
         }
 
-        await performRepositoryWrite(in: repository, failureTitle: "Couldn’t Discard Changes") {
-            try await inspector.discard(change, in: repository)
+        discardRecoveryGeneration += 1
+        let recoveryGeneration = discardRecoveryGeneration
+        await performRepositoryWrite(in: repository, failureTitle: hunk == nil ? "Couldn’t Discard Changes" : "Couldn’t Discard Lines") {
+            let recovery = try await inspector.discardWithRecovery(change, hunk: hunk, in: repository)
+            if recoveryGeneration == discardRecoveryGeneration { lastDiscardRecovery = recovery }
+            return try await inspector.inspect(at: repository.rootURL)
         }
     }
 
     func discardSelectedChange(for request: RepositoryDiffRequest?) async {
         guard let request, request == diffRequest, let selectedChangeID else { return }
         await discardChange(id: selectedChangeID)
+    }
+
+    func restoreLastDiscard(_ recovery: RepositoryDiscardRecovery) async {
+        guard !isLoading, let repository,
+              availableDiscardRecovery?.id == recovery.id else { return }
+        await performRepositoryWrite(in: repository, failureTitle: "Couldn’t Restore Discard") {
+            try await inspector.restoreDiscard(recovery, in: repository)
+            if lastDiscardRecovery?.id == recovery.id { lastDiscardRecovery = nil }
+            return try await inspector.inspect(at: repository.rootURL)
+        }
     }
 
     func openSelectedConflictInMergeTool(for request: RepositoryDiffRequest?) async {
@@ -2061,7 +2128,11 @@ final class AppModel {
         await updateRepositoryOperation(in: repository, aborting: true)
     }
 
-    private func updateRepositoryOperation(in repository: RepositorySummary, aborting: Bool) async {
+    func skipRepositoryOperation(in repository: RepositorySummary) async {
+        await updateRepositoryOperation(in: repository, aborting: false, skipping: true)
+    }
+
+    private func updateRepositoryOperation(in repository: RepositorySummary, aborting: Bool, skipping: Bool = false) async {
         guard !isLoading else { return }
         guard
             let activeRepository = self.repository,
@@ -2078,7 +2149,9 @@ final class AppModel {
 
         do {
             let updatedRepository: RepositorySummary
-            if aborting {
+            if skipping {
+                updatedRepository = try await inspector.skipOperation(in: repository)
+            } else if aborting {
                 updatedRepository = try await inspector.abortOperation(in: repository)
             } else {
                 updatedRepository = try await inspector.continueOperation(in: repository)
@@ -2094,8 +2167,12 @@ final class AppModel {
             return
         } catch {
             guard await refreshAfterFailedActivity(in: repository, generation: generation) else { return }
-            let kindName = operation.kind == .merge ? "Merge" : "Rebase"
-            present(error, title: aborting ? "Couldn’t Abort \(kindName)" : "Couldn’t Continue \(kindName)")
+            let kindName = switch operation.kind {
+            case .merge: "Merge"
+            case .rebase: "Rebase"
+            case .cherryPick: "Cherry-pick"
+            }
+            present(error, title: "Couldn’t \(aborting ? "Abort" : skipping ? "Skip" : "Continue") \(kindName)")
         }
     }
 
@@ -2130,22 +2207,12 @@ final class AppModel {
     /// Rewrites the working tree file without one hunk or its chosen lines. The caller confirms first.
     func discardSelectedHunk(_ hunk: RepositoryDiff.Hunk, for request: RepositoryDiffRequest?) async {
         guard let request, request == diffRequest,
-              !isLoading, let repository, let change = selectedChange, hunk.scope == .unstaged else { return }
-
-        let generation = beginRepositoryActivity()
-        defer { finishRepositoryActivity(generation) }
-
-        do {
-            let updatedRepository = try await inspector.discard(hunk, for: change, in: repository)
-            guard generation == inspectionGeneration else { return }
-            apply(updatedRepository, showWorkspaceOnSuccess: false)
-        } catch {
-            guard generation == inspectionGeneration else { return }
-            present(error, title: "Couldn’t Discard Lines")
-        }
+              let change = selectedChange, hunk.scope == .unstaged else { return }
+        await discardChange(id: change.id, hunk: hunk)
     }
 
     func commit(subject: String, body: String, amend: Bool) async -> Bool {
+        let submittedDraft = RepositoryCommitMessage(subject: subject, body: body)
         let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -2168,6 +2235,10 @@ final class AppModel {
                 amend: amend,
                 in: repository
             )
+            // A late completion clears only its submitted draft, never newer typing or another Worktree.
+            if commitDrafts[repository.rootURL] == submittedDraft {
+                commitDrafts[repository.rootURL] = nil
+            }
             guard generation == inspectionGeneration else { return false }
             apply(updatedRepository, showWorkspaceOnSuccess: false)
             library.invalidateActivity(at: updatedRepository.rootURL)
@@ -2689,6 +2760,13 @@ final class AppModel {
         isLoading = false
         isWritingRepository = false
         activeMergeTool = nil
+        guard let rootURL = pendingRepositoryRefresh else { return }
+        pendingRepositoryRefresh = nil
+        Task { [weak self] in
+            guard let self,
+                  let repository, sameFileLocation(repository.rootURL, rootURL) else { return }
+            await refreshRepository()
+        }
     }
 
     private func refreshAfterFailedActivity(in repository: RepositorySummary, generation: Int) async -> Bool {

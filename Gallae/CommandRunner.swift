@@ -2,6 +2,24 @@ import Foundation
 
 enum CommandRunner {
     static let gitURL = URL(fileURLWithPath: "/usr/bin/git")
+    @TaskLocal private static var readCancellation: GitProcessCancellation?
+
+    /// Keep synchronous Git reads off the main actor and cancel every command in the read together.
+    static func read<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        let cancellation = GitProcessCancellation()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            let value = try await Task.detached(priority: .userInitiated) {
+                try $readCancellation.withValue(cancellation, operation: operation)
+            }.value
+            try Task.checkCancellation()
+            return value
+        } onCancel: {
+            cancellation.cancel()
+        }
+    }
 
     static func run(
         _ arguments: [String],
@@ -12,6 +30,10 @@ enum CommandRunner {
         cancellation: GitProcessCancellation? = nil,
         additionalEnvironment: [String: String] = [:]
     ) throws -> GitResult {
+        // Explicit mutation cancellation returns the exit status so callers can abort/restore Git state.
+        let cancelsRead = cancellation == nil && readCancellation != nil
+        let cancellation = cancellation ?? readCancellation
+        if cancelsRead, cancellation?.isCancelled == true { throw CancellationError() }
         let process = Process()
         let captureDirectory = FileManager.default.temporaryDirectory
             .appending(path: "Gallae-Git-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -63,6 +85,7 @@ enum CommandRunner {
         cancellation?.register(process)
         defer { cancellation?.clear(process) }
         process.waitUntilExit()
+        if cancelsRead, cancellation?.isCancelled == true { throw CancellationError() }
         try standardOutput.close()
         try standardError.close()
 

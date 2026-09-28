@@ -20,13 +20,19 @@ History 배치와 diff 방식은 각각 선택할 수 있다. 이미지를 누�
 | --- | --- |
 | **저장소 탐색** | Library에 폴더 등록, 하위 저장소 탐색, 최근 저장소, 마지막 Workspace 복원 |
 | **변경 검토·커밋** | Unified·Split diff, 파일·hunk·줄 단위 Stage/Unstage, Commit·Amend, 확인을 거치는 Discard |
-| **History** | 전체 branch·tag 그래프, 메시지·작성자·SHA·ref 검색, 파일별 patch, 작성자·서명 상태, Revert·Reset |
+| **History** | 전체 branch·tag 그래프, 불러온 커밋의 메시지·작성자·SHA·ref 검색, 파일별 patch, 작성자·서명 상태, Cherry-pick·Revert·Reset |
 | **Worktree** | 기본·연결된 작업 폴더 목록, 새 branch 또는 기존 branch로 Worktree 생성, 폴더 전환·제거 |
 | **동기화** | Fetch·Fetch & Prune·자동 Fetch, fast-forward Pull, Push·Publish, Remote 관리 |
 | **병합·복구** | Merge·Rebase, 충돌 버전 비교·외부 Merge Tool, Continue·Abort, Interactive Rebase, Stash·Reflog |
 | **외부 앱** | 작업 폴더를 Finder·터미널·에디터에서 열기, 경로 복사, `gallae [path]` 명령 설치 |
 
 History는 기본으로 커밋 목록을 위에, 변경 검토를 아래에 배치한다. **Expand Review**로 검토 영역을 넓히거나, Appearance에서 **Side by Side**로 바꿀 수 있다. branch를 한 번 선택하면 전체 그래프에서 해당 커밋으로 이동하고, 두 번 클릭하면 branch를 전환하거나 연결된 Worktree를 연다.
+
+검색 영역에는 불러온 커밋 수를 표시한다. 결과가 없어도 이전 커밋이 남아 있으면 **Load Older Commits**로 더 읽을 수 있다. 일반 커밋 초안은 앱 실행 중 Repository·Worktree 전환과 Library 왕복에도 유지하며, 성공한 제출 내용만 지운다.
+
+**Restore Last Discard**는 앱 실행 중 최근 한 번의 파일·hunk·선택 줄 Discard를 복구한다. 16 MiB 이하의 기존 일반 파일을 지원하며 이후 파일·Git 상태 변경을 확인하고 index는 유지한다. 삭제 파일·심볼릭 링크·큰 파일은 복구할 수 없다.
+
+커밋 상세의 **Cherry-Pick…**은 깨끗한 작업 폴더에서 일반 commit 하나를 확인 후 현재 local branch에 적용한다. 충돌은 Changes에서 해결한 뒤 Continue·Skip·Abort로 처리하며 Skip·Abort는 확인을 거친다. 적용할 변경이 없으면 Skip·Abort를 안내한다.
 
 Branches·Remotes·Tags의 **⋯** 메뉴는 목록이 비어 있어도 사용할 수 있다. **Add Remote…**는 Fetch·Publish 없이 원격 주소만 등록하고, **New Tag…**는 지정한 커밋(기본 `HEAD`)에 로컬 lightweight tag를 만든다. branch 전환이나 자동 push는 하지 않는다. **Worktrees** 제목 옆의 화살표는 항상 표시되며 목록을 접거나 펼칠 수 있다.
 

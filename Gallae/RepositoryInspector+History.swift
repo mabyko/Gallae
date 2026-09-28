@@ -2,12 +2,9 @@ import Foundation
 
 extension RepositoryInspector {
     func activity(in repository: RepositorySummary) async throws -> RepositoryActivity {
-        try Task.checkCancellation()
-        let activity = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.activitySynchronously(in: repository)
-        }.value
-        try Task.checkCancellation()
-        return activity
+        }
     }
 
     /// `reference` narrows the log to one fully qualified ref (`refs/heads/main`, `refs/tags/v1`); nil reads every ref.
@@ -17,56 +14,43 @@ extension RepositoryInspector {
         focusReference: String? = nil,
         limit: Int = maximumHistoryCommits
     ) async throws -> RepositoryHistory {
-        try Task.checkCancellation()
-        let history = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.historySynchronously(in: repository, reference: reference, focusReference: focusReference, limit: limit)
-        }.value
-        try Task.checkCancellation()
-        return history
+        }
     }
 
     func headCommitMessage(
         in repository: RepositorySummary
     ) async throws -> RepositoryCommitMessage {
-        try Task.checkCancellation()
-        let message = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.headCommitMessageSynchronously(in: repository)
-        }.value
-        try Task.checkCancellation()
-        return message
+        }
     }
 
     func commitSignature(
         for commit: RepositoryHistory.Commit,
         in repository: RepositorySummary
     ) async throws -> RepositoryCommitSignature {
-        try Task.checkCancellation()
-        let signature = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.commitSignatureSynchronously(for: commit, in: repository)
-        }.value
-        try Task.checkCancellation()
-        return signature
+        }
     }
 
     /// Tag names, newest tag first.
     func tags(in repository: RepositorySummary) async throws -> [String] {
-        try Task.checkCancellation()
-        let tags = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.referenceNamesSynchronously(
                 in: repository,
                 pattern: "refs/tags",
                 dropping: "refs/tags/",
                 sort: "-creatordate"
             )
-        }.value
-        try Task.checkCancellation()
-        return tags
+        }
     }
 
     /// Remote-tracking branch names of one remote, such as `origin/main`; the remote's `HEAD` alias is skipped.
     func remoteBranches(of remote: String, in repository: RepositorySummary) async throws -> [String] {
-        try Task.checkCancellation()
-        let branches = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.referenceNamesSynchronously(
                 in: repository,
                 pattern: "refs/remotes/\(remote)/",
@@ -74,9 +58,7 @@ extension RepositoryInspector {
                 sort: "refname"
             )
             .filter { $0 != "\(remote)/HEAD" }
-        }.value
-        try Task.checkCancellation()
-        return branches
+        }
     }
 
     private static func activitySynchronously(

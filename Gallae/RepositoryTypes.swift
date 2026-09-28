@@ -48,6 +48,7 @@ struct RepositorySummary: Equatable, Sendable {
         enum Kind: Equatable, Sendable {
             case merge
             case rebase
+            case cherryPick
         }
 
         struct Identity: Equatable, Sendable {
