@@ -4804,10 +4804,53 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(mergeRow.bottomLaneCount, 2)
         XCTAssertFalse(mergeRow.hasIncomingEdge)
         XCTAssertEqual(Set(mergeRow.parentEdges.map(\.toLane)), Set([0, 1]))
-        XCTAssertEqual(baseRow.topLaneCount, 1)
+        XCTAssertEqual(mergeRow.parentEdges.first?.colorIndex,
+                       history.graphRows[mainID]?.commitColorIndex)
+        XCTAssertEqual(mergeRow.parentEdges.last?.colorIndex,
+                       history.graphRows[featureID]?.commitColorIndex)
+        XCTAssertNotEqual(mergeRow.parentEdges.first?.colorIndex,
+                          mergeRow.parentEdges.last?.colorIndex)
+        XCTAssertEqual(Set(baseRow.incomingEdges.map(\.fromLane)), Set([0, 1]))
+        XCTAssertEqual(baseRow.commitLane, 0)
         XCTAssertEqual(baseRow.bottomLaneCount, 0)
         XCTAssertTrue(baseRow.hasIncomingEdge)
         XCTAssertEqual(mergeFiles.map(\.path), ["feature.txt"])
+    }
+
+    func testHistoryGraphKeepsLanesUntilTheSharedAncestor() throws {
+        let commits: [RepositoryHistory.Commit] = [
+            ("tip", ["main", "side"]),
+            ("side", ["base"]),
+            ("main", ["trunk", "nested"]),
+            ("nested", ["base"]),
+            ("trunk", ["base"]),
+            ("base", [])
+        ].map { id, parents in
+            .init(id: id, parentIDs: parents, authorName: "Author", authorEmail: "",
+                  committedAt: .distantPast, subject: id, body: "", references: [])
+        }
+        let history = RepositoryHistory(commits: commits)
+        let base = try XCTUnwrap(history.graphRows["base"])
+        XCTAssertEqual(history.graphLaneCount, 3)
+        XCTAssertEqual(history.graphRows["main"]?.commitLane, 0)
+        XCTAssertEqual(history.graphRows["nested"]?.commitLane, 2)
+        XCTAssertEqual(base.commitLane, 0)
+        XCTAssertEqual(Set(base.incomingEdges.map(\.fromLane)), Set([0, 1, 2]))
+        XCTAssertEqual(base.bottomLaneCount, 0)
+        XCTAssertTrue(history.graphRows.values.allSatisfy { row in
+            row.continuationEdges.allSatisfy { $0.fromLane == $0.toLane }
+        })
+        // Adding older history must preserve the lanes and colors already on screen.
+        let page = RepositoryHistory(commits: Array(commits.prefix(3)))
+        XCTAssertTrue(page.graphRows.allSatisfy { history.graphRows[$0.key] == $0.value })
+        // Every line at a row boundary meets the next row at the same lane and color.
+        for (current, next) in zip(commits, commits.dropFirst()) {
+            let row = try XCTUnwrap(history.graphRows[current.id])
+            let following = try XCTUnwrap(history.graphRows[next.id])
+            let outgoing = (row.continuationEdges + row.parentEdges).map { "\($0.toLane):\($0.colorIndex)" }
+            let incoming = (following.continuationEdges + following.incomingEdges).map { "\($0.fromLane):\($0.colorIndex)" }
+            XCTAssertEqual(Set(outgoing), Set(incoming))
+        }
     }
 
     func testScannerStaysInsideAllowedFolderAndSkipsRepositoryDescendants() async throws {

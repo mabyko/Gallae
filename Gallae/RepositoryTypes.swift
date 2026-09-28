@@ -206,15 +206,19 @@ struct RepositoryHistory: Equatable, Sendable {
     struct GraphEdge: Equatable, Sendable {
         let fromLane: Int
         let toLane: Int
+        let colorIndex: Int
     }
 
     struct GraphRow: Equatable, Sendable {
         let commitLane: Int
+        let commitColorIndex: Int
         let topLaneCount: Int
         let bottomLaneCount: Int
-        let hasIncomingEdge: Bool
+        let incomingEdges: [GraphEdge]
         let continuationEdges: [GraphEdge]
         let parentEdges: [GraphEdge]
+
+        var hasIncomingEdge: Bool { !incomingEdges.isEmpty }
     }
 
     struct Reference: Equatable, Hashable, Identifiable, Sendable {
@@ -271,58 +275,70 @@ struct RepositoryHistory: Equatable, Sendable {
     private static func makeGraphLayout(
         for commits: [Commit]
     ) -> (rows: [String: GraphRow], laneCount: Int) {
-        var lanes: [String] = []
+        var lanes: [(target: String, color: Int)?] = []
+        var nextColorIndex = 0
         var rows: [String: GraphRow] = [:]
         var maximumLaneCount = 0
 
         for commit in commits {
-            let hasIncomingEdge = lanes.contains(commit.id)
-            if !hasIncomingEdge { lanes.append(commit.id) }
-            guard let commitLane = lanes.firstIndex(of: commit.id) else { continue }
+            let incomingLanes = lanes.indices.filter { lanes[$0]?.target == commit.id }
+            let commitLane = incomingLanes.first
+                ?? lanes.firstIndex(where: { $0 == nil })
+                ?? lanes.count
+            if commitLane == lanes.count { lanes.append(nil) }
+            let commitColor = lanes[commitLane]?.color ?? nextColorIndex
+            if lanes[commitLane] == nil { nextColorIndex += 1 }
+            let topLaneCount = lanes.count
 
-            let topLanes = lanes
-            var bottomLanes = lanes
-            bottomLanes.remove(at: commitLane)
-            var insertionIndex = min(commitLane, bottomLanes.count)
+            let incomingEdges = incomingLanes.map {
+                GraphEdge(fromLane: $0, toLane: commitLane, colorIndex: lanes[$0]!.color)
+            }
+            let continuationEdges = lanes.indices.compactMap { lane -> GraphEdge? in
+                guard let path = lanes[lane], path.target != commit.id else { return nil }
+                return GraphEdge(fromLane: lane, toLane: lane, colorIndex: path.color)
+            }
+            for lane in incomingLanes { lanes[lane] = nil }
 
-            for (parentIndex, parentID) in commit.parentIDs.enumerated() {
-                if let existingIndex = bottomLanes.firstIndex(of: parentID) {
-                    if parentIndex == 0 { insertionIndex = existingIndex + 1 }
-                    continue
+            var parentEdges: [GraphEdge] = []
+            for (index, parentID) in commit.parentIDs.enumerated() {
+                // Keep the first-parent spine in its lane. Paths waiting for the same
+                // ancestor join at that ancestor's node, rather than shifting every rail.
+                let parentLane: Int
+                if index == 0 {
+                    parentLane = commitLane
+                } else {
+                    parentLane = lanes.firstIndex(where: { $0?.target == parentID })
+                        ?? lanes.indices.first(where: { $0 > commitLane && lanes[$0] == nil })
+                        ?? lanes.firstIndex(where: { $0 == nil })
+                        ?? lanes.count
                 }
-                bottomLanes.insert(parentID, at: min(insertionIndex, bottomLanes.count))
-                insertionIndex += 1
-            }
-
-            let continuationEdges: [GraphEdge] = topLanes.enumerated().compactMap { lane, commitID in
-                guard lane != commitLane,
-                      let bottomLane = bottomLanes.firstIndex(of: commitID)
-                else { return nil }
-                return GraphEdge(fromLane: lane, toLane: bottomLane)
-            }
-            let parentEdges = commit.parentIDs.compactMap { parentID in
-                bottomLanes.firstIndex(of: parentID).map {
-                    GraphEdge(fromLane: commitLane, toLane: $0)
+                if parentLane == lanes.count { lanes.append(nil) }
+                if lanes[parentLane] == nil {
+                    lanes[parentLane] = (parentID, index == 0 ? commitColor : nextColorIndex)
+                    if index != 0 { nextColorIndex += 1 }
                 }
+                parentEdges.append(.init(
+                    fromLane: commitLane, toLane: parentLane, colorIndex: lanes[parentLane]!.color
+                ))
             }
+            // Interior empty lanes are reusable; removing them would bend unrelated paths.
+            while !lanes.isEmpty && lanes[lanes.count - 1] == nil { lanes.removeLast() }
 
             rows[commit.id] = .init(
                 commitLane: commitLane,
-                topLaneCount: topLanes.count,
-                bottomLaneCount: bottomLanes.count,
-                hasIncomingEdge: hasIncomingEdge,
+                commitColorIndex: commitColor,
+                topLaneCount: topLaneCount,
+                bottomLaneCount: lanes.count,
+                incomingEdges: incomingEdges,
                 continuationEdges: continuationEdges,
                 parentEdges: parentEdges
             )
-            maximumLaneCount = max(
-                maximumLaneCount,
-                max(topLanes.count, bottomLanes.count)
-            )
-            lanes = bottomLanes
+            maximumLaneCount = max(maximumLaneCount, topLaneCount, lanes.count)
         }
 
         return (rows, maximumLaneCount)
     }
+
 }
 
 struct RepositoryInteractiveRebasePlan: Equatable, Sendable {

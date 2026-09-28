@@ -425,7 +425,6 @@ struct RepositoryHistoryView: View {
                                 isHEAD: commit.id == history.headCommitID,
                                 usesWideRow: historyLayout == .stacked,
                                 graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
-                                graphLaneCount: history.graphLaneCount,
                                 currentBranchName: currentBranchName,
                                 canFastForwardBranchRefs: commit.id != history.headCommitID
                                     && reachableCommitIDs.contains(commit.id),
@@ -482,6 +481,7 @@ struct RepositoryHistoryView: View {
                             .tag(commit.id)
                             .gallaeSelectionBackground(isSelected: model.selectedHistoryCommitID == commit.id, isFocused: historyFocused)
                             .listRowInsets(.init(top: 0, leading: 12, bottom: 0, trailing: 12))
+                            .listRowSeparator(.hidden)
                         }
                         .listStyle(.plain)
                         .legacyScrollerAware()
@@ -564,7 +564,6 @@ private struct RepositoryHistoryRow: View {
     let isHEAD: Bool
     var usesWideRow = false
     let graphRow: RepositoryHistory.GraphRow?
-    let graphLaneCount: Int
     var currentBranchName: String? = nil
     var canFastForwardBranchRefs = false
     var canFastForwardCurrentHere = false
@@ -589,14 +588,21 @@ private struct RepositoryHistoryRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Color.clear
-                .frame(width: theme.metrics.historyGraphWidth)
+                .frame(width: graphWidth)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(commit.subject)
-                    .gallaeFont(.callout, weight: isHEAD ? .bold : .medium)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(isHEAD ? "Current checkout (HEAD)\n\(commit.subject)" : commit.subject)
+                HStack(spacing: 6) {
+                    if usesWideRow && !commit.references.isEmpty {
+                        referenceLabels
+                    }
+                    Text(commit.subject)
+                        .gallaeFont(.callout, weight: isHEAD ? .semibold : .regular)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .help(isHEAD ? "Current checkout (HEAD)\n\(commit.subject)" : commit.subject)
+                }
+                .frame(minHeight: 18)
 
                 if !usesWideRow {
                     HStack(spacing: 4) {
@@ -609,20 +615,11 @@ private struct RepositoryHistoryRow: View {
                     .lineLimit(1)
                 }
 
-                if !commit.references.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(commit.references.prefix(2)) { reference in
-                            referenceChip(reference)
-                        }
-                        if commit.references.count > 2 {
-                            Text("+\(commit.references.count - 2)")
-                                .gallaeFont(.caption2, digits: true)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
+                if !usesWideRow && !commit.references.isEmpty {
+                    referenceLabels
                 }
             }
-            .padding(.vertical, theme.metrics.rowVerticalPadding)
+            .padding(.vertical, usesWideRow ? theme.metrics.historyRowVerticalPadding : theme.metrics.rowVerticalPadding)
 
             Spacer(minLength: 8)
 
@@ -645,9 +642,10 @@ private struct RepositoryHistoryRow: View {
         .overlay(alignment: .leading) {
             RepositoryHistoryGraphView(
                 row: graphRow,
-                laneCount: max(graphLaneCount, 1)
+                isHEAD: isHEAD,
+                isMerge: commit.parentIDs.count > 1
             )
-            .frame(width: theme.metrics.historyGraphWidth)
+            .frame(width: graphWidth)
         }
         .contentShape(.rect)
         .contextMenu {
@@ -886,6 +884,28 @@ private struct RepositoryHistoryRow: View {
         commit.references.filter { $0.kind == .branch }
     }
 
+    private var graphWidth: CGFloat {
+        let laneCount = graphRow.map { max($0.topLaneCount, $0.bottomLaneCount) } ?? 1
+        return max(theme.metrics.historyGraphWidth,
+                   CGFloat(laneCount - 1) * theme.metrics.historyGraphLaneSpacing + theme.metrics.historyGraphInset * 2)
+    }
+
+    private var referenceLabels: some View {
+        HStack(spacing: 4) {
+            ForEach(commit.references.prefix(2)) { reference in
+                referenceChip(reference)
+                    .frame(maxWidth: 180, alignment: .leading)
+            }
+            if commit.references.count > 2 {
+                Text("+\(commit.references.count - 2)")
+                    .gallaeFont(.caption2, digits: true)
+                    .foregroundStyle(.secondary)
+                    .help(commit.references.dropFirst(2).map(\.name).joined(separator: "\n"))
+            }
+        }
+        .fixedSize(horizontal: usesWideRow, vertical: false)
+    }
+
     private var remoteBranchReferences: [RepositoryHistory.Reference] {
         commit.references.filter { $0.kind == .remoteBranch }
     }
@@ -908,61 +928,71 @@ private struct RepositoryHistoryRow: View {
 
 private struct RepositoryHistoryGraphView: View {
     let row: RepositoryHistory.GraphRow?
-    let laneCount: Int
+    let isHEAD: Bool
+    let isMerge: Bool
     @Environment(\.gallaeTheme) private var theme
 
     var body: some View {
         let laneColors = theme.colors.historyGraphLanes
+        let metrics = theme.metrics
         Canvas { context, size in
             let middleY = size.height / 2
-            let laneInset: CGFloat = 4
-            let usableWidth = max(size.width - laneInset * 2, 0)
-            let lineStyle = StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round)
+            let bend = min(metrics.historyGraphLaneSpacing / 2, middleY)
+            let lineStyle = StrokeStyle(lineWidth: metrics.historyGraphLineWidth, lineCap: .round, lineJoin: .round)
 
             func xPosition(for lane: Int) -> CGFloat {
-                guard laneCount > 1 else { return size.width / 2 }
-                return laneInset + CGFloat(lane) * usableWidth / CGFloat(laneCount - 1)
+                metrics.historyGraphInset + CGFloat(lane) * metrics.historyGraphLaneSpacing
             }
 
-            func laneColor(_ lane: Int) -> Color {
-                laneColors[lane % laneColors.count]
+            func laneColor(_ index: Int) -> Color {
+                laneColors[index % laneColors.count]
             }
 
-            guard let row else {
-                let dot = CGRect(x: size.width / 2 - 3, y: middleY - 3, width: 6, height: 6)
-                context.fill(Path(ellipseIn: dot), with: .color(.primary.opacity(0.75)))
-                return
+            if let row {
+                for edge in row.continuationEdges {
+                    var path = Path()
+                    path.move(to: .init(x: xPosition(for: edge.fromLane), y: 0))
+                    path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
+                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                }
+                for edge in row.incomingEdges {
+                    let fromX = xPosition(for: edge.fromLane)
+                    let nodeX = xPosition(for: edge.toLane)
+                    var path = Path()
+                    path.move(to: .init(x: fromX, y: 0))
+                    path.addLine(to: .init(x: fromX, y: middleY - bend))
+                    path.addQuadCurve(to: .init(x: nodeX, y: middleY),
+                                      control: .init(x: fromX, y: middleY))
+                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                }
+                for edge in row.parentEdges {
+                    let nodeX = xPosition(for: edge.fromLane)
+                    let parentX = xPosition(for: edge.toLane)
+                    var path = Path()
+                    path.move(to: .init(x: nodeX, y: middleY))
+                    path.addQuadCurve(to: .init(x: parentX, y: middleY + bend),
+                                      control: .init(x: parentX, y: middleY))
+                    path.addLine(to: .init(x: parentX, y: size.height))
+                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                }
             }
 
-            for edge in row.continuationEdges {
-                var path = Path()
-                path.move(to: .init(x: xPosition(for: edge.fromLane), y: 0))
-                path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
-                context.stroke(
-                    path,
-                    with: .color(laneColor(edge.toLane).opacity(0.7)),
-                    style: lineStyle
-                )
+            let nodeX = xPosition(for: row?.commitLane ?? 0)
+            let color = row.map { laneColor($0.commitColorIndex) } ?? .secondary
+            let diameter = metrics.historyGraphNodeSize + (isHEAD ? 6 : isMerge ? 4 : 0)
+            let dot = Path(ellipseIn: CGRect(x: nodeX - diameter / 2, y: middleY - diameter / 2,
+                                            width: diameter, height: diameter))
+            if isHEAD || isMerge {
+                context.fill(dot, with: .color(Color(nsColor: .textBackgroundColor)))
+                context.stroke(dot, with: .color(color), style: lineStyle)
+                if isHEAD {
+                    let core = metrics.historyGraphNodeSize / 2
+                    context.fill(Path(ellipseIn: CGRect(x: nodeX - core / 2, y: middleY - core / 2,
+                                                        width: core, height: core)), with: .color(color))
+                }
+            } else {
+                context.fill(dot, with: .color(color))
             }
-
-            let commitX = xPosition(for: row.commitLane)
-            let commitColor = laneColor(row.commitLane)
-            if row.hasIncomingEdge {
-                var path = Path()
-                path.move(to: .init(x: commitX, y: 0))
-                path.addLine(to: .init(x: commitX, y: middleY))
-                context.stroke(path, with: .color(commitColor), style: lineStyle)
-            }
-
-            for edge in row.parentEdges {
-                var path = Path()
-                path.move(to: .init(x: commitX, y: middleY))
-                path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
-                context.stroke(path, with: .color(laneColor(edge.toLane)), style: lineStyle)
-            }
-
-            let dot = CGRect(x: commitX - 3, y: middleY - 3, width: 6, height: 6)
-            context.fill(Path(ellipseIn: dot), with: .color(commitColor))
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

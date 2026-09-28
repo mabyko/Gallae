@@ -84,6 +84,11 @@ struct GallaeTheme: Sendable {
         let changeListMinimumWidth: CGFloat
         let changeListIdealWidth: CGFloat
         let historyGraphWidth: CGFloat
+        let historyGraphLaneSpacing: CGFloat
+        let historyGraphInset: CGFloat
+        let historyGraphLineWidth: CGFloat
+        let historyGraphNodeSize: CGFloat
+        let historyRowVerticalPadding: CGFloat
         /// Width of the leading color bar on added and deleted diff lines; 0 hides it.
         let diffChangeBarWidth: CGFloat
         /// Vertical padding of Changes, History, Stashes, and Reflog rows.
@@ -145,7 +150,12 @@ struct GallaeTheme: Sendable {
                 repositorySummaryMaximumWidth: 340,
                 changeListMinimumWidth: 320,
                 changeListIdealWidth: 320,
-                historyGraphWidth: 44,
+                historyGraphWidth: 28,
+                historyGraphLaneSpacing: 18,
+                historyGraphInset: 10,
+                historyGraphLineWidth: 2,
+                historyGraphNodeSize: 7,
+                historyRowVerticalPadding: compactRows ? 2 : 4,
                 diffChangeBarWidth: contrast ? 3 : 0,
                 rowVerticalPadding: compactRows ? 3 : 7
             ),
