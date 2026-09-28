@@ -28,12 +28,9 @@ struct RepositoryInspector: Sendable {
     ]
 
     func inspect(at selectedURL: URL) async throws -> RepositorySummary {
-        try Task.checkCancellation()
-        let repository = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.inspectSynchronously(at: selectedURL)
-        }.value
-        try Task.checkCancellation()
-        return repository
+        }
     }
 
     func interactiveRebasePlan(
@@ -68,6 +65,19 @@ struct RepositoryInspector: Sendable {
         } onCancel: {
             cancellation.cancel()
         }
+    }
+
+    func cherryPickCommit(
+        _ commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary,
+        expectedHeadCommitID: String
+    ) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updated = try await Task.detached(priority: .userInitiated) {
+            try Self.cherryPickCommitSynchronously(commit, in: repository, expectedHeadCommitID: expectedHeadCommitID)
+        }.value
+        try Task.checkCancellation()
+        return updated
     }
 
     func revertCommit(
@@ -896,6 +906,15 @@ struct RepositoryInspector: Sendable {
         return updatedRepository
     }
 
+    func skipOperation(in repository: RepositorySummary) async throws -> RepositorySummary {
+        try Task.checkCancellation()
+        let updated = try await Task.detached(priority: .userInitiated) {
+            try Self.updateOperationSynchronously(in: repository, aborting: false, skipping: true)
+        }.value
+        try Task.checkCancellation()
+        return updated
+    }
+
     func commit(
         subject: String,
         body: String,
@@ -1072,7 +1091,8 @@ struct RepositoryInspector: Sendable {
 
     private static func updateOperationSynchronously(
         in repository: RepositorySummary,
-        aborting: Bool
+        aborting: Bool,
+        skipping: Bool = false
     ) throws -> RepositorySummary {
         let currentRepository = try inspectSynchronously(at: repository.rootURL)
         guard let operation = currentRepository.operation,
@@ -1080,20 +1100,30 @@ struct RepositoryInspector: Sendable {
               operation.identity == confirmedOperation.identity else {
             throw RepositoryOperationError.unavailable
         }
-        guard aborting || operation.canContinue else {
+        guard !skipping || operation.kind == .cherryPick else {
+            throw RepositoryOperationError.unavailable
+        }
+        guard aborting || skipping || operation.canContinue else {
             throw RepositoryOperationError.unresolvedConflicts
+        }
+        if !aborting, !skipping, operation.kind == .cherryPick,
+           operation.identity.markerURL.lastPathComponent == "CHERRY_PICK_HEAD",
+           !currentRepository.changes.contains(where: { $0.staged != nil }) {
+            throw RepositoryOperationError.emptyCherryPick
         }
         let command = switch operation.kind {
         case .merge: "merge"
         case .rebase: "rebase"
+        case .cherryPick: "cherry-pick"
         }
 
         let result = try runGit([
             "-C", repository.rootURL.path,
             "-c", "core.editor=true",
-            command, aborting ? "--abort" : "--continue"
+            command, aborting ? "--abort" : skipping ? "--skip" : "--continue"
         ])
         guard result.status == 0 else {
+            if skipping { throw RepositoryOperationError.skipFailed(result.standardError) }
             throw aborting
                 ? RepositoryOperationError.abortFailed(result.standardError)
                 : RepositoryOperationError.continueFailed(result.standardError)
@@ -1107,6 +1137,9 @@ struct RepositoryInspector: Sendable {
         amend: Bool,
         in repository: RepositorySummary
     ) throws -> RepositorySummary {
+        if try operationIdentitySynchronously(in: repository.rootURL)?.kind == .cherryPick {
+            throw RepositoryCommitError.operationInProgress
+        }
         let subject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
@@ -1133,6 +1166,46 @@ struct RepositoryInspector: Sendable {
             throw RepositoryCommitError.gitFailed(result.standardError)
         }
         return try inspectSynchronously(at: repository.rootURL)
+    }
+
+    private static func cherryPickCommitSynchronously(
+        _ commit: RepositoryHistory.Commit,
+        in repository: RepositorySummary,
+        expectedHeadCommitID: String
+    ) throws -> RepositorySummary {
+        let current = try inspectSynchronously(at: repository.rootURL)
+        guard case .branch = current.head, current.head == repository.head,
+              !current.isUnborn, current.operation == nil else {
+            throw RepositoryCherryPickError.unavailable
+        }
+        guard current.changes.isEmpty else { throw RepositoryCherryPickError.dirtyRepository }
+        let head = try runGit(["-C", current.rootURL.path, "rev-parse", "--verify", "HEAD"])
+        guard head.status == 0, line(from: head.standardOutput) == expectedHeadCommitID else {
+            throw RepositoryCherryPickError.unavailable
+        }
+        // Resolve the object and its parents again; UI metadata is not mutation authority.
+        let selected = try runGit([
+            "-C", current.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(commit.id)^{commit}"
+        ])
+        guard selected.status == 0 else { throw RepositoryCherryPickError.gitFailed(selected.standardError) }
+        let commitID = line(from: selected.standardOutput)
+        let parents = try runGit(["-C", current.rootURL.path, "rev-list", "--parents", "-n", "1", commitID])
+        guard parents.status == 0 else { throw RepositoryCherryPickError.gitFailed(parents.standardError) }
+        guard text(from: parents.standardOutput).split(whereSeparator: \.isWhitespace).count <= 2 else {
+            throw RepositoryCherryPickError.mergeCommit
+        }
+        let result = try runGit(["-C", current.rootURL.path, "-c", "core.editor=true", "cherry-pick", commitID])
+        let updated = try inspectSynchronously(at: current.rootURL)
+        if result.status != 0 {
+            if updated.operation?.kind == .cherryPick {
+                if updated.changes.contains(where: \.isConflicted) { return updated }
+                if !updated.changes.contains(where: { $0.staged != nil }) {
+                    throw RepositoryOperationError.emptyCherryPick
+                }
+            }
+            throw RepositoryCherryPickError.gitFailed(result.standardError)
+        }
+        return updated
     }
 
     private static func revertCommitSynchronously(
@@ -2274,18 +2347,25 @@ struct RepositoryInspector: Sendable {
             "rev-parse", "--path-format=absolute",
             "--git-path", "MERGE_HEAD",
             "--git-path", "rebase-merge",
-            "--git-path", "rebase-apply"
+            "--git-path", "rebase-apply",
+            "--git-path", "CHERRY_PICK_HEAD",
+            "--git-path", "sequencer"
         ])
         let paths = text(from: result.standardOutput)
             .split(whereSeparator: \Character.isNewline)
             .map(String.init)
-        guard result.status == 0, paths.count == 3 else {
+        guard result.status == 0, paths.count == 5 else {
             throw RepositoryInspectionError.invalidGitOutput
         }
+        // After an external manual commit, the remaining sequence can outlive CHERRY_PICK_HEAD.
+        let cherryPickSequence = (try? String(contentsOfFile: paths[4] + "/todo", encoding: .utf8))?
+            .split(whereSeparator: \.isNewline).first?.hasPrefix("pick ") == true
         // Rebase's directory survives Continue; a new operation creates a new marker.
         // Conflict count and modification time change during normal resolution.
-        let markerPath = paths.dropFirst().first(where: FileManager.default.fileExists(atPath:))
+        let markerPath = paths[1...2].first(where: FileManager.default.fileExists(atPath:))
             ?? (FileManager.default.fileExists(atPath: paths[0]) ? paths[0] : nil)
+            ?? (FileManager.default.fileExists(atPath: paths[3]) ? paths[3] : nil)
+            ?? (cherryPickSequence ? paths[4] : nil)
         guard let markerPath else { return nil }
         let attributes = try FileManager.default.attributesOfItem(atPath: markerPath)
         guard let fileNumber = attributes[.systemFileNumber] as? NSNumber,
@@ -2293,7 +2373,7 @@ struct RepositoryInspector: Sendable {
             throw RepositoryInspectionError.invalidGitOutput
         }
         return .init(
-            kind: markerPath == paths[0] ? .merge : .rebase,
+            kind: markerPath == paths[0] ? .merge : paths[3...4].contains(markerPath) ? .cherryPick : .rebase,
             markerURL: URL(fileURLWithPath: markerPath),
             fileNumber: fileNumber.uint64Value,
             creationDate: creationDate

@@ -53,6 +53,7 @@ struct RepositoryWorkspaceView: View {
         CGFloat(navigatorWidth) + Self.detailComfortableWidth + 8
     }
     @State private var operationAbortRepository: RepositorySummary?
+    @State private var operationSkipRepository: RepositorySummary?
     @FocusState private var isChangeListFocused: Bool
     @SceneStorage("repositoryChangeViewMode") private var changeViewMode = RepositoryChangeViewMode.status
     @SceneStorage("repositoryWorkspaceSection") private var workspaceSection = RepositoryWorkspaceSection.changes
@@ -130,14 +131,15 @@ struct RepositoryWorkspaceView: View {
         }
     }
 
-    var body: some View {
+    private var workspaceContent: some View {
         workspaceLayout
         .onChange(of: model.repository?.rootURL, initial: true) {
-            commitSubject = ""
-            commitBody = ""
+            commitSubject = model.commitDraft.subject
+            commitBody = model.commitDraft.body
             isAmending = false
             amendPrefill = nil
             operationAbortRepository = nil
+            operationSkipRepository = nil
             selectedChangeIDs = model.selectedChangeID.map { [$0] } ?? []
             // AppModel resets the scope for an ordinary open and retains it for Worktree navigation.
             if let conflict = model.repository?.changes.first(where: \.isConflicted) {
@@ -205,6 +207,10 @@ struct RepositoryWorkspaceView: View {
         .focusedSceneValue(\.navigatorToggle, navigatorToggleCommand)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
+    }
+
+    var body: some View {
+        workspaceContent
         .confirmationDialog(
             "Remove Temporary Worktree?",
             isPresented: Binding(
@@ -245,6 +251,22 @@ struct RepositoryWorkspaceView: View {
                         + "Changes made while resolving conflicts may be discarded."
                 )
             }
+        }
+        .confirmationDialog(
+            "Skip This Cherry-pick Commit?",
+            isPresented: Binding(
+                get: { operationSkipRepository != nil },
+                set: { if !$0 { operationSkipRepository = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: operationSkipRepository
+        ) { repository in
+            Button("Skip Commit", role: .destructive) {
+                Task { await model.skipRepositoryOperation(in: repository) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Git will discard changes for the current Cherry-pick commit and continue any remaining commits in the sequence. Resolution edits for this commit will be lost.")
         }
     }
 
@@ -351,26 +373,44 @@ struct RepositoryWorkspaceView: View {
                 CreateWorktreeSheet(model: model, existingBranch: request.branch)
             }
 
-            if let repository = model.repository, let operation = repository.operation {
+            if let recovery = model.availableDiscardRecovery {
                 Divider()
-                HStack(spacing: 12) {
-                    HStack(spacing: 12) {
-                        Label(operation.kind.label, systemImage: "arrow.triangle.merge")
-                            .gallaeFont(.callout, weight: .semibold)
-                            .foregroundStyle(
-                                operation.canContinue
-                                    ? theme.colors.statusAdded
-                                    : theme.colors.statusConflict
-                            )
-                        Text(operation.conflictLabel)
-                        Text(operation.actionLabel)
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(
-                        "\(operation.kind.label). \(operation.conflictLabel). \(operation.actionLabel)"
-                    )
+                HStack {
+                    Text("Last discard: \(recovery.path)")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Spacer()
+                    Button("Restore Last Discard") {
+                        Task { await model.restoreLastDiscard(recovery) }
+                    }
+                    .disabled(model.isLoading || model.isSyncing || recovery.discarded == nil)
+                    .help(recovery.discarded == nil
+                          ? "The discard result could not be verified. The original copy is retained for this session, but Restore is unavailable."
+                          : "Restore this file before the latest discard. Available for this app session only; later edits prevent restoration.")
+                }
+                .gallaeFont(.caption1)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+            }
+
+            if let repository = model.repository, let operation = repository.operation {
+                let status = HStack(spacing: 12) {
+                    Label(operation.kind.label, systemImage: "arrow.triangle.merge")
+                        .gallaeFont(.callout, weight: .semibold)
+                        .foregroundStyle(
+                            operation.canContinue
+                                ? theme.colors.statusAdded
+                                : theme.colors.statusConflict
+                        )
+                    Text(operation.conflictLabel)
+                    Text(operation.actionLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "\(operation.kind.label). \(operation.conflictLabel). \(operation.actionLabel)"
+                )
+                let actions = HStack(spacing: 12) {
                     Button("Continue") {
                         Task { await model.continueRepositoryOperation(in: repository) }
                     }
@@ -380,6 +420,13 @@ struct RepositoryWorkspaceView: View {
                     .help("Continue the \(operation.kind.name) after resolving all conflicts")
                     .accessibilityHint("Finish the \(operation.kind.name) using Git")
 
+                    if operation.kind == .cherryPick {
+                        Button("Skip…") { operationSkipRepository = repository }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(model.isLoading)
+                            .help("Skip the current Cherry-pick commit after confirmation")
+                    }
                     Button("Abort…", role: .destructive) {
                         operationAbortRepository = repository
                     }
@@ -388,6 +435,21 @@ struct RepositoryWorkspaceView: View {
                     .disabled(model.isLoading)
                     .help("Stop the \(operation.kind.name) and try to restore its earlier state")
                     .accessibilityHint("Opens a confirmation before stopping the \(operation.kind.name)")
+                }
+                Divider()
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        status.fixedSize()
+                        Spacer()
+                        actions.fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        status
+                        HStack {
+                            Spacer()
+                            actions
+                        }
+                    }
                 }
                 .gallaeFont(.callout)
                 .padding(.horizontal, 16)
@@ -806,11 +868,23 @@ struct RepositoryWorkspaceView: View {
 
     private func commitComposer(_ repository: RepositorySummary) -> some View {
         VStack(spacing: 8) {
-            TextField("Commit subject", text: $commitSubject)
+            TextField("Commit subject", text: Binding(
+                get: { commitSubject },
+                set: {
+                    commitSubject = $0
+                    if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
+                }
+            ))
                 .textFieldStyle(.roundedBorder)
                 .accessibilityHint("Describe the staged changes")
 
-            TextField("Commit body (optional)", text: $commitBody, axis: .vertical)
+            TextField("Commit body (optional)", text: Binding(
+                get: { commitBody },
+                set: {
+                    commitBody = $0
+                    if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
+                }
+            ), axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3, reservesSpace: true)
                 .accessibilityHint("Add optional details about the staged changes")
@@ -837,9 +911,12 @@ struct RepositoryWorkspaceView: View {
                     let body = commitBody
                     let amend = isAmending
                     Task {
-                        if await model.commit(subject: subject, body: body, amend: amend) {
-                            commitSubject = ""
-                            commitBody = ""
+                        if await model.commit(subject: subject, body: body, amend: amend),
+                           model.repository?.rootURL == repository.rootURL,
+                           commitSubject == subject, commitBody == body, isAmending == amend {
+                            commitSubject = model.commitDraft.subject
+                            commitBody = model.commitDraft.body
+                            amendPrefill = nil
                             isAmending = false
                             isComposerExpanded = false
                         }
@@ -865,21 +942,27 @@ struct RepositoryWorkspaceView: View {
         .onChange(of: isAmending) { _, isOn in
             if isOn {
                 guard commitSubject.isEmpty, commitBody.isEmpty else { return }
+                let revision = model.repositoryRevision
                 Task {
                     guard
                         let message = await model.headCommitMessage(),
+                        model.repositoryRevision == revision,
+                        model.repository?.rootURL == repository.rootURL,
                         isAmending, commitSubject.isEmpty, commitBody.isEmpty
                     else { return }
                     commitSubject = message.subject
                     commitBody = message.body
                     amendPrefill = message
                 }
-            } else if let amendPrefill {
-                self.amendPrefill = nil
-                if commitSubject == amendPrefill.subject, commitBody == amendPrefill.body {
-                    commitSubject = ""
-                    commitBody = ""
+            } else {
+                if let amendPrefill {
+                    self.amendPrefill = nil
+                    if commitSubject == amendPrefill.subject, commitBody == amendPrefill.body {
+                        commitSubject = ""
+                        commitBody = ""
+                    }
                 }
+                model.commitDraft = .init(subject: commitSubject, body: commitBody)
             }
         }
     }
@@ -1298,6 +1381,7 @@ private extension RepositorySummary.Operation.Kind {
         switch self {
         case .merge: "Merge"
         case .rebase: "Rebase"
+        case .cherryPick: "Cherry-pick"
         }
     }
 

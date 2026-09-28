@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import XCTest
 @testable import Gallae
 
@@ -266,6 +267,73 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(capped.status, 7)
     }
 
+    func testCancellingReadStopsItsProcessAndDoesNotRunLaterCommands() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let started = root.appending(path: "started")
+        let later = root.appending(path: "later")
+        let script = """
+        import os, pathlib, sys, time
+        pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+        time.sleep(15)
+        """
+        let task = Task {
+            try await CommandRunner.read {
+                _ = try CommandRunner.run(["-c", script, started.path],
+                                          executableURL: URL(fileURLWithPath: "/usr/bin/python3"))
+                return try CommandRunner.run([later.path], executableURL: URL(fileURLWithPath: "/usr/bin/touch"))
+            }
+        }
+        defer { task.cancel() }
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: started.path), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try XCTUnwrap(Int32(String(contentsOf: started, encoding: .utf8)))
+        let cancelledAt = Date()
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("A cancelled read must not return a result")
+        } catch is CancellationError {
+            XCTAssertLessThan(Date().timeIntervalSince(cancelledAt), 2)
+        }
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: later.path))
+
+        let gate = RepositoryReadGate()
+        let cancelledBeforeStarting = Task {
+            await gate.wait()
+            return try await CommandRunner.read {
+                try CommandRunner.run([later.path], executableURL: URL(fileURLWithPath: "/usr/bin/touch"))
+            }
+        }
+        cancelledBeforeStarting.cancel()
+        await gate.release()
+        do {
+            _ = try await cancelledBeforeStarting.value
+            XCTFail("An already cancelled read must not launch a process")
+        } catch is CancellationError {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: later.path))
+
+        // A cancelled read must not leak its cancellation into a subsequent read.
+        let next = try await CommandRunner.read {
+            try CommandRunner.run(["ok"], executableURL: URL(fileURLWithPath: "/bin/echo"))
+        }
+        XCTAssertEqual(String(decoding: next.standardOutput, as: UTF8.self), "ok\n")
+    }
+
+    func testExplicitWriteCancellationReturnsExitStatusForRecovery() throws {
+        let cancellation = GitProcessCancellation()
+        cancellation.cancel()
+        let started = Date()
+        let result = try CommandRunner.run(["15"], executableURL: URL(fileURLWithPath: "/bin/sleep"),
+                                           cancellation: cancellation)
+        XCTAssertNotEqual(result.status, 0)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        XCTAssertTrue(cancellation.isCancelled)
+    }
+
     @MainActor
     func testConcurrentAvatarRequestsShareLookupAndPersistResult() async throws {
         let suite = "GallaeTests-\(UUID().uuidString)"
@@ -302,6 +370,192 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(persisted, avatar)
         let requestCount = await gate.arrivals
         XCTAssertEqual(requestCount, 1)
+    }
+
+    @MainActor
+    func testBusyRefreshRequestsCoalesceAndReadLatestChanges() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        let reads = RepositoryReadGate()
+        await reads.release() // Count reads without blocking them.
+        let busyGate = RepositoryReadGate()
+        let latestGate = RepositoryReadGate()
+        defer { Task { await busyGate.release(); await latestGate.release() } }
+        let busyStarted = expectation(description: "Busy refresh captured the old state")
+        let latestStarted = expectation(description: "One queued refresh reads the latest state")
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults)) { url in
+            await reads.wait()
+            let count = await reads.arrivals
+            let result = try await RepositoryInspector().inspect(at: url)
+            if count == 2 {
+                busyStarted.fulfill()
+                await busyGate.wait()
+            } else if count == 3 {
+                latestStarted.fulfill()
+                await latestGate.wait()
+            } else if count > 3 {
+                XCTFail("Busy refresh requests must coalesce into one follow-up read")
+            }
+            return result
+        }
+        await model.openRepository(at: root)
+        let initialRevision = model.repositoryRevision
+        let busy = Task { await model.refreshRepository() }
+        await fulfillment(of: [busyStarted], timeout: 5)
+        try write("External change\n", to: "latest.txt", in: root)
+        for _ in 0..<3 { await model.refreshRepository() }
+        let readsWhileBusy = await reads.arrivals
+        XCTAssertEqual(readsWhileBusy, 2)
+        await busyGate.release()
+        await busy.value
+        await fulfillment(of: [latestStarted], timeout: 5)
+        XCTAssertTrue(model.isLoading)
+        XCTAssertTrue(model.repository?.changes.isEmpty == true, "The first result predates the external edit")
+        let finished = expectation(description: "Queued refresh is applied")
+        withObservationTracking {
+            _ = model.isLoading
+        } onChange: {
+            finished.fulfill()
+        }
+        await latestGate.release()
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.repository?.changes.map(\.path), ["latest.txt"])
+        XCTAssertEqual(model.repositoryRevision, initialRevision + 2)
+        let finalReads = await reads.arrivals
+        XCTAssertEqual(finalReads, 3)
+    }
+
+    @MainActor
+    func testPendingRefreshSurvivesAnImmediatelyFollowingActivityInSameRepository() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let root = directory.appending(path: "repository")
+        let remote = directory.appending(path: "remote.git")
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Base")
+        try runGit(["clone", "--bare", "--quiet", root.path, remote.path])
+        try runGit(["-C", root.path, "remote", "add", "origin", remote.path])
+        let script = directory.appending(path: "upload-pack.sh")
+        try writeBlockingScript(at: script, afterRelease: "exec /usr/bin/git upload-pack \"$@\"")
+        try runGit(["-C", root.path, "config", "remote.origin.uploadpack", script.path])
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let reads = RepositoryReadGate()
+        await reads.release()
+        let busyGate = RepositoryReadGate()
+        let latestGate = RepositoryReadGate()
+        defer {
+            try? Data().write(to: directory.appending(path: "release"))
+            Task { await busyGate.release(); await latestGate.release() }
+        }
+        let busyStarted = expectation(description: "The refresh captured the old status")
+        let latestStarted = expectation(description: "The pending refresh survives the connection test")
+        let model = AppModel(store: LibraryStore(defaults: defaults)) { url in
+            await reads.wait()
+            let count = await reads.arrivals
+            let result = try await RepositoryInspector().inspect(at: url)
+            if count == 2 {
+                busyStarted.fulfill()
+                await busyGate.wait()
+            } else if count == 3 {
+                latestStarted.fulfill()
+                await latestGate.wait()
+            } else if count > 3 {
+                XCTFail("Only one follow-up refresh is needed")
+            }
+            return result
+        }
+        await model.openRepository(at: root)
+        // These same-actor calls run consecutively. The connection increments the activity
+        // generation before the refresh's newly scheduled follow-up Task gets its turn.
+        let activity = Task {
+            await model.refreshRepository()
+            try await model.testRemoteConnection(named: "origin", in: root)
+        }
+        await fulfillment(of: [busyStarted], timeout: 5)
+        try write("external\n", to: "latest.txt", in: root)
+        await model.refreshRepository()
+        await busyGate.release()
+        let started = await waitForFile(directory.appending(path: "started"))
+        guard started else { return XCTFail("The immediately following connection test did not start") }
+        XCTAssertTrue(model.isLoading)
+        XCTAssertEqual(model.repository?.changes.count, 0)
+        try Data().write(to: directory.appending(path: "release"))
+        try await activity.value
+        await fulfillment(of: [latestStarted], timeout: 5)
+        let applied = expectation(description: "Latest external change is applied")
+        withObservationTracking { _ = model.isLoading } onChange: { applied.fulfill() }
+        await latestGate.release()
+        await fulfillment(of: [applied], timeout: 5)
+        XCTAssertEqual(model.repository?.changes.map(\.path), ["latest.txt"])
+        let count = await reads.arrivals
+        XCTAssertEqual(count, 3)
+        XCTAssertFalse(model.isLoading)
+    }
+
+    @MainActor
+    func testPendingRefreshIsDiscardedWhenAnotherRepositoryOpens() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appending(path: "first")
+        let second = directory.appending(path: "second")
+        try initializeRepository(at: first)
+        try initializeRepository(at: second)
+        let reads = RepositoryReadGate()
+        await reads.release()
+        let firstGate = RepositoryReadGate()
+        let secondGate = RepositoryReadGate()
+        defer { Task { await firstGate.release(); await secondGate.release() } }
+        let firstStarted = expectation(description: "A's refresh is waiting")
+        let secondStarted = expectation(description: "B's newer open is waiting")
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults)) { url in
+            await reads.wait()
+            let count = await reads.arrivals
+            let result = try await RepositoryInspector().inspect(at: url)
+            if count == 2 {
+                firstStarted.fulfill()
+                await firstGate.wait()
+            } else if count == 3 {
+                secondStarted.fulfill()
+                await secondGate.wait()
+            } else if count > 3 {
+                XCTAssertTrue(sameFileLocation(url, second), "A's pending refresh must not reopen A")
+            }
+            return result
+        }
+        await model.openRepository(at: first)
+        let initialRevision = model.repositoryRevision
+        let firstRefresh = Task { await model.refreshRepository() }
+        await fulfillment(of: [firstStarted], timeout: 5)
+        await model.refreshRepository()
+        let openSecond = Task { await model.openRepository(at: second) }
+        await fulfillment(of: [secondStarted], timeout: 5)
+        await firstGate.release()
+        await firstRefresh.value
+        XCTAssertTrue(model.isLoading, "A's late completion must keep B's activity running")
+        XCTAssertEqual(model.repositoryRevision, initialRevision)
+        await secondGate.release()
+        let opened = await openSecond.value
+        XCTAssertTrue(opened)
+        XCTAssertFalse(model.isLoading)
+        XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+        // A new activity also invalidates a queued Task that has not run yet.
+        await model.refreshRepository()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertEqual(model.repositoryRevision, initialRevision + 2)
+        XCTAssertTrue(sameFileLocation(try XCTUnwrap(model.repository).rootURL, second))
+        let finalReads = await reads.arrivals
+        XCTAssertEqual(finalReads, 4, "Only the initial open, busy read, B open, and explicit B refresh should run")
     }
 
     @MainActor
@@ -5007,6 +5261,218 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(lines.filter { $0.kind == .addition }.count, largeLineCount)
     }
 
+    func testCherryPickValidatesTargetAndAppliesSingleCommit() async throws {
+        let url = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try initializeRepository(at: url)
+        try write("base\n", to: "base.txt", in: url)
+        try commitAll(in: url, message: "Initial")
+        try runGit(["-C", url.path, "switch", "--quiet", "-c", "side"])
+        try write("picked\n", to: "picked.txt", in: url)
+        try commitAll(in: url, message: "Picked")
+        let inspector = RepositoryInspector()
+        let side = try await inspector.inspect(at: url)
+        let history = try await inspector.history(in: side)
+        let commit = try XCTUnwrap(history.commits.first { $0.id == history.headCommitID })
+        try runGit(["-C", url.path, "switch", "--quiet", "main"])
+        let target = try await inspector.inspect(at: url)
+        let head = try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        try write("keep me\n", to: "untracked.txt", in: url)
+        do {
+            _ = try await inspector.cherryPickCommit(commit, in: target, expectedHeadCommitID: head)
+            XCTFail("Dirty target must be rejected even with a stale clean summary")
+        } catch let error as RepositoryCherryPickError {
+            XCTAssertEqual(error, .dirtyRepository)
+        }
+        XCTAssertEqual(try String(contentsOf: url.appending(path: "untracked.txt"), encoding: .utf8), "keep me\n")
+        try FileManager.default.removeItem(at: url.appending(path: "untracked.txt"))
+        do {
+            _ = try await inspector.cherryPickCommit(commit, in: target, expectedHeadCommitID: commit.id)
+            XCTFail("Changed HEAD must be rejected")
+        } catch let error as RepositoryCherryPickError {
+            XCTAssertEqual(error, .unavailable)
+        }
+        try runGit(["-C", url.path, "switch", "--quiet", "-c", "other"])
+        do {
+            _ = try await inspector.cherryPickCommit(commit, in: target, expectedHeadCommitID: head)
+            XCTFail("Changed branch must be rejected even at the same HEAD")
+        } catch let error as RepositoryCherryPickError {
+            XCTAssertEqual(error, .unavailable)
+        }
+        try runGit(["-C", url.path, "switch", "--quiet", "main"])
+        let updated = try await inspector.cherryPickCommit(commit, in: target, expectedHeadCommitID: head)
+        XCTAssertNil(updated.operation)
+        XCTAssertTrue(updated.changes.isEmpty)
+        XCTAssertEqual(updated.head, .branch("main"))
+        XCTAssertEqual(try String(contentsOf: url.appending(path: "picked.txt"), encoding: .utf8), "picked\n")
+        let newHead = try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await inspector.cherryPickCommit(commit, in: updated, expectedHeadCommitID: newHead)
+            XCTFail("A redundant commit must stop with explicit empty guidance")
+        } catch let error as RepositoryOperationError {
+            XCTAssertEqual(error, .emptyCherryPick)
+        }
+        let empty = try await inspector.inspect(at: url)
+        XCTAssertEqual(empty.operation?.kind, .cherryPick)
+        do {
+            _ = try await inspector.continueOperation(in: empty)
+            XCTFail("Empty continuation must explain Skip or Abort")
+        } catch let error as RepositoryOperationError {
+            XCTAssertEqual(error, .emptyCherryPick)
+        }
+        let skipped = try await inspector.skipOperation(in: empty)
+        XCTAssertNil(skipped.operation)
+        XCTAssertEqual(try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines), newHead)
+    }
+
+    func testCherryPickRejectsMergeObjectsAndReportsGitFailureWithoutLosingWork() async throws {
+        let url = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try initializeRepository(at: url)
+        try write("base\n", to: "base.txt", in: url)
+        try commitAll(in: url, message: "Initial")
+        try runGit(["-C", url.path, "switch", "--quiet", "-c", "side"])
+        try write("side\n", to: "side.txt", in: url)
+        try commitAll(in: url, message: "Side")
+        try runGit(["-C", url.path, "switch", "--quiet", "main"])
+        try runGit(["-C", url.path, "merge", "--no-ff", "--no-edit", "side"])
+        let inspector = RepositoryInspector()
+        let merged = try await inspector.inspect(at: url)
+        let history = try await inspector.history(in: merged)
+        let merge = try XCTUnwrap(history.commits.first { $0.id == history.headCommitID })
+        let side = try XCTUnwrap(history.commits.first { $0.subject == "Side" })
+        try runGit(["-C", url.path, "reset", "--hard", "HEAD^1"])
+        let target = try await inspector.inspect(at: url)
+        let head = try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+        // Even incorrect UI parent metadata must not bypass validation of the actual Git object.
+        let stale = RepositoryHistory.Commit(id: merge.id, parentIDs: [], authorName: merge.authorName,
+            authorEmail: merge.authorEmail, committedAt: merge.committedAt, subject: merge.subject,
+            body: merge.body, references: merge.references)
+        do {
+            _ = try await inspector.cherryPickCommit(stale, in: target, expectedHeadCommitID: head)
+            XCTFail("Merge commits need mainline selection")
+        } catch let error as RepositoryCherryPickError {
+            XCTAssertEqual(error, .mergeCommit)
+        }
+        let hook = url.appending(path: ".git/hooks/prepare-commit-msg")
+        try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        do {
+            _ = try await inspector.cherryPickCommit(side, in: target, expectedHeadCommitID: head)
+            XCTFail("A failing commit hook must surface its failure")
+        } catch let error as RepositoryCherryPickError {
+            guard case .gitFailed = error else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertEqual(try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines), head)
+        XCTAssertEqual(try String(contentsOf: url.appending(path: "side.txt"), encoding: .utf8), "side\n")
+        let stopped = try await inspector.inspect(at: url)
+        XCTAssertEqual(stopped.operation?.kind, .cherryPick)
+        XCTAssertTrue(stopped.changes.contains { $0.staged != nil })
+        try FileManager.default.removeItem(at: hook)
+        let restored = try await inspector.abortOperation(in: stopped)
+        XCTAssertNil(restored.operation)
+        XCTAssertTrue(restored.changes.isEmpty)
+    }
+
+    func testContinuesExternalCherryPickSequenceAfterManualCommitInLinkedWorktree() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repositoryURL = root.appending(path: "repository", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        try initializeRepository(at: repositoryURL)
+        try write("base\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Initial")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "-c", "side"])
+        try write("side\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side conflict")
+        try write("next\n", to: "next.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Side next")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "main"])
+        try write("main\n", to: "conflict.txt", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Main")
+        try runGit(["-C", repositoryURL.path, "switch", "--quiet", "side"])
+        let worktree = root.appending(path: "linked")
+        try runGit(["-C", repositoryURL.path, "worktree", "add", "--quiet", worktree.path, "main"])
+        try runGit(["-C", worktree.path, "cherry-pick", "side~1", "side"], expectedStatus: 1)
+        let inspector = RepositoryInspector()
+        let stopped = try await inspector.inspect(at: worktree)
+        XCTAssertEqual(stopped.operation?.kind, .cherryPick)
+        try write("resolved\n", to: "conflict.txt", in: worktree)
+        try runGit(["-C", worktree.path, "add", "conflict.txt"])
+        try runGit(["-C", worktree.path, "-c", "core.editor=true", "commit", "--no-edit"])
+        let manual = try await inspector.inspect(at: worktree)
+        XCTAssertEqual(manual.operation?.kind, .cherryPick)
+        XCTAssertEqual(manual.operation?.identity.markerURL.lastPathComponent, "sequencer")
+        XCTAssertTrue(manual.changes.isEmpty)
+        let continued = try await inspector.continueOperation(in: manual)
+        XCTAssertNil(continued.operation)
+        XCTAssertTrue(continued.changes.isEmpty)
+        XCTAssertEqual(try String(contentsOf: worktree.appending(path: "next.txt"), encoding: .utf8), "next\n")
+        XCTAssertEqual(try String(contentsOf: worktree.appending(path: "conflict.txt"), encoding: .utf8), "resolved\n")
+    }
+
+    func testCherryPickConflictContinueSkipAndAbortIncludingExternalOperations() async throws {
+        for action in ["continue", "skip", "abort"] {
+            let url = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: url) }
+            try initializeRepository(at: url)
+            try write("base\n", to: "conflict.txt", in: url)
+            try commitAll(in: url, message: "Initial")
+            try runGit(["-C", url.path, "switch", "--quiet", "-c", "side"])
+            try write("side\n", to: "conflict.txt", in: url)
+            try commitAll(in: url, message: "Side")
+            let inspector = RepositoryInspector()
+            let side = try await inspector.inspect(at: url)
+            let history = try await inspector.history(in: side)
+            let commit = try XCTUnwrap(history.commits.first { $0.id == history.headCommitID })
+            try runGit(["-C", url.path, "switch", "--quiet", "main"])
+            try write("main\n", to: "conflict.txt", in: url)
+            try commitAll(in: url, message: "Main")
+            let target = try await inspector.inspect(at: url)
+            let head = try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let stopped: RepositorySummary
+            if action == "continue" {
+                stopped = try await inspector.cherryPickCommit(commit, in: target, expectedHeadCommitID: head)
+            } else {
+                try runGit(["-C", url.path, "cherry-pick", "side"], expectedStatus: 1)
+                stopped = try await inspector.inspect(at: url)
+            }
+            XCTAssertEqual(stopped.operation?.kind, .cherryPick)
+            XCTAssertEqual(stopped.operation?.unresolvedConflictCount, 1)
+            do {
+                _ = try await inspector.continueOperation(in: stopped)
+                XCTFail("Unresolved conflicts must block Continue")
+            } catch let error as RepositoryOperationError {
+                XCTAssertEqual(error, .unresolvedConflicts)
+            }
+            let finished: RepositorySummary
+            if action == "continue" {
+                try write("resolved\n", to: "conflict.txt", in: url)
+                let resolved = try await inspector.markConflictResolved(try XCTUnwrap(stopped.changes.first), in: stopped)
+                XCTAssertEqual(resolved.operation?.identity, stopped.operation?.identity)
+                for amend in [false, true] {
+                    do {
+                        _ = try await inspector.commit(subject: "Wrong action", body: "", amend: amend, in: resolved)
+                        XCTFail("Cherry-pick resolution must use Continue instead of Commit or Amend")
+                    } catch let error as RepositoryCommitError {
+                        XCTAssertEqual(error, .operationInProgress)
+                    }
+                }
+                finished = try await inspector.continueOperation(in: resolved)
+            } else if action == "skip" {
+                finished = try await inspector.skipOperation(in: stopped)
+            } else {
+                finished = try await inspector.abortOperation(in: stopped)
+            }
+            XCTAssertNil(finished.operation)
+            XCTAssertTrue(finished.changes.isEmpty)
+            XCTAssertEqual(try String(contentsOf: url.appending(path: "conflict.txt"), encoding: .utf8), action == "continue" ? "resolved\n" : "main\n")
+            if action != "continue" {
+                XCTAssertEqual(try gitOutput(["-C", url.path, "rev-parse", "HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines), head)
+            }
+        }
+    }
+
     func testReportsMergeInProgressBeforeAndAfterResolvingConflict() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
@@ -5098,7 +5564,7 @@ final class RepositoryInspectorTests: XCTestCase {
     }
 
     func testRejectsReplacedOperationsWithoutChangingResolvedWork() async throws {
-        for (original, replacement) in [("merge", "rebase"), ("merge", "merge"), ("rebase", "rebase")] {
+        for (original, replacement) in [("merge", "rebase"), ("merge", "merge"), ("rebase", "rebase"), ("cherry-pick", "cherry-pick")] {
             let repositoryURL = try makeTemporaryDirectory()
             defer { try? FileManager.default.removeItem(at: repositoryURL) }
             try initializeRepository(at: repositoryURL)
@@ -5137,6 +5603,15 @@ final class RepositoryInspectorTests: XCTestCase {
                     try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8),
                     "manual resolution\n"
                 )
+            }
+            if original == "cherry-pick" {
+                do {
+                    _ = try await inspector.skipOperation(in: confirmed)
+                    XCTFail("A replaced Cherry-pick must reject stale Skip")
+                } catch let error as RepositoryOperationError {
+                    XCTAssertEqual(error, .unavailable)
+                }
+                XCTAssertEqual(try String(contentsOf: repositoryURL.appending(path: "conflict.txt"), encoding: .utf8), "manual resolution\n")
             }
         }
     }
@@ -5997,6 +6472,211 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertNil(model.errorMessage)
     }
 
+    func testDiscardStillRestoresTrackedFileWhenItsParentDirectoryIsMissing() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        let path = "nested/deeper/file.txt"
+        try FileManager.default.createDirectory(at: root.appending(path: "nested/deeper"), withIntermediateDirectories: true)
+        try write("base\n", to: path, in: root)
+        try commitAll(in: root, message: "Initial")
+        try FileManager.default.removeItem(at: root.appending(path: "nested"))
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == path })
+        XCTAssertEqual(change.unstaged, .deleted)
+        let recovery = try await inspector.discardWithRecovery(change, in: repository)
+        XCTAssertNil(recovery, "There was no original file to save for recovery")
+        XCTAssertEqual(try String(contentsOf: root.appending(path: path), encoding: .utf8), "base\n")
+        let restored = try await inspector.inspect(at: root)
+        XCTAssertTrue(restored.changes.isEmpty)
+    }
+
+    func testDiscardRecoveryRejectsResultDifferentFromPrecomputedSmudgeOutput() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try write("file.txt filter=recovery-test\n", to: ".gitattributes", in: root)
+        // First conversion predicts base; the second acts like a checkout watcher writing different bytes.
+        try write("""
+        if test -e .git/recovery-filter-called; then
+            printf 'later edit\\n'
+        else
+            touch .git/recovery-filter-called
+            cat
+        fi
+        """, to: "smudge.sh", in: root)
+        try runGit(["-C", root.path, "config", "filter.recovery-test.smudge", "sh ./smudge.sh"])
+        try runGit(["-C", root.path, "config", "filter.recovery-test.clean", "cat"])
+        try write("working\n", to: "file.txt", in: root)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let change = try XCTUnwrap(repository.changes.first { $0.path == "file.txt" })
+        let saved = try await inspector.discardWithRecovery(change, in: repository)
+        let recovery = try XCTUnwrap(saved)
+        XCTAssertEqual(recovery.original.contents, Data("working\n".utf8))
+        XCTAssertNil(recovery.discarded, "Unexpected post-command bytes must never become a restore baseline")
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "later edit\n")
+        do {
+            try await inspector.restoreDiscard(recovery, in: repository)
+            XCTFail("Restoring must not overwrite the unexpected result")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "later edit\n")
+    }
+
+    func testDiscardRecoveryUsesWorktreeLineEndingConversion() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try runGit(["-C", root.path, "config", "core.autocrlf", "true"])
+        try write("working\r\n", to: "file.txt", in: root)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let change = try XCTUnwrap(repository.changes.first)
+        let saved = try await inspector.discardWithRecovery(change, in: repository)
+        let recovery = try XCTUnwrap(saved)
+        XCTAssertNotNil(recovery.discarded)
+        XCTAssertEqual(try Data(contentsOf: root.appending(path: "file.txt")), Data("base\r\n".utf8))
+        try await inspector.restoreDiscard(recovery, in: repository)
+        XCTAssertEqual(try Data(contentsOf: root.appending(path: "file.txt")), Data("working\r\n".utf8))
+    }
+
+    func testDiscardRecoverySupportsUnbornHeadAndRejectsFirstCommitAfterward() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("staged\n", to: "file.txt", in: root)
+        try runGit(["-C", root.path, "add", "file.txt"])
+        try write("working\n", to: "file.txt", in: root)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        XCTAssertTrue(repository.isUnborn)
+        let change = try XCTUnwrap(repository.changes.first)
+        let saved = try await inspector.discardWithRecovery(change, in: repository)
+        let recovery = try XCTUnwrap(saved)
+        XCTAssertNil(recovery.headID)
+        try await inspector.restoreDiscard(recovery, in: repository)
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "working\n")
+        let secondSaved = try await inspector.discardWithRecovery(change, in: repository)
+        let second = try XCTUnwrap(secondSaved)
+        try runGit(["-C", root.path, "commit", "-m", "Initial"])
+        do {
+            try await inspector.restoreDiscard(second, in: repository)
+            XCTFail("The first commit changes the HEAD context")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "staged\n")
+    }
+
+    func testDiscardRecoveryPreservesIndexAndRejectsLaterEditsAndMissingFiles() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        let path = "file [한글].txt"
+        let url = root.appending(path: path)
+        try write("base\n", to: path, in: root)
+        try commitAll(in: root, message: "Initial")
+        try write("staged\n", to: path, in: root)
+        try runGit(["-C", root.path, "add", "--", path])
+        try write("working\n", to: path, in: root)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let change = try XCTUnwrap(repository.changes.first)
+        let head = try gitOutput(["-C", root.path, "rev-parse", "HEAD"])
+        let saved = try await inspector.discardWithRecovery(change, in: repository)
+        let recovery = try XCTUnwrap(saved)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "staged\n")
+        try await inspector.restoreDiscard(recovery, in: repository)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "working\n")
+        XCTAssertEqual(try gitOutput(["-C", root.path, "show", ":\(path)"]), "staged\n")
+        XCTAssertEqual(try gitOutput(["-C", root.path, "rev-parse", "HEAD"]), head)
+        do {
+            try await inspector.restoreDiscard(recovery, in: repository)
+            XCTFail("A recovery cannot be replayed after restoration")
+        } catch {}
+
+        let savedAgain = try await inspector.discardWithRecovery(change, in: repository)
+        let second = try XCTUnwrap(savedAgain)
+        try write("external edit\n", to: path, in: root)
+        do {
+            try await inspector.restoreDiscard(second, in: repository)
+            XCTFail("Later edits must not be overwritten")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "external edit\n")
+        try FileManager.default.removeItem(at: url)
+        do {
+            try await inspector.restoreDiscard(second, in: repository)
+            XCTFail("A file deleted after discard must not be recreated")
+        } catch {}
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        let outside = root.appending(path: "outside.txt")
+        try Data("keep\n".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: outside)
+        do {
+            try await inspector.restoreDiscard(second, in: repository)
+            XCTFail("A symbolic link must not be followed or replaced")
+        } catch {}
+        XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "keep\n")
+    }
+
+    @MainActor
+    func testDiscardRecoveryBelongsToItsWorktreeAndSurvivesSelectionChanges() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("base\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        let linked = root.appending(path: "linked")
+        try runGit(["-C", root.path, "worktree", "add", "-b", "topic", linked.path])
+        try write("working\n", to: "file.txt", in: linked)
+        let suite = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        _ = await model.openRepository(at: linked)
+        await model.discardChange(id: "file.txt")
+        let recovery = try XCTUnwrap(model.availableDiscardRecovery)
+        XCTAssertEqual(try String(contentsOf: linked.appending(path: "file.txt"), encoding: .utf8), "base\n")
+        _ = await model.openRepository(at: root)
+        XCTAssertNil(model.availableDiscardRecovery)
+        await model.restoreLastDiscard(recovery)
+        XCTAssertEqual(try String(contentsOf: linked.appending(path: "file.txt"), encoding: .utf8), "base\n")
+        _ = await model.openRepository(at: linked)
+        model.selectedChangeID = nil
+        await model.restoreLastDiscard(recovery)
+        XCTAssertNil(model.availableDiscardRecovery)
+        XCTAssertEqual(try String(contentsOf: linked.appending(path: "file.txt"), encoding: .utf8), "working\n")
+        XCTAssertNil(model.errorMessage)
+        await model.restoreLastDiscard(recovery)
+        XCTAssertEqual(try String(contentsOf: linked.appending(path: "file.txt"), encoding: .utf8), "working\n")
+    }
+
+    func testDiscardRecoveryRestoresHunkAndSkipsOversizedFiles() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try initializeRepository(at: root)
+        try write("one\ntwo\nthree\n", to: "file.txt", in: root)
+        try commitAll(in: root, message: "Initial")
+        try write("one\nchanged\nthree\n", to: "file.txt", in: root)
+        let inspector = RepositoryInspector()
+        let repository = try await inspector.inspect(at: root)
+        let change = try XCTUnwrap(repository.changes.first)
+        let diff = try await inspector.diff(for: change, in: repository)
+        let hunk = try XCTUnwrap(diff.sections.first(where: { $0.scope == .unstaged })?.hunks.first)
+        let saved = try await inspector.discardWithRecovery(change, hunk: hunk, in: repository)
+        let recovery = try XCTUnwrap(saved)
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "one\ntwo\nthree\n")
+        try await inspector.restoreDiscard(recovery, in: repository)
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "one\nchanged\nthree\n")
+        try Data(repeating: 65, count: RepositoryDiscardRecovery.maximumFileBytes + 1).write(to: root.appending(path: "file.txt"))
+        let unsupported = try await inspector.discardWithRecovery(change, in: repository)
+        XCTAssertNil(unsupported)
+        XCTAssertEqual(try String(contentsOf: root.appending(path: "file.txt"), encoding: .utf8), "one\ntwo\nthree\n")
+    }
+
     func testDiscardsOnlySelectedUnstagedChanges() async throws {
         let repositoryURL = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: repositoryURL) }
@@ -6062,6 +6742,95 @@ final class RepositoryInspectorTests: XCTestCase {
             ]).trimmingCharacters(in: .newlines),
             "Record staged change\n\nKeep the working copy for the next commit."
         )
+    }
+
+    @MainActor
+    func testCommitDraftsSurviveWorktreeAndLibraryNavigationAndFailedCommit() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appending(path: "first")
+        let linked = directory.appending(path: "linked")
+        try initializeRepository(at: first)
+        try write("base\n", to: "file.txt", in: first)
+        try commitAll(in: first, message: "Base")
+        try runGit(["-C", first.path, "worktree", "add", "-b", "linked", linked.path])
+        try write("staged\n", to: "file.txt", in: first)
+        try runGit(["-C", first.path, "add", "file.txt"])
+
+        let suiteName = "GallaeTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = AppModel(store: LibraryStore(defaults: defaults))
+        let firstDraft = RepositoryCommitMessage(subject: "  First draft  ", body: "First details\n")
+        let linkedDraft = RepositoryCommitMessage(subject: "Linked draft", body: "Linked details")
+        await model.openRepository(at: first)
+        model.commitDraft = firstDraft
+        let openedLinked = await model.openWorktree(at: linked)
+        XCTAssertTrue(openedLinked)
+        XCTAssertEqual(model.commitDraft, .init(subject: "", body: ""))
+        model.commitDraft = linkedDraft
+        model.showLibrary()
+        await model.openLibraryRepository(at: first)
+        XCTAssertEqual(model.commitDraft, firstDraft)
+
+        let hook = first.appending(path: ".git/hooks/pre-commit")
+        try "#!/bin/sh\nexit 1\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        let failed = await model.commit(subject: firstDraft.subject, body: firstDraft.body, amend: false)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(model.commitDraft, firstDraft, "A rejected commit must keep the exact untrimmed draft")
+        try FileManager.default.removeItem(at: hook)
+
+        let committed = await model.commit(subject: firstDraft.subject, body: firstDraft.body, amend: false)
+        XCTAssertTrue(committed)
+        XCTAssertEqual(model.commitDraft, .init(subject: "", body: ""))
+        let reopenedLinked = await model.openWorktree(at: linked)
+        XCTAssertTrue(reopenedLinked)
+        XCTAssertEqual(model.commitDraft, linkedDraft, "Committing in one Worktree must not clear another")
+    }
+
+    @MainActor
+    func testLateCommitClearsOnlyTheSubmittedDraft() async throws {
+        for editsDuringCommit in [false, true] {
+            let directory = try makeTemporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let first = directory.appending(path: "first")
+            let second = directory.appending(path: "second")
+            for root in [first, second] {
+                try initializeRepository(at: root)
+                try write("base\n", to: "file.txt", in: root)
+                try commitAll(in: root, message: "Base")
+            }
+            try write("staged\n", to: "file.txt", in: first)
+            try runGit(["-C", first.path, "add", "file.txt"])
+            let hooks = first.appending(path: ".git/hooks")
+            try writeBlockingScript(at: hooks.appending(path: "pre-commit"), afterRelease: "exit 0")
+            defer { try? Data().write(to: hooks.appending(path: "release")) }
+
+            let suiteName = "GallaeTests-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let model = AppModel(store: LibraryStore(defaults: defaults))
+            await model.openRepository(at: first)
+            let submitted = RepositoryCommitMessage(subject: "Submitted draft", body: "Submitted details")
+            let newer = RepositoryCommitMessage(subject: "Next draft", body: "Next details")
+            model.commitDraft = submitted
+            let committing = Task { await model.commit(subject: submitted.subject, body: submitted.body, amend: false) }
+            let started = await waitForFile(hooks.appending(path: "started"))
+            guard started else { return XCTFail("Commit hook did not start") }
+            if editsDuringCommit { model.commitDraft = newer }
+            await model.openRepository(at: second)
+            let secondDraft = RepositoryCommitMessage(subject: "Second draft", body: "Second details")
+            model.commitDraft = secondDraft
+            try Data().write(to: hooks.appending(path: "release"))
+            let appliedToCurrentRepository = await committing.value
+            XCTAssertFalse(appliedToCurrentRepository, "A late commit cannot update another Repository's screen")
+            XCTAssertEqual(model.commitDraft, secondDraft)
+            await model.openRepository(at: first)
+            XCTAssertEqual(model.commitDraft, editsDuringCommit ? newer : .init(subject: "", body: ""))
+            XCTAssertEqual(try gitOutput(["-C", first.path, "log", "-1", "--format=%s"])
+                .trimmingCharacters(in: .newlines), submitted.subject)
+        }
     }
 
     func testAmendsLatestCommitUsingOnlyStagedChanges() async throws {

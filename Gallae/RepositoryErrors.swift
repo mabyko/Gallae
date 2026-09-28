@@ -153,33 +153,62 @@ enum RepositoryOperationError: LocalizedError, Equatable {
     case unresolvedConflicts
     case continueFailed(String)
     case abortFailed(String)
+    case skipFailed(String)
+    case emptyCherryPick
 
     var errorDescription: String? {
         switch self {
         case .unavailable:
-            "The Merge or Rebase has changed or is no longer in progress. Refresh the Repository and try again."
+            "The repository operation has changed or is no longer in progress. Refresh the Repository and try again."
         case .unresolvedConflicts:
-            "Resolve every conflict before continuing the Merge or Rebase."
+            "Resolve every conflict before continuing the repository operation."
         case .continueFailed(let message):
             message.isEmpty
-                ? "Git couldn’t continue the Merge or Rebase."
-                : "Git couldn’t continue the Merge or Rebase.\n\n\(message)"
+                ? "Git couldn’t continue the repository operation."
+                : "Git couldn’t continue the repository operation.\n\n\(message)"
         case .abortFailed(let message):
             message.isEmpty
-                ? "Git couldn’t abort the Merge or Rebase."
-                : "Git couldn’t abort the Merge or Rebase.\n\n\(message)"
+                ? "Git couldn’t abort the repository operation."
+                : "Git couldn’t abort the repository operation.\n\n\(message)"
+        case .skipFailed(let message):
+            "Git couldn’t skip the current Cherry-pick commit.\n\n\(message)"
+        case .emptyCherryPick:
+            "This Cherry-pick has no staged changes, possibly because the changes already exist or conflict resolution removed them. Choose Skip to omit this commit, or Abort to restore the earlier state."
+        }
+    }
+}
+
+enum RepositoryCherryPickError: LocalizedError, Equatable {
+    case dirtyRepository
+    case unavailable
+    case mergeCommit
+    case gitFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .dirtyRepository:
+            "Commit or Stash the current changes before cherry-picking a commit."
+        case .unavailable:
+            "The target branch or HEAD changed, or another operation is in progress. Refresh and select the commit again. Cherry-pick requires an existing local branch."
+        case .mergeCommit:
+            "Cherry-picking merge commits requires choosing a mainline parent and is not supported here. Select a regular commit."
+        case .gitFailed(let message):
+            "Git couldn’t cherry-pick the selected commit. Inspect the current changes before continuing.\n\n\(message)"
         }
     }
 }
 
 enum RepositoryCommitError: LocalizedError, Equatable {
     case unavailable
+    case operationInProgress
     case gitFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .unavailable:
             "Enter a commit subject and Stage at least one change."
+        case .operationInProgress:
+            "Use Continue to finish the Cherry-pick, or Skip or Abort before creating another commit."
         case .gitFailed(let message):
             message.isEmpty
                 ? "Git couldn’t create the commit."

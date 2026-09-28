@@ -34,9 +34,9 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 | --- | --- |
 | 저장소 탐색 | Repository 직접 열기, Library Folder 등록·탐색, 최근 항목, 마지막 Workspace 복원 |
 | 변경 검토·커밋 | 텍스트 diff, 파일·hunk·줄 단위 Stage/Unstage, Commit·Amend, 확인을 거치는 Discard |
-| History | 커밋 목록·그래프·검색, branch·tag 범위 조회, 파일별 patch, Revert·Reset |
+| History | 커밋 목록·그래프·검색, branch·tag 범위 조회, 파일별 patch, Cherry-pick·Revert·Reset |
 | 동기화 | Fetch·Fetch & Prune·자동 Fetch, fast-forward Pull, Push·Push to…·Publish, Remote 관리 |
-| 복구 | Stash 조회·생성·적용·삭제, Reflog 조회·복구 branch 생성 |
+| 복구 | 최근 Discard 복구, Stash 조회·생성·적용·삭제, Reflog 조회·복구 branch 생성 |
 | 분기 작업 | branch 생성·전환, Merge·Rebase, 충돌 버전 비교·해결, Continue·Abort, Interactive Rebase 계획·실행 |
 
 각 작업의 진입점, 정상·예외 상태와 완료 조건은 [사용자 흐름 문서](docs/README.md)를 따른다. 용어는 [CONTEXT.md](CONTEXT.md)에서 관리한다.
@@ -62,6 +62,7 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 - History의 기본 배치는 **Top and Bottom**이다. 상단에 커밋 목록, 하단에 커밋 머리·파일 목록·diff를 둔다. Appearance → History Layout에서 기존 **Side by Side**도 선택할 수 있고 저장된 선택은 유지한다.
 - Expand Review는 History 목록을 가려 검토 영역을 넓힌다. Show History로 복귀하며 선택한 커밋·파일을 유지한다. 현재 범위와 순번을 표시하고 앞뒤 커밋 이동은 현재 검색·조회 범위 안으로 제한한다.
 - History는 전체 branch·tag 이력이 기본이며, 머리 메뉴의 명시적 필터로 특정 ref의 이력만 볼 수 있다. 필터는 Clear Filter로 해제하며, 필터 밖의 ref를 선택하면 전체 History에서 보는 동작을 안내한다. 브랜치 탐색 시 텍스트 검색은 해제한다. 최초 100개를 읽고 Load Older Commits 또는 오래된 ref 탐색으로 범위를 확장한다. 로컬 branch 칩의 기본색은 파랑, 원격 branch는 청록, tag는 보라다. Appearance → History Colors의 색상표에서 그래프 시작색과 세 종류의 배지색을 각각 바꾸고 초기화할 수 있다. 배지는 아이콘 영역과 이름 사이에 옅은 세로선을 둔다. 이름은 기본 글자색으로 읽기 쉽게 표시하고 종류별 색상은 아이콘·배경·테두리에만 적용한다. HEAD 칩 대신 현재 체크아웃한 커밋의 제목과 branch·tag 칩을 굵게 표시하고, 다른 커밋의 칩은 보통 굵기로 표시한다. 현재 위치 정보는 도움말·접근성 설명에 유지한다.
+- History 검색은 이미 불러온 커밋 안에서 수행하며 검색 영역에 그 개수를 표시한다. 검색 결과가 없어도 이전 커밋이 남아 있으면 Load Older Commits로 검색어를 유지한 채 범위를 늘릴 수 있다.
 - 상하 배치의 커밋 머리에는 제목, 아바타·작성자·이메일·시각, SHA·서명 상태가 보인다. 본문 미리보기는 공백·줄바꿈을 접어 가용 폭 안에서 두 줄로 보여 준다. Details…는 원문의 줄바꿈을 보존한 전체 메시지·메타데이터·커밋 작업을 제공한다.
 - 좁은 창에서는 Navigator부터 접고 창을 강제로 키우지 않는다. 접힌 Navigator에 닿는 방식은 Appearance의 Floating Navigator(기본)·Toolbar Menu·Location Menu 중에서 고른다.
 - 현재 branch와 조회 범위를 구분한다. Git의 upstream 관계는 화면에서 Tracking으로 표시하며, 축약된 이름의 전체 값은 도움말과 접근성 이름에 남긴다.
@@ -69,6 +70,10 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 
 ### 변경 검토와 선택
 
+- 최근 Discard 복구는 앱 실행 중 마지막 한 번의 파일·hunk·선택 줄 Discard를 대상으로 한다. 기존 일반 파일과 index 버전이 각각 16 MiB 이하인 경우에 원본을 보관한다. Workspace의 Restore Last Discard는 같은 작업 폴더에서 파일·HEAD·해당 index가 그대로일 때만 복원한다. 삭제 파일·심볼릭 링크·큰 파일은 복구를 지원하지 않으며 Discard 확인에서 범위를 알린다. 다른 Discard와 앱 종료는 이전 복구 기록을 지운다.
+- 일반 커밋 제목·본문은 앱 실행 중 작업 폴더별로 보존한다. Library 왕복과 연결된 Worktree 전환에도 유지하며, 성공한 제출 내용만 지운다. 실패하거나 실행 중 새로 입력한 초안은 유지한다. Amend 모드와 자동으로 채운 HEAD 메시지는 복원하지 않으며 앱 종료 뒤 초안은 남지 않는다.
+- 다른 로컬 작업 중 들어온 Refresh 요청은 하나로 합쳐 완료 뒤 다시 읽는다. 예약한 읽기를 시작하기 전에 다른 Repository를 열면 예약을 폐기하고, 같은 Repository에서 다음 작업이 시작되면 완료 뒤로 다시 미룬다. 자동 파일 감시는 포함하지 않는다.
+- Repository 상태·History·diff 읽기 Task가 취소되면 진행 중인 Git 읽기에 취소를 전달한다. 취소된 결과와 이전 선택의 늦은 결과는 현재 화면을 덮어쓰지 않는다.
 - 같은 Repository를 새로 읽을 때 History·Stashes의 선택한 revision과 파일을 유지한다. 대상이 사라지면 유효한 항목으로 이동하고, 다른 revision이나 Repository를 고르면 이전 파일 선택을 초기화한다.
 - 파일 선택이 바뀌면 이전 diff를 즉시 비운다. 같은 대상의 새로고침은 내용을 유지하되 읽기가 끝날 때까지 이전 diff의 작업을 잠근다. Stage·Discard·충돌 해결은 화면에서 검토한 Repository와 파일을 대상으로 하며, 선택이나 갱신 상태가 바뀐 뒤 늦게 실행된 동작은 적용하지 않는다.
 - diff의 Unified·Split은 헤더에서 선택하며 취향을 기억한다. 비교할 반대편이 없는 새 파일·삭제 파일 등은 한 칸으로 표시하되 저장된 취향을 바꾸지 않는다. 선택기와 본문은 같은 레이아웃 판단을 쓴다.
@@ -81,6 +86,8 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 
 ### 충돌과 외부 병합 도구
 
+- History의 Cherry-Pick은 선택한 일반 commit 하나를 현재 local branch에 적용한다. 깨끗한 작업 폴더에서 대상 commit과 branch를 확인한 뒤 실행하며, 확인 후 HEAD나 작업 상태가 바뀌면 중단한다. Merge commit 선택은 지원하지 않는다.
+- 앱이나 터미널에서 시작한 Cherry-pick은 Merge·Rebase와 구분해 진행 상태를 표시한다. 충돌 해결 후 Continue하거나 확인을 거쳐 Skip·Abort한다. 적용할 변경이 없는 Cherry-pick은 빈 commit을 자동 생성하지 않고 Skip·Abort를 안내한다.
 - 현재 branch의 Create Merge Commit은 충돌이 나면 Merge 상태를 유지하고 Changes의 충돌 파일을 보여 준다. 충돌 외의 실행 실패는 기존 자동 중단·복원 검사를 유지한다. 해결 후 Continue로 완료하거나 Abort로 중단한다. Pull은 fast-forward 전용이다.
 - Settings → General → Merge Tool은 Use Git Configuration·VS Code·Sublime Merge를 제공한다. Zed는 Open in 에디터로만 제공한다. Git 설정은 merge.guitool, merge.tool 순서로 선택하며 추측으로 다른 도구를 실행하지 않는다. Git 설정을 바꾸지 않으며 터미널 입력이 필요한 도구는 터미널에서 실행하도록 안내한다.
 - 충돌 파일의 Open in Merge Tool은 양쪽에 있는 일반 파일을 대상으로 한다. 직접 연동은 UTF-8 텍스트의 Base·Ours·Theirs를 임시로 내보내고 결과는 실제 working tree 파일에 저장한다. 앱에 포함된 CLI를 인자 배열로 실행하고 편집 화면을 닫을 때까지 기다린다. 임시 버전은 실행 종료 후 정리한다.

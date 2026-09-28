@@ -20,13 +20,19 @@ History layout and diff layout can be chosen independently. Click either screens
 | --- | --- |
 | **Repository Library** | Register folders, browse repositories within them, reopen recent repositories, and restore the last workspace |
 | **Review and commit** | Unified and split diffs, file/hunk/line staging and unstaging, commits, amend, and discard with confirmation |
-| **History** | Graph across branches and tags, search by message/author/SHA/ref, per-file patches, author and signature details, revert, and reset |
+| **History** | Graph across branches and tags, search loaded commits by message/author/SHA/ref, per-file patches, author and signature details, cherry-pick, revert, and reset |
 | **Worktrees** | Browse primary and linked working folders, create worktrees with new or existing branches, open and remove worktrees |
 | **Sync** | Fetch, fetch and prune, automatic fetch, fast-forward pull, push, Push to…, publish, and remote management |
 | **Merge and recovery** | Merge, rebase, conflict comparison, external merge tools, continue/abort, interactive rebase, stashes, and reflog |
 | **External apps** | Open working folders in Finder, terminals, or editors; copy paths; install the `gallae [path]` command |
 
 History defaults to a **Top and Bottom** layout: commits above, review below. Use **Expand Review** for more room, or choose **Side by Side** in Appearance. Clicking a branch once jumps to its commit in the full graph; double-clicking switches branches or opens the linked worktree.
+
+Search shows how many commits are loaded. **Load Older Commits** remains available when a search has no matches and older commits remain. Normal commit drafts survive Repository, worktree, and Library navigation during the current app session; a successful commit clears only the submitted draft.
+
+**Restore Last Discard** recovers the latest file, hunk, or line discard during the current app session. It supports existing regular files up to 16 MiB, checks for later file and Git state changes, and preserves the index. Deleted files, symbolic links, and larger files are not recoverable.
+
+**Cherry-Pick…** in commit details applies one non-merge commit to the current local branch after confirmation, with a clean working folder. Conflicts use Changes and Continue, Skip, or Abort; Skip and Abort require confirmation. Empty cherry-picks offer Skip or Abort.
 
 The **⋯** menus beside Branches, Remotes, and Tags remain available when their lists are empty. **Add Remote…** saves a remote without fetching or publishing. **New Tag…** creates a local lightweight tag at a chosen commit (default: `HEAD`) without switching branches or pushing. The arrow beside **Worktrees** stays visible so you can expand or collapse the list.
 
@@ -87,10 +93,10 @@ GALLAE_BUNDLE_ID[config=Debug] = <your-debug-bundle-id>
 DEVELOPMENT_TEAM = <your-team-id>
 ```
 
-Run tests from the command line:
+Run tests locally after changing app behavior:
 
 ```sh
-xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS'
+xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=macOS' -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO
 ```
 
 **Requirements:** macOS 15 or later, Xcode, and system Git (Xcode Command Line Tools).

@@ -17,7 +17,7 @@
 4. Gallae가 선택한 commit의 메타데이터와 first-parent 기준 변경 파일을 읽고 첫 파일을 선택한다. 기본 상하 배치는 커밋 머리에 작성자·서명과 짧은 본문을 표시하고, Details…에서 원문·전체 SHA·parent·커밋 작업을 제공한다.
 5. Gallae가 선택한 파일의 patch를 읽는다.
 6. 사용자는 방향키로 다른 commit이나 파일을 선택해 같은 화면에서 검토를 이어 간다.
-7. 필요하면 메시지·작성자·이메일·SHA·ref를 입력해 이미 읽은 목록을 좁힌다.
+7. 필요하면 메시지·작성자·이메일·SHA·ref를 입력해 이미 읽은 목록을 좁힌다. 검색 영역에 현재 불러온 커밋 수를 표시한다.
 8. commit에 닿은 branch와 tag가 있으면 행에서 이름과 종류를 확인한다.
 9. 목록 왼쪽 graph에서 일반 commit과 merge의 부모 관계를 확인한다.
 10. 상하 배치에서 Expand Review로 검토 영역을 넓히고 Show History로 목록에 돌아온다. 현재 검색·조회 범위 안에서 이전/다음 commit을 고를 수 있다.
@@ -35,7 +35,7 @@
 - 변경 파일이 없는 commit은 오류와 다른 빈 상태를 표시한다.
 - History, 변경 파일 또는 patch 읽기가 실패하면 해당 영역에 오류와 `Try Again`을 표시한다.
 - patch가 2MB를 넘으면 사용자가 16MB까지 확장할 수 있고, 그보다 크거나 UTF-8이 아니면 원인을 표시한다.
-- 검색 결과가 없으면 별도 빈 상태와 `Clear Search`를 표시한다. Navigator에서 ref로 이동하면 텍스트 검색을 해제해 대상 commit이 검색에 가려지지 않게 한다.
+- 검색 결과가 없으면 별도 빈 상태와 `Clear Search`를 표시한다. 이전 커밋이 남아 있으면 `Load Older Commits`도 표시하며 검색어를 유지한 채 더 읽는다. Navigator에서 ref로 이동하면 텍스트 검색을 해제해 대상 commit이 검색에 가려지지 않게 한다.
 - annotated tag는 실제 commit 위치에 표시하고 remote의 symbolic HEAD는 생략한다.
 - detached HEAD는 branch ref가 없어도 목록과 graph에 포함한다.
 - 검색으로 중간 commit이 숨겨지면 연결선을 생략하고 각 결과의 commit 점만 표시한다.
@@ -49,7 +49,10 @@
 - 변경 파일은 상태와 경로를 색 외의 텍스트로 식별할 수 있고, 파일 선택은 해당 파일의 patch만 갱신한다.
 - graph는 현재 HEAD와 local·remote-tracking branch, tag에서 도달 가능한 목록의 분기·합류를 표시하고 VoiceOver 이름은 root와 merge commit을 구분한다.
 - 검색은 추가 Git 실행 없이 현재 읽은 commit 안에서 ref 이름까지 대상으로 수행한다.
+- 오래된 커밋을 더 불러와 검색 범위를 늘릴 수 있지만, 검색어 입력만으로 저장소 전체를 검색하지는 않는다.
+- History·변경 파일·patch 읽기 Task가 취소되면 진행 중인 Git 읽기도 취소하며, 이전 선택의 결과는 새 화면을 덮어쓰지 않는다.
 - History 목록은 stash·notes ref를 포함하지 않으며, Stash 검사는 별도 `Stashes` 화면에서 제공한다.
 - 선택한 일반 commit Revert는 [UC-31](uc-31-revert-commit.md), merge commit Revert는 [UC-32](uc-32-revert-merge-commit.md), 현재 branch mixed Reset은 [UC-33](uc-33-reset-current-branch.md), soft Reset은 [UC-34](uc-34-soft-reset-current-branch.md), hard Reset은 [UC-35](uc-35-hard-reset-current-branch.md), HEAD 이동 기록은 [UC-36](uc-36-inspect-reflog.md)에서 다룬다.
+- 선택한 일반 commit을 현재 branch에 적용하는 Cherry-pick은 [UC-50](uc-50-cherry-pick-commit.md)에서 다룬다.
 
 [사용자 흐름 문서로 돌아가기](../README.md)

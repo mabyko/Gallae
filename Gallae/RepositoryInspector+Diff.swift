@@ -1,28 +1,58 @@
 import Foundation
+import Darwin
+
+struct RepositoryDiscardRecovery: Sendable, Identifiable {
+    static let maximumFileBytes = 16 * 1024 * 1024
+    static let scopeDescription = "Recovery is kept only for the latest discard of an existing regular file up to 16 MiB in this app session, outside an active Git operation. Restore requires a verified result and no later edits. Deleted files, symbolic links, and larger files cannot be restored."
+
+    struct FileState: Equatable, Sendable {
+        let contents: Data
+        let permissions: UInt16
+        let fileNumber: UInt64
+        let modifiedAt: Date
+    }
+
+    let id = UUID()
+    let rootURL: URL
+    let path: String
+    let head: RepositorySummary.Head
+    let headID: Data?
+    let indexEntry: Data
+    let original: FileState
+    let discarded: FileState?
+}
+
+enum RepositoryDiscardRecoveryError: LocalizedError {
+    case changed
+    case unreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .changed:
+            "The file, branch, or staged version changed after the discard. Nothing was restored; the recovery copy is still kept for this app session."
+        case .unreadable:
+            "Gallae couldn’t safely save or read the discard recovery copy. The file has not been replaced."
+        }
+    }
+}
 
 extension RepositoryInspector {
     func files(
         for commit: RepositoryHistory.Commit,
         in repository: RepositorySummary
     ) async throws -> [RepositoryCommitFile] {
-        try Task.checkCancellation()
-        let files = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.commitFilesSynchronously(for: commit, in: repository)
-        }.value
-        try Task.checkCancellation()
-        return files
+        }
     }
 
     func files(
         for stash: RepositoryStash,
         in repository: RepositorySummary
     ) async throws -> [RepositoryCommitFile] {
-        try Task.checkCancellation()
-        let files = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.stashFilesSynchronously(for: stash, in: repository)
-        }.value
-        try Task.checkCancellation()
-        return files
+        }
     }
 
     func patch(
@@ -31,17 +61,14 @@ extension RepositoryInspector {
         repository: RepositorySummary,
         maximumOutputBytes: Int? = maximumDisplayedDiffBytes
     ) async throws -> RepositoryCommitPatch {
-        try Task.checkCancellation()
-        let patch = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.patchSynchronously(
                 for: file,
                 in: commit,
                 repository: repository,
                 maximumOutputBytes: maximumOutputBytes
             )
-        }.value
-        try Task.checkCancellation()
-        return patch
+        }
     }
 
     func patch(
@@ -50,17 +77,14 @@ extension RepositoryInspector {
         repository: RepositorySummary,
         maximumOutputBytes: Int? = maximumDisplayedDiffBytes
     ) async throws -> RepositoryCommitPatch {
-        try Task.checkCancellation()
-        let patch = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.stashPatchSynchronously(
                 for: file,
                 in: stash,
                 repository: repository,
                 maximumOutputBytes: maximumOutputBytes
             )
-        }.value
-        try Task.checkCancellation()
-        return patch
+        }
     }
 
     func diff(
@@ -68,16 +92,13 @@ extension RepositoryInspector {
         in repository: RepositorySummary,
         maximumOutputBytes: Int? = maximumDisplayedDiffBytes
     ) async throws -> RepositoryDiff {
-        try Task.checkCancellation()
-        let diff = try await Task.detached(priority: .userInitiated) {
+        try await CommandRunner.read {
             try Self.diffSynchronously(
                 for: change,
                 in: repository,
                 maximumOutputBytes: maximumOutputBytes
             )
-        }.value
-        try Task.checkCancellation()
-        return diff
+        }
     }
 
     func stage(
@@ -158,12 +179,8 @@ extension RepositoryInspector {
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
-        try Task.checkCancellation()
-        let updatedRepository = try await Task.detached(priority: .userInitiated) {
-            try Self.discardSynchronously(change, in: repository)
-        }.value
-        try Task.checkCancellation()
-        return updatedRepository
+        _ = try await discardWithRecovery(change, in: repository)
+        return try await inspect(at: repository.rootURL)
     }
 
     /// Reverses one working tree hunk, or the partial hunk of chosen lines, on disk. The index is not touched.
@@ -172,12 +189,184 @@ extension RepositoryInspector {
         for change: RepositorySummary.Change,
         in repository: RepositorySummary
     ) async throws -> RepositorySummary {
+        _ = try await discardWithRecovery(change, hunk: hunk, in: repository)
+        return try await inspect(at: repository.rootURL)
+    }
+
+    func discardWithRecovery(
+        _ change: RepositorySummary.Change,
+        hunk: RepositoryDiff.Hunk? = nil,
+        in repository: RepositorySummary
+    ) async throws -> RepositoryDiscardRecovery? {
         try Task.checkCancellation()
-        let updatedRepository = try await Task.detached(priority: .userInitiated) {
-            try Self.discardHunkSynchronously(hunk, for: change, in: repository)
+        return try await Task.detached(priority: .userInitiated) {
+            guard change.canDiscardUnstagedChanges else { throw RepositoryDiscardError.unavailable }
+            let rootURL = repository.rootURL.resolvingSymlinksInPath()
+            let current = try Self.inspectSynchronously(at: rootURL)
+            guard current.rootURL.resolvingSymlinksInPath() == rootURL,
+                  current.head == repository.head, current.isUnborn == repository.isUnborn else {
+                throw RepositoryDiscardRecoveryError.changed
+            }
+            let indexEntry = try Self.discardRecoveryGit(["ls-files", "--stage", "--", Self.literalPathspec(change.path)], at: rootURL)
+            let original = try Self.discardRecoveryFile(path: change.path, rootURL: rootURL)
+            let indexIsRegular = indexEntry.starts(with: Data("100644 ".utf8))
+                || indexEntry.starts(with: Data("100755 ".utf8))
+            let blobSize = indexIsRegular
+                ? Int(String(decoding: try Self.discardRecoveryGit(["cat-file", "-s", ":\(change.path)"], at: rootURL), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+                : nil
+            let canRecover = original != nil && indexIsRegular && current.operation == nil
+                && blobSize.map { $0 <= RepositoryDiscardRecovery.maximumFileBytes } == true
+            let headID = canRecover && !current.isUnborn
+                ? try Self.discardRecoveryGit(["rev-parse", "--verify", "HEAD"], at: rootURL) : nil
+            let expectedContents: Data?
+            if canRecover, let original {
+                expectedContents = try Self.expectedDiscardContents(original: original, hunk: hunk, path: change.path, rootURL: rootURL)
+            } else {
+                expectedContents = nil
+            }
+            // Check the saved file again immediately before Git modifies it.
+            if let original, canRecover {
+                guard try Self.discardRecoveryContextMatches(rootURL: rootURL, path: change.path, head: current.head, headID: headID, indexEntry: indexEntry),
+                      try Self.discardRecoveryFile(path: change.path, rootURL: rootURL) == original else {
+                    throw RepositoryDiscardRecoveryError.changed
+                }
+            }
+            if let hunk {
+                try Self.discardHunkSynchronously(hunk, for: change, in: repository)
+            } else {
+                try Self.discardSynchronously(change, in: repository)
+            }
+            guard canRecover, let original else { return nil }
+            // Keep the original even if a concurrent edit makes the post-discard state unreadable.
+            let observed = try? Self.discardRecoveryFile(path: change.path, rootURL: rootURL)
+            let contextMatches = (try? Self.discardRecoveryContextMatches(rootURL: rootURL, path: change.path, head: current.head, headID: headID, indexEntry: indexEntry)) == true
+            // A watcher/filter may write after Git. Never approve those new bytes as the restore baseline.
+            let discarded = contextMatches && expectedContents != nil && observed?.contents == expectedContents
+                ? observed : nil
+            return RepositoryDiscardRecovery(
+                rootURL: rootURL, path: change.path, head: repository.head,
+                headID: headID, indexEntry: indexEntry, original: original, discarded: discarded
+            )
         }.value
+    }
+
+    func restoreDiscard(_ recovery: RepositoryDiscardRecovery, in repository: RepositorySummary) async throws {
         try Task.checkCancellation()
-        return updatedRepository
+        try await Task.detached(priority: .userInitiated) {
+            guard let discarded = recovery.discarded,
+                  repository.rootURL.resolvingSymlinksInPath() == recovery.rootURL else {
+                throw RepositoryDiscardRecoveryError.changed
+            }
+            guard try Self.discardRecoveryContextMatches(rootURL: recovery.rootURL, path: recovery.path, head: recovery.head, headID: recovery.headID, indexEntry: recovery.indexEntry),
+                  try Self.discardRecoveryFile(path: recovery.path, rootURL: recovery.rootURL) == discarded else {
+                throw RepositoryDiscardRecoveryError.changed
+            }
+            let fileURL = recovery.rootURL.appending(path: recovery.path)
+            let temporaryURL = fileURL.deletingLastPathComponent().appending(path: ".gallae-restore-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            try recovery.original.contents.write(to: temporaryURL, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: recovery.original.permissions], ofItemAtPath: temporaryURL.path)
+            guard try Self.discardRecoveryContextMatches(rootURL: recovery.rootURL, path: recovery.path, head: recovery.head, headID: recovery.headID, indexEntry: recovery.indexEntry),
+                  try Self.discardRecoveryFile(path: recovery.path, rootURL: recovery.rootURL) == discarded else {
+                throw RepositoryDiscardRecoveryError.changed
+            }
+            _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: temporaryURL, options: .usingNewMetadataOnly)
+        }.value
+    }
+
+    private static func discardRecoveryGit(_ arguments: [String], at rootURL: URL) throws -> Data {
+        let result = try runGit(["-C", rootURL.path] + arguments)
+        guard result.status == 0 else { throw RepositoryDiscardRecoveryError.unreadable }
+        return result.standardOutput
+    }
+
+    private static func discardRecoveryContextMatches(
+        rootURL: URL, path: String, head: RepositorySummary.Head, headID: Data?, indexEntry: Data
+    ) throws -> Bool {
+        let current = try inspectSynchronously(at: rootURL)
+        guard current.rootURL.resolvingSymlinksInPath() == rootURL,
+              current.head == head, current.operation == nil, current.isUnborn == (headID == nil) else { return false }
+        if let headID, try discardRecoveryGit(["rev-parse", "--verify", "HEAD"], at: rootURL) != headID { return false }
+        return try discardRecoveryGit(["ls-files", "--stage", "--", literalPathspec(path)], at: rootURL) == indexEntry
+    }
+
+    private static func expectedDiscardContents(
+        original: RepositoryDiscardRecovery.FileState, hunk: RepositoryDiff.Hunk?, path: String, rootURL: URL
+    ) throws -> Data? {
+        if let hunk {
+            let temporaryRoot = FileManager.default.temporaryDirectory.appending(path: "Gallae-Discard-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+            let fileURL = temporaryRoot.appending(path: path)
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try original.contents.write(to: fileURL, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: original.permissions], ofItemAtPath: fileURL.path)
+            let result = try runGit(["-C", temporaryRoot.path, "apply", "--reverse"], standardInput: hunk.patch)
+            // Repository-specific conversions may make the isolated prediction unavailable.
+            // Keep the existing discard command usable, but do not enable restoration without a prediction.
+            guard result.status == 0 else { return nil }
+            return try discardRecoveryFile(path: path, rootURL: temporaryRoot)?.contents
+        }
+        // Git performs the same smudge/EOL conversion used by restore; raw index bytes are insufficient.
+        let result = try runGit(["-C", rootURL.path, "cat-file", "--filters", ":\(path)"],
+                                maximumOutputBytes: RepositoryDiscardRecovery.maximumFileBytes)
+        guard result.status == 0 else { throw RepositoryDiscardRecoveryError.unreadable }
+        return result.standardOutputExceededLimit ? nil : result.standardOutput
+    }
+
+    private static func discardRecoveryFile(path: String, rootURL: URL) throws -> RepositoryDiscardRecovery.FileState? {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw RepositoryDiscardRecoveryError.unreadable
+        }
+        var url = rootURL
+        for component in components.dropLast() {
+            url.append(path: String(component))
+            let attributes: [FileAttributeKey: Any]
+            do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
+            catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
+            guard attributes[.type] as? FileAttributeType == .typeDirectory else {
+                throw RepositoryDiscardRecoveryError.unreadable
+            }
+        }
+        url.append(path: String(components.last!))
+        let attributes: [FileAttributeKey: Any]
+        do { attributes = try FileManager.default.attributesOfItem(atPath: url.path) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber,
+              size.intValue <= RepositoryDiscardRecovery.maximumFileBytes else { return nil }
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw RepositoryDiscardRecoveryError.unreadable }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        var opened = stat()
+        guard fstat(descriptor, &opened) == 0,
+              opened.st_mode & S_IFMT == S_IFREG,
+              (attributes[.systemFileNumber] as? NSNumber)?.uint64Value == UInt64(opened.st_ino),
+              (attributes[.systemNumber] as? NSNumber)?.int32Value == opened.st_dev else {
+            throw RepositoryDiscardRecoveryError.changed
+        }
+        let contents = try file.read(upToCount: RepositoryDiscardRecovery.maximumFileBytes + 1) ?? Data()
+        guard contents.count == size.intValue,
+              let permissions = attributes[.posixPermissions] as? NSNumber,
+              let fileNumber = attributes[.systemFileNumber] as? NSNumber,
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            throw RepositoryDiscardRecoveryError.unreadable
+        }
+        let after = try FileManager.default.attributesOfItem(atPath: url.path)
+        var finished = stat()
+        guard after[.type] as? FileAttributeType == .typeRegular,
+              fstat(descriptor, &finished) == 0,
+              finished.st_size == opened.st_size, finished.st_mode == opened.st_mode,
+              finished.st_mtimespec.tv_sec == opened.st_mtimespec.tv_sec,
+              finished.st_mtimespec.tv_nsec == opened.st_mtimespec.tv_nsec,
+              after[.systemFileNumber] as? NSNumber == fileNumber,
+              after[.modificationDate] as? Date == modifiedAt,
+              after[.size] as? NSNumber == size else {
+            throw RepositoryDiscardRecoveryError.changed
+        }
+        return .init(contents: contents, permissions: permissions.uint16Value,
+                     fileNumber: fileNumber.uint64Value, modifiedAt: modifiedAt)
     }
 
     private static func stageSynchronously(
@@ -230,7 +419,7 @@ extension RepositoryInspector {
         _ hunk: RepositoryDiff.Hunk,
         for change: RepositorySummary.Change,
         in repository: RepositorySummary
-    ) throws -> RepositorySummary {
+    ) throws {
         guard !change.isConflicted, change.unstaged == .modified, hunk.scope == .unstaged else {
             throw RepositoryDiscardError.unavailable
         }
@@ -241,13 +430,12 @@ extension RepositoryInspector {
         guard result.status == 0 else {
             throw RepositoryDiscardError.gitFailed(result.standardError)
         }
-        return try inspectSynchronously(at: repository.rootURL)
     }
 
     private static func discardSynchronously(
         _ change: RepositorySummary.Change,
         in repository: RepositorySummary
-    ) throws -> RepositorySummary {
+    ) throws {
         guard change.canDiscardUnstagedChanges else {
             throw RepositoryDiscardError.unavailable
         }
@@ -258,7 +446,6 @@ extension RepositoryInspector {
         guard result.status == 0 else {
             throw RepositoryDiscardError.gitFailed(result.standardError)
         }
-        return try inspectSynchronously(at: repository.rootURL)
     }
 
     private static func updateIndexSynchronously(

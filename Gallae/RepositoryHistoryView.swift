@@ -79,6 +79,10 @@ struct RepositoryHistoryView: View {
                             .focused($isSearchFocused)
                             .onAppear { isSearchFocused = true }
                             .onExitCommand { closeSearch() }
+                        Text("Searches the \(history.commits.count) loaded commits.")
+                            .gallaeFont(.caption1)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -413,6 +417,9 @@ struct RepositoryHistoryView: View {
                     Text("Try a different message, author, SHA, or ref.")
                 } actions: {
                     Button("Clear Search") { searchText = "" }
+                    if history.hasMoreCommits {
+                        loadOlderCommitsButton(history)
+                    }
                 }
             } else {
                 let reachableCommitIDs = history.headReachableCommitIDs()
@@ -503,7 +510,7 @@ struct RepositoryHistoryView: View {
 
                     if history.hasMoreCommits {
                         Divider()
-                        Button("Load Older Commits · \(history.commits.count) shown") { model.loadMoreHistory() }
+                        loadOlderCommitsButton(history)
                             .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -517,6 +524,10 @@ struct RepositoryHistoryView: View {
 
     private var showsCommitGraph: Bool {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func loadOlderCommitsButton(_ history: RepositoryHistory) -> some View {
+        Button("Load Older Commits · \(history.commits.count) loaded") { model.loadMoreHistory() }
     }
 
     private var currentBranchName: String? {
@@ -1025,6 +1036,9 @@ private struct RepositoryCommitDetailView: View {
     @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
     @State private var commitPendingReset: RepositoryHistory.Commit?
     @State private var commitPendingRebasePlan: RepositoryHistory.Commit?
+    @State private var pendingCherryPick: (
+        commit: RepositoryHistory.Commit, repository: RepositorySummary, headCommitID: String
+    )?
     @State private var showsFullMessage = false
 
     @ViewBuilder
@@ -1072,6 +1086,31 @@ private struct RepositoryCommitDetailView: View {
         }
         .sheet(item: $commitPendingRebasePlan) { commit in
             InteractiveRebasePlanSheet(model: model, commit: commit)
+        }
+        .confirmationDialog(
+            "Cherry-Pick Commit?",
+            isPresented: Binding(
+                get: { pendingCherryPick != nil },
+                set: { if !$0 { pendingCherryPick = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingCherryPick
+        ) { request in
+            Button("Cherry-Pick Commit") {
+                Task {
+                    await model.cherryPickCommit(
+                        request.commit,
+                        in: request.repository,
+                        expectedHeadCommitID: request.headCommitID
+                    )
+                }
+            }
+            .disabled(model.isLoading || model.isSyncing)
+            Button("Cancel", role: .cancel) {}
+        } message: { request in
+            if case .branch(let branch) = request.repository.head {
+                Text("Apply \(request.commit.subject) (\(request.commit.id.prefix(8))) to \(branch) as a new commit. If it conflicts, resolve the files in Changes, then continue or abort.")
+            }
         }
     }
 
@@ -1228,6 +1267,18 @@ private struct RepositoryCommitDetailView: View {
                 }
 
                 commitSignature
+
+                let cherryPickUnavailableReason = cherryPickUnavailableReason(for: commit)
+                Button("Cherry-Pick…", systemImage: "arrow.turn.down.right") {
+                    guard let repository = model.repository,
+                          case .loaded(let history) = model.historyState,
+                          let headCommitID = history.headCommitID else { return }
+                    pendingCherryPick = (commit, repository, headCommitID)
+                }
+                .controlSize(.small)
+                .disabled(model.isLoading || model.isSyncing || cherryPickUnavailableReason != nil)
+                .help(cherryPickUnavailableReason ?? "Apply this commit’s changes to the current branch as a new commit")
+                .accessibilityLabel("Cherry-pick \(commit.subject) onto the current branch")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1326,6 +1377,26 @@ private struct RepositoryCommitDetailView: View {
         }
         guard case .branch = repository.head, !repository.isUnborn else {
             return "Switch to a local branch before reverting a commit."
+        }
+        return nil
+    }
+
+    private func cherryPickUnavailableReason(for commit: RepositoryHistory.Commit) -> String? {
+        guard let repository = model.repository else {
+            return "The Repository is no longer available."
+        }
+        guard commit.parentIDs.count <= 1 else {
+            return "Cherry-picking merge commits requires a mainline parent. Use Git in a terminal."
+        }
+        guard repository.changes.isEmpty else {
+            return "Commit or Stash the current changes before cherry-picking a commit."
+        }
+        guard repository.operation == nil else {
+            return "Finish or abort the current Git operation before cherry-picking a commit."
+        }
+        guard case .branch = repository.head, !repository.isUnborn,
+              case .loaded(let history) = model.historyState, history.headCommitID != nil else {
+            return "Switch to a local branch with commits before cherry-picking a commit."
         }
         return nil
     }

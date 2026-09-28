@@ -678,7 +678,8 @@ struct RepositoryDiffView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This replaces the file on disk with its staged version, or its last committed version when nothing is staged. Gallae cannot undo this action."
+                "This replaces the file on disk with its staged version, or its last committed version when nothing is staged. "
+                    + RepositoryDiscardRecovery.scopeDescription
             )
         }
         .alert(
@@ -1077,7 +1078,7 @@ private struct RepositoryDiffSectionView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("This rewrites the file on disk without these changes. The index is not touched, and Gallae cannot undo this action.")
+            Text("This rewrites the file on disk without these changes. The index is not touched. " + RepositoryDiscardRecovery.scopeDescription)
         }
     }
 
