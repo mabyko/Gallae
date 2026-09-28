@@ -101,6 +101,8 @@ xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=
 
 **Requirements:** macOS 15 or later, Xcode, and system Git (Xcode Command Line Tools).
 
+The [CI workflow](.github/workflows/ci.yml) builds and runs tests for pull requests and pushes to `main`.
+
 ## Documentation
 
 The detailed project documentation is currently in Korean.

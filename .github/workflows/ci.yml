@@ -1,0 +1,30 @@
+name: Build and Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Build and run tests
+        run: >-
+          xcodebuild test
+          -project Gallae.xcodeproj
+          -scheme Gallae
+          -destination 'platform=macOS'
+          -parallel-testing-enabled NO
+          CODE_SIGNING_ALLOWED=NO

@@ -99,6 +99,8 @@ xcodebuild test -project Gallae.xcodeproj -scheme Gallae -destination 'platform=
 
 **요구 사항** — macOS 15 이상, Xcode, 시스템 Git(Xcode Command Line Tools).
 
+[CI workflow](.github/workflows/ci.yml)는 PR과 `main` push에서 빌드·테스트를 실행한다.
+
 ## 문서
 
 | | |
