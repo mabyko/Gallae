@@ -26,6 +26,7 @@
 
 - Appearance → History Colors에서 그래프 시작색과 로컬·원격 branch·tag 배지색을 각각 선택하고 기본색으로 초기화한다. 색상은 저장되며 배지 글자는 시스템 기본 글자색을 유지한다.
 - Appearance → History Layout에서 기본 Top and Bottom과 Side by Side를 고른다. 배치 전환과 검토 확장·복귀는 선택한 commit·파일을 유지한다.
+- 변경 파일 칸이 560pt보다 좁으면 목록 대신 경로 메뉴, 현재 순번과 이전·다음 파일 버튼으로 검토한다. 첫·마지막 파일의 이동 경계를 지키며, 넓어지면 같은 파일을 선택한 목록으로 돌아온다.
 - History 머리의 조회 범위 메뉴에서 All Branches & Tags 또는 로컬 branch를 선택한다. 이 메뉴만 조회 범위를 바꾸며 checkout은 실행하지 않는다. Clear Filter로 전체로 돌아온다. 선택한 ref가 필터 밖이면 Show in All History를 제공한다.
 - branch 더블클릭이나 Open Worktree로 기존 Worktree를 열면 이동 전의 명시적 필터를 유지하고 대상 HEAD 위치를 선택한다. 이동 실패 시 현재 Worktree와 조회 범위가 유지되고, Library 등에서 일반적인 다른 Repository를 열면 전체 이력으로 초기화한다.
 - 아직 commit이 없으면 오류 대신 `No Commits Yet` 빈 상태를 표시한다.

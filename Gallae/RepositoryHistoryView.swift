@@ -23,23 +23,23 @@ struct RepositoryHistoryView: View {
         RepositoryHistorySplit(layout: historyLayout, isReviewExpanded: isReviewExpanded) {
             VStack(spacing: 0) {
                 VStack(spacing: 7) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 8) {
-                                historyScopeMenu
-                                if scope != nil {
-                                    Button("Clear Filter") { scope = nil }
-                                        .controlSize(.small)
-                                        .help("Show all branches and tags again")
-                                }
+                    let identity = VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            historyScopeMenu
+                            if scope != nil {
+                                Button("Clear Filter") { scope = nil }
+                                    .controlSize(.small)
+                                    .help("Show all branches and tags again")
                             }
-                            Text(headerSubtitle)
-                                .gallaeFont(.caption1)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
                         }
-                        Spacer()
+                        Text(headerSubtitle)
+                            .gallaeFont(.caption1)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(headerSubtitle)
+                    }
+                    let actions = HStack(spacing: 8) {
                         headerTools
                         if case .loaded(let history) = model.historyState {
                             Text(history.commits.count, format: .number)
@@ -60,6 +60,20 @@ struct RepositoryHistoryView: View {
                                 .labelStyle(.iconOnly)
                                 .controlSize(.small)
                                 .help(isSearchVisible ? "Close Search" : "Search Commit History")
+                            }
+                        }
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            identity.frame(minWidth: 220, idealWidth: 220)
+                            Spacer(minLength: 0)
+                            actions.fixedSize()
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            identity
+                            HStack {
+                                Spacer(minLength: 0)
+                                actions
                             }
                         }
                     }
@@ -265,7 +279,7 @@ struct RepositoryHistoryView: View {
     }
 
     /// Switch and Open Worktree for a branch; New Branch… for a tag; Check Out… for a remote branch; Fetch, Fetch &
-    /// Prune, and Edit… for a remote. Removing a remote lives in its context menu and the Edit… sheet.
+    /// Prune, and Edit… for a remote. Secondary remote actions share a menu to keep the header compact.
     @ViewBuilder
     private var headerTools: some View {
         let isBusy = model.isLoading || model.isSyncing
@@ -300,18 +314,25 @@ struct RepositoryHistoryView: View {
             }
             .help("Fetch from \(name)")
             .disabled(isBusy)
-            Button("Fetch & Prune") {
-                fetch(from: name, pruning: true)
-            }
-            .help("Fetch from \(name) and remove tracking references it no longer publishes")
-            .disabled(isBusy)
-            Button("Edit…") {
-                if case .loaded(let remotes) = model.remotesState {
-                    editedRemote = remotes.first { $0.name == name }
+            Menu {
+                Button("Fetch & Prune") {
+                    fetch(from: name, pruning: true)
                 }
+                .help("Fetch from \(name) and remove tracking references it no longer publishes")
+                .disabled(isBusy)
+                Button("Edit…") {
+                    if case .loaded(let remotes) = model.remotesState {
+                        editedRemote = remotes.first { $0.name == name }
+                    }
+                }
+                .help("Rename this Remote, change its URLs, test the connection, or remove it")
+                .disabled(model.isLoading)
+            } label: {
+                Label("Remote Actions", systemImage: "ellipsis")
+                    .labelStyle(.iconOnly)
             }
-            .help("Rename this Remote, change its URLs, test the connection, or remove it")
-            .disabled(model.isLoading)
+            .accessibilityLabel("Remote Actions")
+            .help("More actions for \(name)")
         case .branch, nil:
             EmptyView()
         }

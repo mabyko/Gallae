@@ -12,7 +12,7 @@
 ## 정상 흐름
 
 1. 사용자가 Navigator의 Remotes 섹션에서 remote 이름을 보고 하나를 선택한다.
-2. Gallae가 History를 그 remote 범위로 바꾼다. 헤더는 이름과 Fetch URL, 도구는 `Fetch`·`Fetch & Prune`·`Edit…`다. Navigator의 remote 행이 열려 remote-tracking branch(`origin/` 접두어 없이, 전체 이름은 도움말)를 보여 주고, 하나를 고르면 History가 그 branch 범위가 된다.
+2. Gallae가 History에서 그 remote를 탐색한다. 헤더는 이름과 Fetch URL, 도구는 `Fetch`와 `Remote Actions` 메뉴다. 메뉴에서 `Fetch & Prune`·`Edit…`를 고른다. Navigator의 remote 행이 열려 remote-tracking branch(`origin/` 접두어 없이, 전체 이름은 도움말)를 보여 주고, 하나를 고르면 History가 그 branch의 끝 commit으로 이동한다. 선택은 명시적인 History 조회 필터를 바꾸지 않는다.
 3. 사용자가 URL을 선택해 복사한다.
 4. Navigator에서 `History`(⌘2) 같은 목적지나 다른 객체를 고르면 본문이 그쪽으로 바뀐다.
 

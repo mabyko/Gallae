@@ -135,15 +135,7 @@ struct RepositoryRevisionChangesView: View {
             // Keep the diff readable when the saved-changes pane cannot fit both lists and code.
             if proxy.size.width < 560 {
                 VStack(spacing: 0) {
-                    Picker("Changed Files", selection: $selectedFileID) {
-                        ForEach(files) { file in
-                            Text(file.path).tag(Optional(file.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .accessibilityLabel("Changed Files, \(files.count) files")
+                    compactFileControls(files)
                     Divider()
                     revisionDetail
                 }
@@ -155,6 +147,48 @@ struct RepositoryRevisionChangesView: View {
                 }
             }
         }
+    }
+
+    private func compactFileControls(_ files: [RepositoryCommitFile]) -> some View {
+        let index = files.firstIndex { $0.id == selectedFileID }
+        let previous = index.flatMap { $0 > 0 ? files[$0 - 1].id : nil }
+        let next = index.flatMap { $0 + 1 < files.count ? files[$0 + 1].id : nil }
+        return HStack(spacing: 8) {
+            Picker("Changed Files", selection: $selectedFileID) {
+                ForEach(files) { file in
+                    Text(file.path).tag(Optional(file.id))
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .accessibilityLabel("Changed Files, \(files.count) files")
+            .help(index.map { files[$0].path } ?? "Choose a changed file")
+
+            HStack(spacing: 8) {
+                Text("\(index.map { $0 + 1 } ?? 0) of \(files.count)")
+                    .gallaeFont(.caption1, digits: true)
+                    .foregroundStyle(.secondary)
+                Button("Previous File", systemImage: "chevron.up") {
+                    if let previous { selectedFileID = previous }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(previous == nil)
+                .help("Previous changed file in this revision")
+                Button("Next File", systemImage: "chevron.down") {
+                    if let next { selectedFileID = next }
+                }
+                .labelStyle(.iconOnly)
+                .disabled(next == nil)
+                .help("Next changed file in this revision")
+            }
+            .fixedSize()
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private func revisionFileList(_ files: [RepositoryCommitFile]) -> some View {

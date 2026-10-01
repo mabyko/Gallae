@@ -1,9 +1,10 @@
-// Run from the repository root after building Gallae (requires macOS Accessibility permission):
+// Run from the repository root after building Release Gallae (requires macOS Accessibility permission):
 // xcrun swiftc Gallae/LibraryStore.swift scripts/check-floating-navigator.swift -o /tmp/check-floating-navigator
-// /tmp/check-floating-navigator [/path/to/Gallae.app/Contents/MacOS/Gallae]
+// /tmp/check-floating-navigator /path/to/Release/Gallae.app/Contents/MacOS/Gallae
 // Uses an ad hoc signed temporary .app with its own preferences domain.
 // Input stops immediately if that fixture PID loses the foreground.
 // Keep the fixture app in the foreground until the check finishes.
+// Cleanup normally quits only the fixture PID and unregisters its exact Launch Services path.
 import AppKit
 import ApplicationServices
 
@@ -120,18 +121,60 @@ struct CheckFloatingNavigator {
     static func check() throws {
         setbuf(stdout, nil)
         try require(AXIsProcessTrusted(), "Grant Accessibility permission to the invoking terminal before running this check")
-        let executable = CommandLine.arguments.dropFirst().first ?? "/tmp/gallae-navigator-build/Build/Products/Debug/Gallae.app/Contents/MacOS/Gallae"
+        guard let executable = CommandLine.arguments.dropFirst().first else {
+            throw NSError(domain: "Supply the built Release app executable", code: 1)
+        }
+        try require(!executable.contains("/Debug/"), "Use a Release executable for this check")
         try require(FileManager.default.isExecutableFile(atPath: executable), "Build Gallae first: \(executable)")
         let files = FileManager.default
         let sandbox = files.temporaryDirectory.appending(path: "GallaeNavigatorRegression-\(UUID())")
         let root = sandbox.appending(path: "repository")
         try files.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? files.removeItem(at: sandbox) }
         let bundleURL = URL(fileURLWithPath: executable).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         try require(Bundle(url: bundleURL) != nil, "Executable must be inside Gallae.app")
         let fixtureApp = sandbox.appending(path: "Gallae.app")
-        try files.copyItem(at: bundleURL, to: fixtureApp)
         let bundleID = "forked.gallae.local.navigator-\(UUID().uuidString)"
+        var launchedProcess: Process?
+        print("| QA cleanup target | Decision |")
+        print("| --- | --- |")
+        print("| \(fixtureApp.path) (\(bundleID)) | Remove disposable copy after normal Quit and exact LS unregister verification |")
+        print("| \(executable) | Preserve Release input |")
+        print("| \(bundleID) preferences | Remove test-only domain |")
+        print("| com.mabyko.gallae.epilo9er preferences / user apps | Preserve |")
+        defer {
+            do {
+                if let launchedProcess, launchedProcess.isRunning {
+                    let fixture = NSRunningApplication(processIdentifier: launchedProcess.processIdentifier)
+                    try require(fixture?.bundleURL?.standardizedFileURL == fixtureApp.standardizedFileURL, "Cleanup PID no longer belongs to the fixture bundle")
+                    try require(fixture?.terminate() == true, "Fixture refused normal Quit; preserved its bundle")
+                    try wait("Fixture did not finish normal Quit; preserved its bundle") { !launchedProcess.isRunning }
+                }
+                let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+                func registration(_ arguments: [String]) throws -> String {
+                    let task = Process()
+                    let output = Pipe()
+                    task.executableURL = URL(fileURLWithPath: lsregister)
+                    task.arguments = arguments
+                    task.standardOutput = output
+                    task.standardError = FileHandle.nullDevice
+                    try task.run()
+                    let data = output.fileHandleForReading.readDataToEndOfFile()
+                    task.waitUntilExit()
+                    try require(task.terminationStatus == 0, "Launch Services cleanup failed")
+                    return String(decoding: data, as: UTF8.self)
+                }
+                _ = try registration(["-u", fixtureApp.path])
+                try require(!registration(["-dump"]).contains(fixtureApp.path), "Fixture remains registered; preserved its bundle")
+                UserDefaults(suiteName: bundleID)?.removePersistentDomain(forName: bundleID)
+                try? files.removeItem(at: files.temporaryDirectory.appending(path: "\(bundleID).savedState"))
+                try files.removeItem(at: sandbox)
+                print("Cleanup: fixture quit, exact Launch Services entry absent, disposable bundle/preferences removed")
+            } catch {
+                fputs("FAIL: cleanup \(error); retained \(sandbox.path) for inspection\n", stderr)
+                exit(1)
+            }
+        }
+        try files.copyItem(at: bundleURL, to: fixtureApp)
         let infoURL = fixtureApp.appending(path: "Contents/Info.plist")
         var info = try PropertyListSerialization.propertyList(from: Data(contentsOf: infoURL), format: nil) as! [String: Any]
         info["CFBundleIdentifier"] = bundleID
@@ -145,10 +188,6 @@ struct CheckFloatingNavigator {
         try sign.run()
         sign.waitUntilExit()
         try require(sign.terminationStatus == 0, "Ad hoc fixture signing failed")
-        defer {
-            UserDefaults(suiteName: bundleID)?.removePersistentDomain(forName: bundleID)
-            try? files.removeItem(at: files.temporaryDirectory.appending(path: "\(bundleID).savedState"))
-        }
         func git(_ arguments: [String]) throws {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -160,7 +199,14 @@ struct CheckFloatingNavigator {
             try require(process.terminationStatus == 0, "git \(arguments) failed")
         }
         try git(["init", "-q", "-b", "main"])
-        try git(["-c", "user.name=Navigator Check", "-c", "user.email=navigator@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Fixture"])
+        let fixtureNames = ["alpha.txt", "bravo.txt", "charlie-with-a-long-path-for-compact-file-review.txt"]
+        for name in fixtureNames { try Data("baseline \(name)\n".utf8).write(to: root.appending(path: name)) }
+        try git(["add", "."])
+        let commitOptions = ["-c", "user.name=Navigator Check", "-c", "user.email=navigator@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q"]
+        try git(commitOptions + ["-m", "Fixture base"])
+        for name in fixtureNames { try Data("review-marker-\(name)\n".utf8).write(to: root.appending(path: name)) }
+        try git(["add", "."])
+        try git(commitOptions + ["-m", "Fixture review"])
         for index in 0..<60 { try git(["branch", String(format: "fixture-%02d", index)]) }
         try git(["remote", "add", "origin", root.path])
         try git(["update-ref", "refs/remotes/origin/main", "HEAD"])
@@ -183,14 +229,11 @@ struct CheckFloatingNavigator {
         environment["NSUnbufferedIO"] = "YES"
         process.environment = environment
         // Argument-domain overrides keep fixture bookmarks and settings out of the user's saved state.
-        process.arguments = ["-lastWorkspaceBookmark.v1", argument, "-recentRepositoryBookmarks.v1", "", "-libraryFolderBookmarks.v1", "", "-automaticFetchEnabled.v1", "NO", "-narrowNavigatorStyle", "floatingPanel", "-navigatorWidth", "240", "-ApplePersistenceIgnoreState", "YES", "-AppleShowScrollBars", "Always"]
+        process.arguments = ["-lastWorkspaceBookmark.v1", argument, "-recentRepositoryBookmarks.v1", "", "-libraryFolderBookmarks.v1", "", "-automaticFetchEnabled.v1", "NO", "-narrowNavigatorStyle", "floatingPanel", "-navigatorWidth", "240", "-historyLayout", "sideBySide", "-ApplePersistenceIgnoreState", "YES", "-AppleShowScrollBars", "Always"]
         process.standardOutput = log
         process.standardError = log
         try process.run()
-        defer {
-            if process.isRunning { process.terminate() }
-            process.waitUntilExit()
-        }
+        launchedProcess = process
         let pid = process.processIdentifier
         let app = AXUIElementCreateApplication(pid)
         func mark(_ action: String) { log.write(Data("\nCHECK: \(action)\n".utf8)) }
@@ -239,7 +282,7 @@ struct CheckFloatingNavigator {
             return frame(row).minY - frame(outline).minY
         }
         try wait("Fixture repository did not finish loading") {
-            find { string($0, kAXRoleAttribute) == kAXOutlineRole && label($0) == "Commit History, 1 commits" } != nil
+            find { string($0, kAXRoleAttribute) == kAXOutlineRole && label($0) == "Commit History, 2 commits" } != nil
         }
         Thread.sleep(forTimeInterval: 1)
         func open() throws {
@@ -270,10 +313,9 @@ struct CheckFloatingNavigator {
             try closed("Escape did not dismiss Navigator")
             try require(frame(mainWindow) == originalFrame, "Escape changed the window frame")
         }
-        func setFilter(_ text: String) throws {
-            mark("filter \(text)")
-            guard let field = filter() else { throw NSError(domain: "Navigator filter missing", code: 1) }
-            try require(AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Filter focus failed")
+        func enterText(_ text: String, in field: AXUIElement) throws {
+            try require(AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Text field focus failed")
+            Thread.sleep(forTimeInterval: 0.1)
             try key(0, pid: pid, flags: .maskCommand)
             try key(51, pid: pid)
             if !text.isEmpty {
@@ -285,8 +327,13 @@ struct CheckFloatingNavigator {
                     event.post(tap: .cghidEventTap)
                 }
             }
-            try wait("Filter value did not update") { string(field, kAXValueAttribute) == text }
+            try wait("Text field value did not update") { string(field, kAXValueAttribute) == text }
             Thread.sleep(forTimeInterval: 0.3)
+        }
+        func setFilter(_ text: String) throws {
+            mark("filter \(text)")
+            guard let field = filter() else { throw NSError(domain: "Navigator filter missing", code: 1) }
+            try enterText(text, in: field)
         }
         do {
             try wait("Navigator did not fold at 820 points") { filter() == nil }
@@ -424,9 +471,135 @@ struct CheckFloatingNavigator {
             }
             try require(frame(mainWindow) == shortcutFrame, "Keyboard Navigator shortcut changed the window frame")
             try dismiss()
-            print("PASS: open, Escape, outside click, same-item dismissal; scroll, filter, remote collapse preserved across reopen/docking")
+
+            // Reuse the selected remote and the latest commit to exercise responsive History.
+            try open()
+            try setFilter("origin")
+            try chooseRow("origin")
+            func readable(_ element: AXUIElement, _ name: String, minimumWidth: CGFloat = 20) throws {
+                let bounds = frame(element)
+                try require(bounds.width >= minimumWidth && bounds.height >= 12 && frame(mainWindow).contains(bounds), "\(name) clipped outside the window or unreadably small: \(bounds)")
+            }
+            func historyControls() throws {
+                guard let scope = find({ label($0).contains("History scope") }) else { throw NSError(domain: "History scope control missing", code: 1) }
+                try readable(scope, "History scope", minimumWidth: 100)
+                let fetch = find { string($0, kAXRoleAttribute) == kAXButtonRole && string($0, kAXHelpAttribute) == "Fetch from origin" }
+                let actions = find { label($0).contains("Remote Actions") }
+                let search = find { string($0, kAXRoleAttribute) == kAXButtonRole && ["Search Commit History", "Close Search"].contains(label($0)) }
+                guard let fetch, let actions, let search else { throw NSError(domain: "Remote History action/search controls missing", code: 1) }
+                let controls = [scope, fetch, actions, search]
+                for control in controls { try readable(control, label(control)) }
+                for index in controls.indices {
+                    for other in controls.indices where other > index {
+                        try require(!frame(controls[index]).insetBy(dx: 1, dy: 1).intersects(frame(controls[other]).insetBy(dx: 1, dy: 1)), "History controls overlap: \(label(controls[index])) / \(label(controls[other]))")
+                    }
+                }
+            }
+            func remoteActionsMenu() throws {
+                guard let actions = find({ label($0).contains("Remote Actions") }) else { throw NSError(domain: "Remote Actions menu missing", code: 1) }
+                let originalFrame = frame(mainWindow)
+                mark("open Remote Actions menu")
+                try press(actions)
+                func menuItem(_ title: String) -> AXUIElement? {
+                    (elements(actions) + elements(app)).first { string($0, kAXRoleAttribute) == kAXMenuItemRole && label($0) == title }
+                }
+                try wait("Remote Actions menu lacks Fetch & Prune/Edit") { menuItem("Fetch & Prune") != nil && menuItem("Edit…") != nil }
+                try key(53, pid: pid)
+                try wait("Remote Actions menu did not close") { menuItem("Fetch & Prune") == nil }
+                try require(frame(mainWindow) == originalFrame, "Remote Actions menu changed the window frame")
+            }
+            // The native window minimum is 780pt; Side by Side gives genuine 400pt review columns.
+            for width: CGFloat in [820, 1200, 820] {
+                try size(width, mainWindow)
+                mark("remote History controls at \(width)")
+                try historyControls()
+                try remoteActionsMenu()
+            }
+            func fileButton(_ name: String) -> AXUIElement? { find { string($0, kAXRoleAttribute) == kAXButtonRole && label($0) == name } }
+            func picker() -> AXUIElement? { find { string($0, kAXRoleAttribute) == kAXPopUpButtonRole && label($0).contains("Changed Files, 3 files") } }
+            func selectedPatch(_ index: Int, compact: Bool) throws {
+                let name = fixtureNames[index]
+                try wait("Selected patch did not change to \(name)") {
+                    find { label($0).contains("review-marker-\(name)") } != nil
+                }
+                if compact {
+                    guard let picker = picker(), let previous = fileButton("Previous File"), let next = fileButton("Next File") else { throw NSError(domain: "Compact changed-file controls missing", code: 1) }
+                    try readable(picker, "Changed Files picker", minimumWidth: 80)
+                    try require(string(picker, kAXHelpAttribute) == name || label(picker).contains(name), "Changed Files picker does not identify selected \(name)")
+                    try require(find { label($0) == "\(index + 1) of 3" } != nil, "Changed Files index count is incorrect")
+                    try require((attribute(previous, kAXEnabledAttribute) as? NSNumber)?.boolValue == (index > 0), "Previous File enabled state is incorrect")
+                    try require((attribute(next, kAXEnabledAttribute) as? NSNumber)?.boolValue == (index < 2), "Next File enabled state is incorrect")
+                    try readable(previous, "Previous File")
+                    try readable(next, "Next File")
+                } else {
+                    try require(picker() == nil, "Compact picker remained after widening")
+                    try require(find { string($0, kAXRoleAttribute) == kAXOutlineRole && label($0) == "Changed Files, 3 files" } != nil, "Wide changed-file list missing")
+                }
+            }
+            mark("compact first file")
+            try selectedPatch(0, compact: true)
+            for index in [1, 2] {
+                mark("Next File to \(fixtureNames[index])")
+                guard let next = fileButton("Next File") else { throw NSError(domain: "Next File missing", code: 1) }
+                try press(next)
+                try selectedPatch(index, compact: true)
+            }
+            mark("Previous File to bravo.txt")
+            guard let previous = fileButton("Previous File") else { throw NSError(domain: "Previous File missing", code: 1) }
+            try press(previous)
+            try selectedPatch(1, compact: true)
+            func capture(_ name: String) throws {
+                let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+                let target = windows.first {
+                    guard ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+                          let bounds = $0[kCGWindowBounds as String] as? NSDictionary,
+                          let rectangle = CGRect(dictionaryRepresentation: bounds) else { return false }
+                    return abs(rectangle.width - frame(mainWindow).width) < 2 && abs(rectangle.height - frame(mainWindow).height) < 2
+                }
+                guard let windowID = target?[kCGWindowNumber as String] as? NSNumber else { throw NSError(domain: "Fixture window capture target missing", code: 1) }
+                let capture = Process()
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", "-o", "-l", windowID.stringValue, "/tmp/gallae-review-ux-\(name).png"]
+                try capture.run()
+                capture.waitUntilExit()
+                try require(capture.terminationStatus == 0, "Fixture window capture failed")
+            }
+            try capture("narrow")
+            try size(1200, mainWindow)
+            mark("selected file preserved in wide layout")
+            try selectedPatch(1, compact: false)
+            try capture("wide")
+            try size(820, mainWindow)
+            mark("selected file preserved in narrow layout")
+            try selectedPatch(1, compact: true)
+            let searchFrame = frame(mainWindow)
+            guard let searchButton = fileButton("Search Commit History") else { throw NSError(domain: "History search button missing", code: 1) }
+            mark("open History search")
+            try press(searchButton)
+            func searchField() -> AXUIElement? { find { string($0, kAXRoleAttribute) == kAXTextFieldRole && label($0).contains("Search Commit History") } }
+            try wait("History search did not open") { searchField() != nil }
+            try require(frame(mainWindow) == searchFrame, "Opening History search changed the window frame")
+            try readable(searchField()!, "History search field", minimumWidth: 100)
+            mark("search Fixture review")
+            try enterText("review", in: searchField()!)
+            try wait("History query did not filter commits") { find { string($0, kAXRoleAttribute) == kAXOutlineRole && label($0) == "Commit History, 1 commits" } != nil }
+            for width: CGFloat in [1200, 820] {
+                try size(width, mainWindow)
+                mark("History search reflow at \(width)")
+                try require(searchField().map { string($0, kAXValueAttribute) } == "review", "History search query lost on resize")
+                try readable(searchField()!, "History search field", minimumWidth: 100)
+                try historyControls()
+            }
+            let closeSearchFrame = frame(mainWindow)
+            guard let close = fileButton("Close Search") else { throw NSError(domain: "Close Search missing", code: 1) }
+            mark("close History search")
+            try press(close)
+            try wait("Closing History search did not restore commits") { searchField() == nil && find { string($0, kAXRoleAttribute) == kAXOutlineRole && label($0) == "Commit History, 2 commits" } != nil }
+            try require(frame(mainWindow) == closeSearchFrame, "Closing History search changed the window frame")
+            try historyControls()
+            print("PASS: Navigator dismissal/state/shortcut; responsive remote History controls/search; compact file navigation/endpoints/selection preserved on resize")
         } catch {
-            print("Failure foreground: fixture=\(String(describing: attribute(app, kAXFrontmostAttribute))) actual=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "unknown")")
+            print("Failure foreground: fixture PID=\(pid) active=\(String(describing: attribute(app, kAXFrontmostAttribute))) actual PID=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) path=\(NSWorkspace.shared.frontmostApplication?.bundleURL?.path ?? "unknown")")
             for element in elements(app) {
                 let description = label(element)
                 if !description.isEmpty { print("\(string(element, kAXRoleAttribute)): \(description) \(frame(element))") }
