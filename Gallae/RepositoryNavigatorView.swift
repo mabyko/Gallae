@@ -7,14 +7,17 @@ struct RepositoryNavigatorView: View {
     @Binding var screen: RepositoryWorkspaceSection
     /// The selected reference is revealed in History without changing its filter.
     @Binding var scope: RepositoryHistoryScope?
+    @Binding var filterText: String
+    @Binding var collapsedRemotes: Set<String>
+    @Binding var scrollOffset: CGFloat
     /// Inside the floating panel the panel paints the background, so the list stays transparent.
     var isFloating = false
+    var isActive = true
+    var onNavigate: () -> Void = {}
     @Environment(\.gallaeTheme) private var theme
     @Environment(\.controlActiveState) private var controlActiveState
     @FocusState private var isScreenListFocused: Bool
     @FocusState private var isReferenceListFocused: Bool
-    @State private var filterText = ""
-    @State private var collapsedRemotes: Set<String> = []
     @State private var pendingWorktreeRemoval: WorktreeRemovalRequest?
     @State private var pendingBranchDeletion: String?
     @State private var pendingRemoteBranchDeletion: String?
@@ -49,6 +52,9 @@ struct RepositoryNavigatorView: View {
             Button("Cancel", role: .cancel) {}
         }
         .onChange(of: model.repository?.rootURL) { pendingTrackingBranchSelection = nil }
+        .onAppear {
+            if isFloating { isScreenListFocused = true }
+        }
     }
 
     private var navigatorContent: some View {
@@ -106,6 +112,10 @@ struct RepositoryNavigatorView: View {
             .listStyle(.sidebar)
             .focused($isReferenceListFocused)
             .scrollContentBackground(theme.materials.translucentChrome && !isFloating ? .automatic : .hidden)
+            .background {
+                NavigatorScrollOffset(offset: $scrollOffset, isActive: isActive)
+                    .id(model.repository?.rootURL)
+            }
             .accessibilityLabel("Navigator")
             .onKeyPress(.return) {
                 guard let url = model.selectedWorktreeURL,
@@ -131,9 +141,8 @@ struct RepositoryNavigatorView: View {
             guard case .loaded(let remotes) = state else { return }
             collapsedRemotes.formIntersection(remotes.map(\.name))
         }
-        .onChange(of: model.repository?.rootURL) { _, _ in
-            collapsedRemotes = []
-            filterText = ""
+        .onChange(of: model.worktrees.contains { !$0.isPrimary && !$0.isBare }) { _, _ in
+            scrollOffset = 0
         }
         .sheet(isPresented: $isCreatingBranch) {
             CreateBranchSheet(model: model)
@@ -314,6 +323,7 @@ struct RepositoryNavigatorView: View {
     private func show(_ section: RepositoryWorkspaceSection) {
         screen = section
         scope = nil
+        onNavigate()
     }
 
     // MARK: - Scope list
@@ -323,6 +333,7 @@ struct RepositoryNavigatorView: View {
         model.selectWorktree(worktree)
         screen = .history
         isScreenListFocused = false
+        onNavigate()
     }
 
     private var navigatorSelection: Binding<RepositoryNavigatorSelection?> {
@@ -347,6 +358,7 @@ struct RepositoryNavigatorView: View {
                     scope = selected
                     screen = .history
                     isScreenListFocused = false
+                    onNavigate()
                 }
             }
         )
@@ -571,6 +583,7 @@ struct RepositoryNavigatorView: View {
                 .contentShape(.rect)
                 .tag(RepositoryNavigatorSelection.reference(.remote(name)))
                 .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.remote(name), isFocused: isReferenceListFocused, sidebar: true)
+                .simultaneousGesture(TapGesture().onEnded { scopeSelection.wrappedValue = .remote(name) })
                 .contextMenu {
                     Button("Fetch", systemImage: "arrow.down.circle") {
                         fetch(from: name, pruning: false)
@@ -614,8 +627,10 @@ struct RepositoryNavigatorView: View {
                     Label(tag, systemImage: "tag")
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .contentShape(.rect)
                         .tag(RepositoryNavigatorSelection.reference(.tag(tag)))
                         .gallaeSelectionBackground(isSelected: scope == RepositoryHistoryScope.tag(tag), isFocused: isReferenceListFocused, sidebar: true)
+                        .simultaneousGesture(TapGesture().onEnded { scopeSelection.wrappedValue = .tag(tag) })
                 }
             }
         }
@@ -784,6 +799,81 @@ struct WorktreeRemovalRequest {
             message += " Deleting \(trackingRef) also removes it on the remote for everyone using it."
         }
         return message
+    }
+}
+
+private struct NavigatorScrollOffset: NSViewRepresentable {
+    @Binding var offset: CGFloat
+    var isActive: Bool
+
+    func makeNSView(context: Context) -> OffsetView { OffsetView(frame: .zero) }
+
+    func updateNSView(_ view: OffsetView, context: Context) {
+        view.offset = $offset
+        view.isActive = isActive
+        if isActive {
+            if view.observer == nil { view.attach() }
+        } else {
+            view.detach()
+        }
+    }
+
+    static func dismantleNSView(_ view: OffsetView, coordinator: ()) { view.detach() }
+
+    final class OffsetView: NSView {
+        var offset: Binding<CGFloat> = .constant(0)
+        var isActive = false
+        var observer: NSObjectProtocol?
+        private var generation = 0
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { detach() } else if isActive { attach() }
+        }
+
+        func detach() {
+            generation += 1
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+        }
+
+        func attach() {
+            guard isActive, window != nil, observer == nil else { return }
+            generation += 1
+            let request = generation
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isActive, self.generation == request,
+                      let root = self.window?.contentView else { return }
+                root.layoutSubtreeIfNeeded()
+                guard self.isActive, self.generation == request, self.window != nil else { return }
+                let center = self.convert(CGPoint(x: self.bounds.midX, y: self.bounds.midY), to: nil)
+                let candidates = Self.scrollViews(in: root).filter { $0.convert($0.bounds, to: nil).contains(center) }
+                guard let scroll = candidates.min(by: { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }) else { return }
+                let clip = scroll.contentView
+                var bounds = clip.bounds
+                bounds.origin.y = self.offset.wrappedValue
+                clip.setBoundsOrigin(clip.constrainBoundsRect(bounds).origin)
+                // List measures newly visible rows while scrolling; restore again after those heights settle.
+                scroll.layoutSubtreeIfNeeded()
+                clip.setBoundsOrigin(clip.constrainBoundsRect(bounds).origin)
+                scroll.reflectScrolledClipView(clip)
+                clip.postsBoundsChangedNotifications = true
+                self.observer = NotificationCenter.default.addObserver(
+                    forName: NSView.boundsDidChangeNotification, object: clip, queue: .main
+                ) { [weak self, weak clip] _ in
+                    DispatchQueue.main.async { [weak self, weak clip] in
+                        guard let self, self.generation == request, self.isActive,
+                              self.window != nil, let clip else { return }
+                        let current = clip.bounds.origin.y
+                        if self.offset.wrappedValue != current { self.offset.wrappedValue = current }
+                    }
+                }
+            }
+        }
+
+        private static func scrollViews(in view: NSView) -> [NSScrollView] {
+            view.subviews.flatMap { ($0 as? NSScrollView).map { [$0] } ?? scrollViews(in: $0) }
+        }
     }
 }
 

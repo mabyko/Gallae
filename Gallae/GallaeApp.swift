@@ -390,7 +390,7 @@ enum GallaeAppearanceSettings {
 
         var summary: String {
             switch self {
-            case .floatingPanel: "The Navigator button shows the Navigator over the content until you choose an item."
+            case .floatingPanel: "The Navigator button opens a popover until you choose an item."
             case .toolbarMenu: "The Navigator button becomes a menu of destinations, branches, remotes, and tags."
             case .locationMenu: "The context bar shows where you are, and that label opens a menu of destinations, remotes, and tags."
             }
@@ -630,7 +630,7 @@ private struct GallaeSettingsView: View {
                     }
                 }
                 .accessibilityHint("Choose how to reach the Navigator when the window is too narrow to show it")
-                Text("Windows narrower than 948 points fold the Navigator instead of growing. \(narrowNavigator.summary)")
+                Text("In narrow windows, the Navigator folds instead of growing the window. \(narrowNavigator.summary)")
                     .gallaeFont(.caption1)
                     .foregroundStyle(.secondary)
             }

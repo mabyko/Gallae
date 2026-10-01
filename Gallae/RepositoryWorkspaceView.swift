@@ -31,8 +31,12 @@ struct RepositoryWorkspaceView: View {
         nonmutating set { model.historySelection = newValue }
     }
     @AppStorage(GallaeAppearanceSettings.narrowNavigatorKey) private var narrowNavigatorStyle = GallaeAppearanceSettings.NarrowNavigator.floatingPanel
-    /// The floating Navigator over the detail column in narrow windows.
+    /// The toolbar-anchored Navigator popover in narrow windows.
     @State private var isNavigatorPanelPresented = false
+    @State private var navigatorFilterText = ""
+    @State private var navigatorCollapsedRemotes: Set<String> = []
+    @State private var navigatorScrollOffset: CGFloat = 0
+    @State private var navigatorPanelHeight: CGFloat = 480
     @State private var navigatorWidthTask: Task<Void, Never>?
     /// Bumped once a drag past the sidebar maximum settles; the clamp view then moves the divider back.
     @State private var navigatorClampGeneration = 0
@@ -82,10 +86,8 @@ struct RepositoryWorkspaceView: View {
             // No minimum or ideal width here on purpose: `NavigationSplitView` counts the sidebar into the detail
             // minimum twice, growing the window or leaving a gap on the right (see `ResizableHSplit`).
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topLeading) {
-                if isNavigatorPanelPresented {
-                    navigatorPanel
-                }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                navigatorPanelHeight = min(560, max(1, height - 16))
             }
         }
         .onChange(of: windowWidth, initial: true) { _, width in
@@ -134,6 +136,10 @@ struct RepositoryWorkspaceView: View {
     private var workspaceContent: some View {
         workspaceLayout
         .onChange(of: model.repository?.rootURL, initial: true) {
+            navigatorFilterText = ""
+            navigatorCollapsedRemotes = []
+            navigatorScrollOffset = 0
+            isNavigatorPanelPresented = false
             commitSubject = model.commitDraft.subject
             commitBody = model.commitDraft.body
             isAmending = false
@@ -513,7 +519,10 @@ struct RepositoryWorkspaceView: View {
     }
 
     private var navigatorColumn: some View {
-        RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection)
+        RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection,
+                                filterText: $navigatorFilterText, collapsedRemotes: $navigatorCollapsedRemotes,
+                                scrollOffset: $navigatorScrollOffset,
+                                isActive: !isWindowNarrow && columnVisibility != .detailOnly)
             .navigationSplitViewColumnWidth(min: 180, ideal: Self.launchNavigatorWidth, max: Self.navigatorMaximumWidth)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
                 guard columnVisibility != .detailOnly, width >= 180 else { return }
@@ -573,7 +582,7 @@ struct RepositoryWorkspaceView: View {
     private var navigatorToggleHelp: String {
         guard isWindowNarrow else { return "Show or hide the Navigator (⌃⌘S)" }
         return switch narrowNavigatorStyle {
-        case .floatingPanel: "Show the Navigator over the content (⌃⌘S)"
+        case .floatingPanel: isNavigatorPanelPresented ? "Hide the Navigator (⌃⌘S)" : "Show the Navigator below this button (⌃⌘S)"
         case .toolbarMenu: "Choose a destination, branch, remote, or tag"
         case .locationMenu: "Widen the window past \(Int(navigatorFoldWidth)) points to show the Navigator, or use the location menu in the context bar"
         }
@@ -610,36 +619,26 @@ struct RepositoryWorkspaceView: View {
             .disabled(!command.isEnabled)
             .help(navigatorToggleHelp)
             .accessibilityLabel(command.title)
+            .accessibilityValue(isNavigatorPanelPresented || !isWindowNarrow && columnVisibility != .detailOnly ? "Expanded" : "Collapsed")
+            .popover(isPresented: $isNavigatorPanelPresented, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
+                navigatorPanel
+            }
         }
     }
 
-    /// The Navigator floating over the detail column; tap outside or Escape dismisses, choosing an item closes it.
+    /// A native popover connects the Navigator to its toolbar button without resizing the workspace.
     private var navigatorPanel: some View {
-        ZStack(alignment: .topLeading) {
-            Color.clear
-                .contentShape(.rect)
-                .onTapGesture { isNavigatorPanelPresented = false }
-                .accessibilityHidden(true)
-
-            RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection, isFloating: true)
-                .frame(width: 220)
-                .background(
-                    theme.materials.translucentChrome
-                        ? AnyShapeStyle(.regularMaterial)
-                        : AnyShapeStyle(theme.colors.opaqueChrome)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
-                .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
-                .padding(8)
-
-            // ponytail: an invisible button is the simplest way to give the panel an Escape key.
-            Button("Hide Navigator") { isNavigatorPanelPresented = false }
-                .keyboardShortcut(.cancelAction)
-                .frame(width: 0, height: 0)
-                .opacity(0)
-                .accessibilityHidden(true)
-        }
+        RepositoryNavigatorView(model: model, screen: $workspaceSection, scope: $model.historySelection,
+                                filterText: $navigatorFilterText, collapsedRemotes: $navigatorCollapsedRemotes,
+                                scrollOffset: $navigatorScrollOffset,
+                                isFloating: true, onNavigate: { isNavigatorPanelPresented = false })
+            .frame(width: min(Self.navigatorMaximumWidth, max(180, CGFloat(navigatorWidth))), height: navigatorPanelHeight)
+            .background(theme.materials.translucentChrome ? Color.clear : theme.colors.opaqueChrome)
+            .focusedSceneValue(\.navigatorToggle, navigatorToggleCommand)
+            .onKeyPress(.escape) {
+                isNavigatorPanelPresented = false
+                return .handled
+            }
     }
 
     /// Destinations, remotes, and tags as menu items with the current one checked; branches only for the toolbar

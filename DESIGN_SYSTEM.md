@@ -75,6 +75,8 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 
 History 헤더는 두 줄이다. 첫 줄은 조회 범위 메뉴(`History · All Branches & Tags` 또는 `History · Filter: <ref>`)이며, 필터가 있을 때만 옆에 작은 Clear Filter 버튼이 붙는다. 둘째 줄은 Navigator에서 고른 ref의 이름과 종류(`feature/x · Local branch`, `v1.2 · Tag`)로, 옆의 Switch·Check Out·Fetch가 무엇을 대상으로 하는지 밝힌다. 작업 브랜치는 그 위의 Working on 메뉴가 맡고, HEAD인 선택은 `· HEAD`를 덧붙여 구분한다. 상하 배치의 검토 막대는 Expand Review로 목록이 가려졌을 때만 범위 이름을 반복하고, 평소에는 순번과 이동·확장 버튼만 둔다.
 
+좁은 창의 Floating Navigator는 툴바 Navigator 버튼에 붙은 네이티브 팝오버다. 사이드바와 같은 Navigator를 사용하고 검색어, remote 펼침·접힘과 선택을 공유한다. 폭은 마지막 사이드바 폭(기본 220pt, 최대 320pt)을 따르며 높이는 본문 공간 안에서 최대 560pt로 제한한다. 창 폭이 마지막 Navigator 폭 + 728pt보다 작으면 사이드바를 접고 팝오버로 탐색하며 창을 키우지 않는다. 같은 항목을 다시 선택해도 닫힌다. 팝오버의 연결 위치·등장과 퇴장·바깥 클릭·키보드 포커스는 시스템에 맡기며 별도 모션 시스템을 만들지 않는다. 포커스 이동·복귀와 Reduce Motion 응답은 macOS 앱에서 검증한다.
+
 ## 현재 시안
 
 시안 2(`prototype/gallae-workspace`)는 정보 구조 후보 A·B·C를 비교한다. 시안 5는 채택한 구조 위에서 세 Material Response와 밀도를 비교하는 로컬 일회용 HTML이며 저장소에 넣지 않는다. 시안 5의 토큰은 `:root[data-theme]`로 응답별 Semantic 값을 덮어쓰고 Light·Dark를 각각 가지며, 설정 창 목업의 두 토글과 시스템 접근성 토글 시뮬레이션으로 응답 전환을 확인한다. 제품에서는 시스템 설정과 두 개의 앱 설정으로만 응답이 결정된다.

@@ -64,7 +64,7 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 - History는 전체 branch·tag 이력이 기본이며, 머리 메뉴의 명시적 필터로 특정 ref의 이력만 볼 수 있다. 필터는 Clear Filter로 해제하며, 필터 밖의 ref를 선택하면 전체 History에서 보는 동작을 안내한다. 브랜치 탐색 시 텍스트 검색은 해제한다. 최초 100개를 읽고 Load Older Commits 또는 오래된 ref 탐색으로 범위를 확장한다. 로컬 branch 칩의 기본색은 파랑, 원격 branch는 청록, tag는 보라다. Appearance → History Colors의 색상표에서 그래프 시작색과 세 종류의 배지색을 각각 바꾸고 초기화할 수 있다. 배지는 아이콘 영역과 이름 사이에 옅은 세로선을 둔다. 이름은 기본 글자색으로 읽기 쉽게 표시하고 종류별 색상은 아이콘·배경·테두리에만 적용한다. HEAD 칩 대신 현재 체크아웃한 커밋의 제목과 branch·tag 칩을 굵게 표시하고, 다른 커밋의 칩은 보통 굵기로 표시한다. 현재 위치 정보는 도움말·접근성 설명에 유지한다.
 - History 검색은 이미 불러온 커밋 안에서 수행하며 검색 영역에 그 개수를 표시한다. 검색 결과가 없어도 이전 커밋이 남아 있으면 Load Older Commits로 검색어를 유지한 채 범위를 늘릴 수 있다.
 - 상하 배치의 커밋 머리에는 제목, 아바타·작성자·이메일·시각, SHA·서명 상태가 보인다. 본문 미리보기는 공백·줄바꿈을 접어 가용 폭 안에서 두 줄로 보여 준다. Details…는 원문의 줄바꿈을 보존한 전체 메시지·메타데이터·커밋 작업을 제공한다.
-- 좁은 창에서는 Navigator부터 접고 창을 강제로 키우지 않는다. 접힌 Navigator에 닿는 방식은 Appearance의 Floating Navigator(기본)·Toolbar Menu·Location Menu 중에서 고른다.
+- 좁은 창에서는 Navigator부터 접고 창을 강제로 키우지 않는다. 접힌 Navigator에 닿는 방식은 Appearance의 Floating Navigator(기본)·Toolbar Menu·Location Menu 중에서 고른다. Floating Navigator는 툴바 버튼에 붙은 네이티브 팝오버로 열고 항목을 고르면 닫는다. 사이드바와 검색어, remote 펼침·접힘과 선택을 공유한다.
 - 현재 branch와 조회 범위를 구분한다. Git의 upstream 관계는 화면에서 Tracking으로 표시하며, 축약된 이름의 전체 값은 도움말과 접근성 이름에 남긴다.
 - 작업 트리가 깨끗한 Repository를 열면 History를 먼저 보여 준다. 사용자가 Changes로 이동하면 다음 편집 안내와 Show History를 제공한다.
 
