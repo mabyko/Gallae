@@ -123,13 +123,14 @@ extension RepositoryInspector {
     ) throws -> RepositoryHistory {
         guard !repository.isUnborn else { return .init(commits: []) }
 
+        let worktrees = try worktreesSynchronously(in: repository)
         let revisions: [String]
         if let reference {
             revisions = [reference, "--"]
         } else {
             // Detached Worktree commits have no branch ref, but still belong in the shared History.
             // Keep unrelated refs (such as refs/stash) out of this branch-and-tag graph.
-            let detachedHeads = try worktreesSynchronously(in: repository)
+            let detachedHeads = worktrees
                 .filter { !$0.isBare && $0.branch == nil && $0.headID.contains(where: { $0 != "0" }) }
                 .map(\.headID)
             revisions = ["--branches", "--remotes", "--tags", "HEAD"] + detachedHeads + ["--"]
@@ -203,9 +204,57 @@ extension RepositoryInspector {
                 ] ?? []
             ))
         }
+        // Remote HEAD identifies the default branch without contacting the network.
+        let symbolicRefs = try runGit([
+            "-C", repository.rootURL.path, "for-each-ref", "--format=%(refname) %(symref)", "refs/remotes"
+        ])
+        guard symbolicRefs.status == 0 else { throw RepositoryHistoryError.unreadable(symbolicRefs.standardError) }
+        let remoteDefaults = text(from: symbolicRefs.standardOutput).split(separator: "\n").compactMap { line -> (String, String)? in
+            let fields = line.split(separator: " ")
+            guard fields.count == 2, fields[0].hasSuffix("/HEAD") else { return nil }
+            return (String(fields[0]), String(fields[1].dropFirst("refs/remotes/".count)))
+        }.sorted { lhs, rhs in
+            if lhs.0 == "refs/remotes/origin/HEAD" { return rhs.0 != lhs.0 }
+            if rhs.0 == "refs/remotes/origin/HEAD" { return false }
+            return lhs.0 < rhs.0
+        }
+        func commitID(_ name: String, kind: RepositoryHistory.Reference.Kind) -> String? {
+            referenceSnapshot.references.first { $0.value.contains(.init(name: name, kind: kind)) }?.key
+        }
+        var defaultBranch: (name: String, id: String)?
+        for (_, remoteName) in remoteDefaults {
+            let localName = String(remoteName.split(separator: "/", maxSplits: 1).last ?? "")
+            if let id = commitID(localName, kind: .branch) {
+                defaultBranch = (localName, id)
+            } else if let id = commitID(remoteName, kind: .remoteBranch) {
+                defaultBranch = (remoteName, id)
+            }
+            if defaultBranch != nil { break }
+        }
+        for name in ["main", "master"] where defaultBranch == nil {
+            if let id = commitID(name, kind: .branch) { defaultBranch = (name, id) }
+        }
+        if defaultBranch == nil, let primary = worktrees.first, let branch = primary.branch,
+           let id = commitID(branch, kind: .branch) {
+            defaultBranch = (branch, id)
+        }
+        if defaultBranch == nil, let id = referenceSnapshot.headCommitID { defaultBranch = ("HEAD", id) }
+        func firstParentPath(_ id: String?) throws -> Set<String> {
+            guard let id else { return [] }
+            let result = try runGit(["-C", repository.rootURL.path, "rev-list", "--first-parent", id, "--"])
+            guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
+            return Set(text(from: result.standardOutput).split(separator: "\n").map(String.init))
+        }
+        let headPath = try firstParentPath(referenceSnapshot.headCommitID)
+        let defaultPath = try defaultBranch?.id == referenceSnapshot.headCommitID
+            ? headPath : firstParentPath(defaultBranch?.id)
+        let primaryURL = worktrees.first?.url ?? repository.rootURL
         return .init(
             commits: Array(commits.prefix(count)), headCommitID: referenceSnapshot.headCommitID,
-            focusedCommitID: focusedCommitID, hasMoreCommits: commits.count > count
+            focusedCommitID: focusedCommitID, hasMoreCommits: commits.count > count,
+            defaultBranchName: defaultBranch?.name ?? "HEAD",
+            graphPreferenceKey: "historyGraphBasis:" + primaryURL.resolvingSymlinksInPath().path,
+            defaultBranchPath: defaultPath, headPath: headPath
         )
     }
 

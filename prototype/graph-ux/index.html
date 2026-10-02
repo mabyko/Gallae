@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><title>Gallae · History UX 시안</title>
+<style>
+:root{font-family:-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo',sans-serif;color:#252b32;background:#f2f1ed;font-synthesis:none}*{box-sizing:border-box}body{margin:0;padding:38px 32px 54px}button,select{font:inherit}button{cursor:pointer}button:focus-visible,summary:focus-visible{outline:3px solid #67aafa;outline-offset:3px}main{max-width:1240px;margin:auto}.eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;color:#66736c}h1{font-size:32px;letter-spacing:-1.2px;margin:10px 0}p{line-height:1.6;margin:0;color:#65706d}.top{display:flex;justify-content:space-between;align-items:end;gap:20px}.stamp{font-size:12px;color:#6f7773;border:1px solid #cccfc7;border-radius:30px;padding:8px 12px;white-space:nowrap}.directions{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:26px 0 22px}.direction{text-align:left;border:1px solid #d4d7ce;background:#fafbf7;border-radius:12px;padding:16px 18px;min-width:0}.direction[aria-pressed=true]{border-color:#496b5b;box-shadow:0 0 0 1px #496b5b;background:#eaf0e7}.direction .letter{font-size:12px;color:#607765;font-weight:700;display:block;margin-bottom:8px}.direction strong{font-size:16px;display:block}.direction small{display:block;font-size:13px;color:#656f69;line-height:1.55;margin-top:7px}.lab{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}.labgroup{display:flex;align-items:center;gap:12px}.lab label,.lab .label{font-size:12px;color:#657069}.segments{display:flex;padding:3px;background:#e4e5de;border-radius:8px;gap:2px}.segments button{font-size:12px;border:0;padding:6px 11px;border-radius:5px;background:transparent;color:#535f57}.segments button[aria-pressed=true]{background:#fff;color:#253b2b;box-shadow:0 1px 3px #0001}.stage{background:#dedfd9;padding:28px 20px;border-radius:18px;overflow:auto;border:1px solid #d5d7cf}.app{width:100%;max-width:960px;margin:auto;background:#202020;color:#dedede;border:1px solid #414141;border-radius:13px;box-shadow:0 18px 40px #1b211b26;overflow:hidden;--blue:#64b1ff;--green:#58bd8a;--purple:#ce8bdf}.app.narrow{max-width:680px}.toolbar{height:48px;display:flex;align-items:center;padding:0 17px;gap:10px;background:#292929;border-bottom:1px solid #363636;font-size:13px}.lights{display:flex;gap:6px;margin-right:9px}.lights i{width:10px;height:10px;background:#ff6058;border-radius:100%}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#29c840}.toolbar .repo{font-weight:650}.toolbar .spacer{flex:1}.tool{color:#d4d4d4;font-size:12px;background:#323232;border:1px solid #484848;padding:5px 10px;border-radius:6px}.working{height:32px;border-bottom:1px solid #343434;font-size:12px;display:flex;align-items:center;padding:0 18px;gap:7px;color:#b7b7b7}.working b{font-weight:500;color:#dfdfdf}.working .sync{margin-left:auto;font-size:11px;color:#aaa}.historybar{height:66px;padding:11px 17px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #393939;position:relative;z-index:3}.identity{min-width:0;flex:1}.scope{border:0;background:none;color:#e3e3e3;font-size:14px;font-weight:600;padding:0;text-align:left;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.subtitle{font-size:11px;color:#adadad;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.actions{display:flex;gap:8px;align-items:center;flex:none}.count{font-size:11px;color:#c4c4c4;padding:3px 7px;border-radius:10px;background:#303030}.iconbtn,.basisbtn{height:28px;background:#303030;color:#ddd;border:1px solid #454545;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px}.iconbtn{width:30px}.iconbtn svg{width:16px;height:16px}.basisbtn{font-size:12px;padding:0 8px}.menu{position:absolute;right:17px;top:56px;width:240px;background:#303030;border:1px solid #555;border-radius:9px;padding:6px;box-shadow:0 12px 30px #0009;z-index:9}.menu.integrated{left:17px;right:auto}.menu[hidden]{display:none}.menu h3{margin:7px 9px 5px;font-size:11px;font-weight:500;color:#bbb}.menu button{width:100%;background:none;border:0;color:#eee;padding:8px 9px;text-align:left;font-size:12px;border-radius:5px;display:flex;gap:8px;align-items:center}.menu button:hover{background:#426d9b}.menu .check{width:13px;color:#8fc5ff}.menu .desc{margin-left:auto;color:#bdbdbd;font-size:11px}.menu hr{border:0;border-top:1px solid #505050;margin:5px}.commits{position:relative;padding:0 0 8px;isolation:isolate}.graph{position:absolute;inset:0 auto auto 0;width:100px;height:380px;z-index:1;pointer-events:none;overflow:visible}.rows{position:relative}.row{height:38px;width:100%;display:flex;align-items:center;padding:0 16px 0 103px;gap:9px;border:0;background:transparent;color:#dedede;text-align:left;min-width:0;font-size:12px;position:relative}.row:hover{background:#ffffff06}.row.selected{background:#3d3d3d}.row:focus-visible{outline-offset:-3px}.row .subject{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.ref{border:1px solid #426e5d;color:#86d7ad;background:#29423666;padding:2px 5px;border-radius:4px;font-size:11px;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}.ref.head{color:#b1d6ff;background:#284f75;border-color:#527fa9}.ref.other{color:#d9ade2;background:#49314966;border-color:#724f7a}.tag{font-size:8px;font-weight:700;letter-spacing:.04em;margin-left:5px;color:#e7f3ff;vertical-align:1px}.hash{font-family:ui-monospace,monospace;font-size:11px;color:#a9a9a9;margin-left:auto;flex:none}.age{font-size:11px;color:#aaa;flex:none;width:40px;text-align:right}.status{padding:9px 18px;display:flex;justify-content:space-between;border-top:1px solid #383838;font-size:10px;color:#aaa;gap:12px}.status .hint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail{background:#252525;border-top:1px solid #404040;padding:13px 18px;height:75px}.detail strong{font-size:13px;font-weight:600}.detail p{font-size:11px;color:#aaa;margin-top:6px}.explain{display:grid;grid-template-columns:1fr 1fr 1fr;gap:25px;padding:23px 5px 0}.explain h2{font-size:13px;margin:0 0 6px;color:#3c5042}.explain p{font-size:13px;line-height:1.65}.foot{margin-top:24px;padding-top:18px;border-top:1px solid #d3d7ce;font-size:12px;color:#717a73;display:flex;justify-content:space-between;gap:20px}.app.narrow .age{display:none}.app.narrow .ref{max-width:118px}.app.narrow .toolbar .optional{display:none}.app.narrow .working .sync{display:none}@media(max-width:800px){body{padding:22px 15px}.directions{grid-template-columns:1fr}.top{display:block}.stamp{display:inline-block;margin-top:14px}.stage{padding:16px 8px}.explain{grid-template-columns:1fr;gap:14px}.app{min-width:520px}.labgroup{flex-wrap:wrap}.foot{display:block}h1{font-size:26px}}
+
+/* Prototype-only treatments. Selection remains a full-width system-like fill. */
+.app[data-design="route"] .ref.head,.app[data-design="area"] .ref.head{background:#91cbff;color:#102b43;border-color:#b7ddff;font-weight:650;max-width:164px}
+.app .ref.head .tag{color:#143856;border-left:1px solid #397099;padding-left:5px}
+.row .ref,.row .subject,.row .hash,.row .age{position:relative;z-index:1}
+.row.work::before{content:"";position:absolute;left:9px;top:2px;bottom:2px;width:240px;background:#234760;border:1px solid #376380;border-left:3px solid #86caff;border-radius:5px;pointer-events:none}
+.row.work.selected::before{background:#2d5870;border-color:#8dccf6}
+.app[data-design="area"] .row.work .subject{font-weight:550}
+.status{min-height:34px}.keyline{display:inline-block;width:13px;height:3px;background:#91cbff;vertical-align:3px;margin-right:5px}.keyselection{display:inline-block;width:12px;height:9px;background:#606060;border:1px solid #858585;border-radius:2px;vertical-align:0;margin:0 5px 0 12px}
+@media(max-width:800px){.directions{grid-template-columns:1fr}}
+</style>
+<main>
+<div class="top"><div><div class="eyebrow">GALLAE / HISTORY · ROUND 02</div><h1>내 작업 경로가, 한눈에 보이도록.</h1><p>색의 농도보다 형태와 면적을 바꿨습니다. 두 안을 전환하고, 다른 커밋을 선택해 비교해 보세요.</p></div><span class="stamp">시안 전용 · 앱 코드 변경 없음</span></div>
+<div class="directions" aria-label="새 시안 선택">
+<button class="direction" data-design="route" aria-pressed="true"><span class="letter">01 / 경로·노드 강조</span><strong>노선도처럼 따라가는 현재 경로</strong><small>또렷한 윤곽선과 큰 노드. HEAD 배지까지 같은 색으로 연결해<br>시작점부터 공통 조상까지 시선이 이어집니다.</small></button>
+<button class="direction" data-design="area" aria-pressed="false"><span class="letter">02 / 행 앞부분 강조</span><strong>내 작업 커밋을 면으로 구분</strong><small>그래프와 브랜치 배지 뒤를 함께 표시합니다.<br>다른 가지의 커밋은 그대로 두어 내 작업 행만 드러납니다.</small></button>
+</div>
+<div class="lab"><div class="labgroup"><span class="label">확인해 보세요</span><span style="font-size:13px;color:#485a50">다른 커밋을 클릭해도 HEAD 강조는 유지됩니다.</span></div><div class="labgroup"><span class="label">History 영역 폭</span><div class="segments" aria-label="시안 너비"><button data-width="wide" aria-pressed="false">960</button><button data-width="narrow" aria-pressed="true">680 · 좁은 창</button></div></div></div>
+<div class="stage"><section class="app narrow" aria-label="Gallae History 화면 시안">
+<div class="toolbar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span><span style="color:#aaa">‹ Library</span><span class="repo">albacore</span><span class="spacer"></span><span class="tool">↓ Fetch</span><span class="tool optional">↓ Pull</span><span class="tool">↑ Push</span></div>
+<div class="working"><span aria-hidden="true">⑂</span> Working on: <b>fix/evaluation-targeted-rejudgment</b><span class="sync">origin · ↑0 ↓0</span></div>
+<div class="historybar"><div class="identity"><button class="scope" id="scope" aria-expanded="false">History · All Branches & Tags⌄</button><div class="subtitle" id="subtitle"></div></div><div class="actions"><span class="count">100</span><button class="iconbtn" aria-label="커밋 검색 시안" title="커밋 검색" id="search"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg></button><button id="basis" class="iconbtn" aria-label="그래프 보기 설정" aria-expanded="false" title="그래프 보기 설정"></button></div><div class="menu" id="menu" hidden></div></div>
+<div class="commits"><div class="rows" id="rows"></div><svg class="graph" id="graph" viewBox="0 0 100 380" role="img" aria-label="현재 HEAD에서 공통 조상까지 세 커밋의 작업 경로를 강조한 Git 그래프"></svg></div>
+<div class="status"><span class="hint" id="legend"></span><span>100 loaded</span></div><div class="detail"><strong id="detail-title">chore: 배포 설정 업데이트</strong><p>선택한 커밋의 상세 · 행 선택과 HEAD 경로 강조는 서로 독립적입니다.</p></div>
+</section></div>
+<div class="explain"><div><h2>01 / 달라진 표현</h2><p id="ex-space"></p></div><div><h2>02 / 상태 구분</h2><p id="ex-path"></p></div><div><h2>03 / 선택할 때 고려할 점</h2><p id="ex-trade"></p></div></div>
+<div class="foot"><span>공통 원칙: 다른 가지의 색 유지 · 공통 조상 이후 강조 종료 · 클릭 선택과 작업 경로를 구분</span><span>새 시안 두 가지 · 보기 설정 버튼은 동일</span></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+let design='route',basis='main',selected=5,scopeMenu=false;
+// Identical topology in both studies; an unrelated commit interrupts the current work rows.
+const commits=[
+ ['feature/report-copy','feat: 리포트 문구 정책 추가','d8f703a','2m'],
+ ['','fix: 입력 필드 정리','7cc1d5e','4m'],
+ ['fix/evaluation','fix: 검증된 판단을 보존한다','72cda72','27m'],
+ ['','fix: 실패한 항목만 재판정한다','85e9a30','31m'],
+ ['','test: 문구 정책 검증 추가','638ab17','34m'],
+ ['main','chore: 배포 설정 업데이트','f5a25c1','13h'],
+ ['','refactor: 평가 결과 저장 경로 정리','9821fda','14h'],
+ ['','chore: 런타임 설정 정리','aed7242','15h'],
+ ['fix/admin-report','fix: 관리자 리포트 보완','d027ac6','16h'],
+ ['','chore: 리포트 기본 설정','541a3c2','17h']];
+const work=new Set([2,3,6]);
+const copy={
+ route:['가는 후광 대신 선명한 중심선과 어두운 분리 윤곽을 씁니다. 작업 경로의 일반 노드도 커져서 경로를 따라가기 쉽습니다.','선과 HEAD 배지가 같은 밝은 파랑입니다. 다른 가지는 색을 남긴 채 부드럽게 표시합니다.','선이 교차하는 곳에서도 다른 가지로 시선이 넘어가지 않는지 보세요. 커밋 내용보다 경로를 추적하는 작업에 초점을 맞췄습니다.'],
+ area:['현재 작업 커밋의 그래프·배지 영역에 짧은 파란 면을 둡니다. 가운데 끼어든 다른 브랜치 행은 칠하지 않습니다.','현재 작업은 짧은 파란 면, 클릭한 커밋은 행 전체의 회색입니다. 두 상태가 겹쳐도 구분되도록 왼쪽 표식을 남깁니다.','내 작업 커밋을 빠르게 훑는 데 초점을 맞췄습니다. 행의 강조가 연결선보다 먼저 눈에 들어오는지도 비교해 보세요.']};
+const gear='<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h14M3 10h14M3 15h14"/><rect x="6" y="3" width="3" height="4" rx="1" fill="#303030"/><rect x="12" y="8" width="3" height="4" rx="1" fill="#303030"/><rect x="5" y="13" width="3" height="4" rx="1" fill="#303030"/></svg>';
+function closeMenu(){$('#menu').hidden=true;$('#basis').setAttribute('aria-expanded','false');$('#scope').setAttribute('aria-expanded','false')}
+function openMenu(fromScope=false){
+ const m=$('#menu');if(!m.hidden){closeMenu();return}scopeMenu=fromScope;
+ m.classList.toggle('integrated',fromScope);
+ m.innerHTML=fromScope?'<h3>조회 범위</h3><button data-close><span class="check">✓</span>All Branches & Tags</button>':`<h3>왼쪽 기준</h3><button data-basis="main"><span class="check">${basis==='main'?'✓':''}</span>기본 브랜치<span class="desc">main</span></button><button data-basis="head"><span class="check">${basis==='head'?'✓':''}</span>현재 HEAD<span class="desc">fix/evaluation…</span></button>`;
+ m.hidden=false;(fromScope?$('#scope'):$('#basis')).setAttribute('aria-expanded','true');
+ m.querySelector('button').focus();
+}
+function draw(){
+ const h=basis==='main'?50:24,m=basis==='main'?24:50;
+ const colors={head:'#91cbff',purple:'#a477b0',green:'#579875'};
+ const focus=`M${h} 95 V263 Q${h} 285 24 285`;
+ const line=(d,c,w=2.1)=>`<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+ let svg=line('M76 19V263Q76 285 24 285',colors.purple)
+  +line(`M${m} 209V263Q${m} 285 24 285V361`,colors.green)
+  +line('M76 323V339Q76 361 24 361',colors.purple);
+ // The outer dark stroke separates the current route from crossings without a glow.
+ if(design==='route')svg+=line(focus,'#121a21',8)+line(focus,'#d0e9ff',5)+line(focus,'#5ba9f2',2.6);
+ else svg+=line(focus,colors.head,2.4);
+ const xs=[76,76,h,h,76,m,h,24,76,24];
+ xs.forEach((x,i)=>{
+  const y=i*38+19,c=work.has(i)?colors.head:[0,1,4,8].includes(i)?colors.purple:colors.green;
+  if(i===2){
+   svg+=`<circle cx="${x}" cy="${y}" r="10" fill="#131d26" stroke="${c}" stroke-width="2.5"/><circle cx="${x}" cy="${y}" r="4.5" fill="${c}"/>`;
+  }else if(work.has(i)&&design==='route'){
+   svg+=`<circle cx="${x}" cy="${y}" r="6.5" fill="${c}" stroke="#162c3f" stroke-width="2"/>`;
+  }else svg+=`<circle cx="${x}" cy="${y}" r="${i===7?5:3.5}" fill="${i===7?'#202020':c}" stroke="${c}" stroke-width="1.5"/>`;
+ });
+ $('#graph').innerHTML=svg;
+}
+function render(){
+ $('.app').dataset.design=design;
+ document.querySelectorAll('[data-design]').forEach(e=>{if(e.tagName==='BUTTON')e.setAttribute('aria-pressed',e.dataset.design===design)});
+ $('#basis').innerHTML=gear;
+ $('#subtitle').textContent=`기준: ${basis==='main'?'main':'현재 HEAD'} · 작업 구간 3 commits`;
+ $('#legend').innerHTML='<span class="keyline"></span>현재 작업 경로<span class="keyselection"></span>선택한 커밋';
+ $('#ex-space').textContent=copy[design][0];$('#ex-path').textContent=copy[design][1];$('#ex-trade').textContent=copy[design][2];
+ $('#rows').innerHTML=commits.map(([ref,title,hash,age],i)=>`<button class="row ${i===selected?'selected':''} ${design==='area'&&work.has(i)?'work':''}" data-row="${i}" aria-pressed="${i===selected}" aria-label="${title}${i===2?', 현재 HEAD':work.has(i)?', 현재 작업 커밋':''}">${ref?`<span class="ref ${i===2?'head':[0,4,8].includes(i)?'other':''}" title="${ref}">${ref}${i===2?'<span class="tag">HEAD</span>':''}</span>`:''}<span class="subject">${title}</span><span class="hash">${hash}</span><span class="age">${age}</span></button>`).join('');
+ $('#detail-title').textContent=commits[selected][1];draw();
+}
+document.addEventListener('click',e=>{
+ const b=e.target.closest('button');if(!b){if(!e.target.closest('.menu'))closeMenu();return}
+ if(b.dataset.design){design=b.dataset.design;closeMenu();render()}
+ else if(b.dataset.width){$('.app').classList.toggle('narrow',b.dataset.width==='narrow');document.querySelectorAll('[data-width]').forEach(x=>x.setAttribute('aria-pressed',x===b));closeMenu()}
+ else if(b.dataset.basis){basis=b.dataset.basis;closeMenu();render();$('#basis').focus()}
+ else if(b.dataset.row!==undefined){selected=Number(b.dataset.row);closeMenu();render();$(`[data-row="${selected}"]`).focus()}
+ else if(b.id==='basis')openMenu();else if(b.id==='scope')openMenu(true);
+ else if(b.id==='search'){$('#subtitle').textContent='시안에서는 보기 설정과 커밋 선택을 체험할 수 있습니다.';closeMenu()}
+ else if(b.hasAttribute('data-close')){closeMenu();$('#scope').focus()}
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeMenu();(scopeMenu?$('#scope'):$('#basis')).focus()}});
+render();
+</script>
+</html>
