@@ -208,6 +208,7 @@ struct RepositoryHistory: Equatable, Sendable {
         let fromLane: Int
         let toLane: Int
         let colorIndex: Int
+        var isHeadPath: Bool = false
     }
 
     struct GraphRow: Equatable, Sendable {
@@ -218,6 +219,8 @@ struct RepositoryHistory: Equatable, Sendable {
         let incomingEdges: [GraphEdge]
         let continuationEdges: [GraphEdge]
         let parentEdges: [GraphEdge]
+
+        var isHeadPath: Bool = false
 
         var hasIncomingEdge: Bool { !incomingEdges.isEmpty }
     }
@@ -260,43 +263,66 @@ struct RepositoryHistory: Equatable, Sendable {
     let headCommitID: String?
     let graphRows: [String: GraphRow]
     let graphLaneCount: Int
+    let headGraphRows: [String: GraphRow]
+    let defaultBranchName: String
+    let graphPreferenceKey: String
     let focusedCommitID: String?
     let hasMoreCommits: Bool
 
-    init(commits: [Commit], headCommitID: String? = nil, focusedCommitID: String? = nil, hasMoreCommits: Bool = false) {
+    init(commits: [Commit], headCommitID: String? = nil, focusedCommitID: String? = nil,
+         hasMoreCommits: Bool = false, defaultBranchName: String = "HEAD",
+         graphPreferenceKey: String = "historyGraphBasis", defaultBranchPath: Set<String> = [],
+         headPath: Set<String>? = nil) {
         self.commits = commits
         self.headCommitID = headCommitID ?? commits.first?.id
         self.focusedCommitID = focusedCommitID
         self.hasMoreCommits = hasMoreCommits
-        let layout = Self.makeGraphLayout(for: commits)
+        self.defaultBranchName = defaultBranchName
+        self.graphPreferenceKey = graphPreferenceKey
+        var resolvedHeadPath = headPath ?? []
+        if headPath == nil {
+            let parents = Dictionary(uniqueKeysWithValues: commits.map { ($0.id, $0.parentIDs) })
+            var id = self.headCommitID
+            while let current = id, resolvedHeadPath.insert(current).inserted {
+                id = parents[current]?.first
+            }
+        }
+        // Stop the work highlight where it joins the default branch; retain the full spine for layout.
+        let highlightedPath = defaultBranchPath.contains(self.headCommitID ?? "")
+            ? resolvedHeadPath : resolvedHeadPath.subtracting(defaultBranchPath)
+        let layout = Self.makeGraphLayout(for: commits, anchorPath: defaultBranchPath, headPath: highlightedPath)
+        headGraphRows = defaultBranchPath == resolvedHeadPath ? layout.rows
+            : Self.makeGraphLayout(for: commits, anchorPath: resolvedHeadPath, headPath: highlightedPath).rows
         graphRows = layout.rows
         graphLaneCount = layout.laneCount
     }
 
     private static func makeGraphLayout(
-        for commits: [Commit]
+        for commits: [Commit], anchorPath: Set<String>, headPath: Set<String>
     ) -> (rows: [String: GraphRow], laneCount: Int) {
-        var lanes: [(target: String, color: Int)?] = []
-        var nextColorIndex = 0
+        let hasAnchor = !anchorPath.isEmpty
+        var lanes: [(target: String, color: Int, isHeadPath: Bool)?] = hasAnchor ? [nil] : []
+        var nextColorIndex = hasAnchor ? 1 : 0
         var rows: [String: GraphRow] = [:]
         var maximumLaneCount = 0
 
         for commit in commits {
+            if hasAnchor && lanes.isEmpty { lanes.append(nil) }
             let incomingLanes = lanes.indices.filter { lanes[$0]?.target == commit.id }
-            let commitLane = incomingLanes.first
-                ?? lanes.firstIndex(where: { $0 == nil })
-                ?? lanes.count
+            let commitLane = anchorPath.contains(commit.id) ? 0 : (incomingLanes.first
+                ?? lanes.indices.first(where: { (!hasAnchor || $0 > 0) && lanes[$0] == nil })
+                ?? lanes.count)
             if commitLane == lanes.count { lanes.append(nil) }
-            let commitColor = lanes[commitLane]?.color ?? nextColorIndex
-            if lanes[commitLane] == nil { nextColorIndex += 1 }
+            let commitColor = lanes[commitLane]?.color ?? (hasAnchor && commitLane == 0 ? 0 : nextColorIndex)
+            if lanes[commitLane] == nil && !(hasAnchor && commitLane == 0) { nextColorIndex += 1 }
             let topLaneCount = lanes.count
 
             let incomingEdges = incomingLanes.map {
-                GraphEdge(fromLane: $0, toLane: commitLane, colorIndex: lanes[$0]!.color)
+                GraphEdge(fromLane: $0, toLane: commitLane, colorIndex: lanes[$0]!.color, isHeadPath: lanes[$0]!.isHeadPath)
             }
             let continuationEdges = lanes.indices.compactMap { lane -> GraphEdge? in
                 guard let path = lanes[lane], path.target != commit.id else { return nil }
-                return GraphEdge(fromLane: lane, toLane: lane, colorIndex: path.color)
+                return GraphEdge(fromLane: lane, toLane: lane, colorIndex: path.color, isHeadPath: path.isHeadPath)
             }
             for lane in incomingLanes { lanes[lane] = nil }
 
@@ -310,16 +336,19 @@ struct RepositoryHistory: Equatable, Sendable {
                 } else {
                     parentLane = lanes.firstIndex(where: { $0?.target == parentID })
                         ?? lanes.indices.first(where: { $0 > commitLane && lanes[$0] == nil })
-                        ?? lanes.firstIndex(where: { $0 == nil })
+                        ?? lanes.indices.first(where: { (!hasAnchor || $0 > 0) && lanes[$0] == nil })
                         ?? lanes.count
                 }
                 if parentLane == lanes.count { lanes.append(nil) }
                 if lanes[parentLane] == nil {
-                    lanes[parentLane] = (parentID, index == 0 ? commitColor : nextColorIndex)
+                    lanes[parentLane] = (parentID, index == 0 ? commitColor : nextColorIndex, false)
                     if index != 0 { nextColorIndex += 1 }
                 }
+                let isHeadPath = index == 0 && headPath.contains(commit.id)
+                lanes[parentLane]!.isHeadPath = lanes[parentLane]!.isHeadPath || isHeadPath
                 parentEdges.append(.init(
-                    fromLane: commitLane, toLane: parentLane, colorIndex: lanes[parentLane]!.color
+                    fromLane: commitLane, toLane: parentLane, colorIndex: lanes[parentLane]!.color,
+                    isHeadPath: isHeadPath
                 ))
             }
             // Interior empty lanes are reusable; removing them would bend unrelated paths.
@@ -332,7 +361,8 @@ struct RepositoryHistory: Equatable, Sendable {
                 bottomLaneCount: lanes.count,
                 incomingEdges: incomingEdges,
                 continuationEdges: continuationEdges,
-                parentEdges: parentEdges
+                parentEdges: parentEdges,
+                isHeadPath: headPath.contains(commit.id)
             )
             maximumLaneCount = max(maximumLaneCount, topLaneCount, lanes.count)
         }

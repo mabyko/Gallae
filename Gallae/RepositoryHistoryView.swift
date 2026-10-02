@@ -6,6 +6,7 @@ struct RepositoryHistoryView: View {
     /// The explicit History filter; Navigator selection only moves the graph focus.
     @Binding var scope: RepositoryHistoryScope?
     @AppStorage(GallaeAppearanceSettings.historyLayoutKey) private var historyLayout = GallaeAppearanceSettings.HistoryLayout.stacked
+    @State private var graphUsesHEAD = false
     @State private var isReviewExpanded = false
     @FocusState private var historyFocused: Bool
     @State private var editedRemote: RepositoryRemote?
@@ -42,6 +43,8 @@ struct RepositoryHistoryView: View {
                     let actions = HStack(spacing: 8) {
                         headerTools
                         if case .loaded(let history) = model.historyState {
+                            RepositoryHistoryGraphBasisPicker(history: history, usesHEAD: $graphUsesHEAD)
+                                .id(history.graphPreferenceKey)
                             Text(history.commits.count, format: .number)
                                 .gallaeFont(.caption1, weight: .medium)
                                 .monospacedDigit()
@@ -452,7 +455,7 @@ struct RepositoryHistoryView: View {
                                 commit: commit,
                                 isHEAD: commit.id == history.headCommitID,
                                 usesWideRow: historyLayout == .stacked,
-                                graphRow: showsCommitGraph ? history.graphRows[commit.id] : nil,
+                                graphRow: showsCommitGraph ? (graphUsesHEAD ? history.headGraphRows : history.graphRows)[commit.id] : nil,
                                 currentBranchName: currentBranchName,
                                 canFastForwardBranchRefs: commit.id != history.headCommitID
                                     && reachableCommitIDs.contains(commit.id),
@@ -740,11 +743,13 @@ private struct RepositoryHistoryRow: View {
     }
 
     private func referenceChip(_ reference: RepositoryHistory.Reference) -> some View {
-        let color: Color = switch reference.kind {
+        let isCurrentBranch = isHEAD && reference.kind == .branch && reference.name == currentBranchName
+        let referenceColor: Color = switch reference.kind {
         case .branch: theme.colors.historyLocalBranch
         case .remoteBranch: theme.colors.historyRemoteBranch
         case .tag: theme.colors.historyTag
         }
+        let color = isCurrentBranch ? theme.colors.historyHeadPath : referenceColor
         let highContrast = theme.materials.response == .increasedContrast
         return HStack(spacing: 0) {
             Image(systemName: reference.kind.systemImage)
@@ -755,16 +760,16 @@ private struct RepositoryHistoryRow: View {
                         .padding(.vertical, 3)
                 }
                 .accessibilityHidden(true)
-            Text(reference.name)
-                .foregroundStyle(Color.primary)
+            Text(isCurrentBranch ? "\(reference.name) · HEAD" : reference.name)
+                .foregroundStyle(isCurrentBranch ? Color(nsColor: .textBackgroundColor) : Color.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .padding(.horizontal, 5)
                 .frame(minHeight: 18)
         }
         .gallaeFont(.caption2, weight: isHEAD ? .bold : .regular)
-        .foregroundStyle(color)
-        .background(color.opacity(highContrast ? 0.22 : 0.12), in: .rect(cornerRadius: 4))
+        .foregroundStyle(isCurrentBranch ? Color(nsColor: .textBackgroundColor) : color)
+        .background(color.opacity(isCurrentBranch ? 1 : highContrast ? 0.22 : 0.12), in: .rect(cornerRadius: 4))
         .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 4))
         .overlay {
             RoundedRectangle(cornerRadius: 4)
@@ -958,6 +963,38 @@ private struct RepositoryHistoryRow: View {
     }
 }
 
+private struct RepositoryHistoryGraphBasisPicker: View {
+    let history: RepositoryHistory
+    @Binding var usesHEAD: Bool
+    @AppStorage private var storedUsesHEAD: Bool
+
+    init(history: RepositoryHistory, usesHEAD: Binding<Bool>) {
+        self.history = history
+        _usesHEAD = usesHEAD
+        _storedUsesHEAD = AppStorage(wrappedValue: false, history.graphPreferenceKey)
+    }
+
+    var body: some View {
+        Menu {
+            Picker("Leftmost Path", selection: $storedUsesHEAD) {
+                Text("Default Branch (\(history.defaultBranchName))").tag(false)
+                Text("Current HEAD").tag(true)
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Label("Graph View Settings", systemImage: "slider.horizontal.3")
+        }
+        .labelStyle(.iconOnly)
+        .menuIndicator(.hidden)
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("Graph View Settings")
+        .accessibilityValue(storedUsesHEAD ? "Current HEAD" : history.defaultBranchName)
+        .help("Leftmost path: \(storedUsesHEAD ? "current HEAD" : history.defaultBranchName). The current work path stays highlighted.")
+        .onChange(of: storedUsesHEAD, initial: true) { usesHEAD = storedUsesHEAD }
+    }
+}
+
 private struct RepositoryHistoryGraphView: View {
     let row: RepositoryHistory.GraphRow?
     let isHEAD: Bool
@@ -972,6 +1009,17 @@ private struct RepositoryHistoryGraphView: View {
             let bend = min(metrics.historyGraphLaneSpacing / 2, middleY)
             let lineStyle = StrokeStyle(lineWidth: metrics.historyGraphLineWidth, lineCap: .round, lineJoin: .round)
 
+            let routeColor = theme.colors.historyHeadPath
+            let separator = Color(nsColor: .textBackgroundColor)
+            var highlightedPaths: [Path] = []
+            func drawEdge(_ path: Path, _ edge: RepositoryHistory.GraphEdge) {
+                if edge.isHeadPath {
+                    highlightedPaths.append(path)
+                } else {
+                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                }
+            }
+
             func xPosition(for lane: Int) -> CGFloat {
                 metrics.historyGraphInset + CGFloat(lane) * metrics.historyGraphLaneSpacing
             }
@@ -985,7 +1033,7 @@ private struct RepositoryHistoryGraphView: View {
                     var path = Path()
                     path.move(to: .init(x: xPosition(for: edge.fromLane), y: 0))
                     path.addLine(to: .init(x: xPosition(for: edge.toLane), y: size.height))
-                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                    drawEdge(path, edge)
                 }
                 for edge in row.incomingEdges {
                     let fromX = xPosition(for: edge.fromLane)
@@ -995,7 +1043,7 @@ private struct RepositoryHistoryGraphView: View {
                     path.addLine(to: .init(x: fromX, y: middleY - bend))
                     path.addQuadCurve(to: .init(x: nodeX, y: middleY),
                                       control: .init(x: fromX, y: middleY))
-                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                    drawEdge(path, edge)
                 }
                 for edge in row.parentEdges {
                     let nodeX = xPosition(for: edge.fromLane)
@@ -1005,18 +1053,28 @@ private struct RepositoryHistoryGraphView: View {
                     path.addQuadCurve(to: .init(x: parentX, y: middleY + bend),
                                       control: .init(x: parentX, y: middleY))
                     path.addLine(to: .init(x: parentX, y: size.height))
-                    context.stroke(path, with: .color(laneColor(edge.colorIndex)), style: lineStyle)
+                    drawEdge(path, edge)
+                }
+            }
+
+            // Draw the whole highlighted route above other lanes, including at crossings.
+            for (color, width) in [(separator, 8.0), (routeColor, 5.0), (Color.blue, 2.5)] {
+                for path in highlightedPaths {
+                    context.stroke(path, with: .color(color),
+                                   style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
                 }
             }
 
             let nodeX = xPosition(for: row?.commitLane ?? 0)
-            let color = row.map { laneColor($0.commitColorIndex) } ?? .secondary
-            let diameter = metrics.historyGraphNodeSize + (isHEAD ? 6 : isMerge ? 4 : 0)
+            let isWork = isHEAD || row?.isHeadPath == true
+            let color = isWork ? routeColor : row.map { laneColor($0.commitColorIndex) } ?? .secondary
+            let diameter = metrics.historyGraphNodeSize + (isHEAD ? 11 : isWork ? 5 : isMerge ? 4 : 0)
             let dot = Path(ellipseIn: CGRect(x: nodeX - diameter / 2, y: middleY - diameter / 2,
                                             width: diameter, height: diameter))
             if isHEAD || isMerge {
                 context.fill(dot, with: .color(Color(nsColor: .textBackgroundColor)))
-                context.stroke(dot, with: .color(color), style: lineStyle)
+                context.stroke(dot, with: .color(color),
+                               style: StrokeStyle(lineWidth: isWork ? 2.5 : metrics.historyGraphLineWidth))
                 if isHEAD {
                     let core = metrics.historyGraphNodeSize / 2
                     context.fill(Path(ellipseIn: CGRect(x: nodeX - core / 2, y: middleY - core / 2,
@@ -1024,6 +1082,7 @@ private struct RepositoryHistoryGraphView: View {
                 }
             } else {
                 context.fill(dot, with: .color(color))
+                if isWork { context.stroke(dot, with: .color(separator), lineWidth: 1.5) }
             }
         }
         .allowsHitTesting(false)

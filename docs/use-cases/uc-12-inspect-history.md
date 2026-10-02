@@ -24,7 +24,10 @@
 
 ## 대안 흐름
 
-- Appearance → History Colors에서 그래프 시작색과 로컬·원격 branch·tag 배지색을 각각 선택하고 기본색으로 초기화한다. 색상은 저장되며 배지 글자는 시스템 기본 글자색을 유지한다.
+- History 상단의 `Graph View Settings` 아이콘 메뉴에서 `Default Branch` 또는 `Current HEAD`를 골라 왼쪽 기준 경로를 선택한다. 기본값은 기본 브랜치이며, 선택은 저장소별로 저장해 연결된 Worktree끼리 공유한다. HEAD 모드에서는 현재 Worktree의 checkout을 따라가며, 커밋 행 선택은 배치 기준을 바꾸지 않는다.
+- 기본 브랜치는 로컬에 기록된 remote HEAD(origin 우선)의 브랜치를 사용하며 같은 이름의 로컬 브랜치를 우선한다. 없으면 로컬 main·master, Primary Worktree 브랜치, 현재 HEAD 순으로 대체한다. 이름은 보기 설정 메뉴와 도움말에서 확인한다.
+- 기준 경로의 first-parent 이력은 왼쪽 줄에 고정한다. 현재 HEAD의 first-parent 작업 경로는 두 모드에서 윤곽선이 있는 굵은 파란 선과 큰 노드로 표시한다. 현재 브랜치 배지도 같은 파란색으로 채우고 HEAD를 명시한다. 강조는 기본 브랜치와 만나는 공통 조상까지 이어지며 이후 공유 이력은 강조하지 않는다. HEAD가 기본 브랜치 이력 위에 있으면 HEAD의 first-parent 이력을 계속 강조한다. merge의 다른 부모 경로는 강조하지 않는다. 기준 전환은 커밋 순서·선택·조회 범위를 유지한다.
+- Appearance → History Colors에서 그래프 시작색과 로컬·원격 branch·tag 배지색을 각각 선택하고 기본색으로 초기화한다. 색상은 저장되며 일반 배지 글자는 시스템 기본 글자색을 유지한다. 현재 작업 경로와 HEAD 배지는 밝기 모드에 맞춘 공통 파란색을 사용한다.
 - Appearance → History Layout에서 기본 Top and Bottom과 Side by Side를 고른다. 배치 전환과 검토 확장·복귀는 선택한 commit·파일을 유지한다.
 - 변경 파일 칸이 560pt보다 좁으면 목록 대신 경로 메뉴, 현재 순번과 이전·다음 파일 버튼으로 검토한다. 첫·마지막 파일의 이동 경계를 지키며, 넓어지면 같은 파일을 선택한 목록으로 돌아온다.
 - History 머리의 조회 범위 메뉴에서 All Branches & Tags 또는 로컬 branch를 선택한다. 이 메뉴만 조회 범위를 바꾸며 checkout은 실행하지 않는다. Clear Filter로 전체로 돌아온다. 선택한 ref가 필터 밖이면 Show in All History를 제공한다.

@@ -5071,6 +5071,95 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(mergeFiles.map(\.path), ["feature.txt"])
     }
 
+    func testHistoryGraphAnchorsAndHighlightsHEADWithoutReordering() throws {
+        let commits: [RepositoryHistory.Commit] = [
+            ("newest", ["base"]), ("head", ["work", "other"]),
+            ("other", ["base"]), ("work", ["base"]), ("main", ["base"]), ("base", ["root"]), ("root", [])
+        ].map { id, parents in
+            .init(id: id, parentIDs: parents, authorName: "Author", authorEmail: "",
+                  committedAt: .distantPast, subject: id, body: "", references: [])
+        }
+        // An unrelated tip can arrive before both HEAD and the default branch.
+        let ordered = commits
+        let defaultPath: Set<String> = ["main", "base", "root"]
+        let headPath: Set<String> = ["head", "work", "base", "root"]
+        let history = RepositoryHistory(commits: ordered, headCommitID: "head",
+                                        defaultBranchPath: defaultPath, headPath: headPath)
+        XCTAssertEqual(history.commits.map(\.id), ordered.map(\.id))
+        XCTAssertEqual(history.graphRows["main"]?.commitLane, 0)
+        XCTAssertNotEqual(history.graphRows["head"]?.commitLane, 0)
+        XCTAssertEqual(history.headGraphRows["head"]?.commitLane, 0)
+        XCTAssertEqual(history.headGraphRows["work"]?.commitLane, 0)
+        for rows in [history.graphRows, history.headGraphRows] {
+            XCTAssertEqual(rows["head"]?.isHeadPath, true)
+            XCTAssertEqual(rows["work"]?.isHeadPath, true)
+            XCTAssertEqual(rows["other"]?.isHeadPath, false)
+            XCTAssertEqual(rows["base"]?.isHeadPath, false)
+            XCTAssertEqual(rows["base"]?.parentEdges.first?.isHeadPath, false)
+            XCTAssertTrue(rows["base"]?.incomingEdges.contains(where: \.isHeadPath) == true)
+            XCTAssertEqual(rows["root"]?.isHeadPath, false)
+            XCTAssertEqual(rows["head"]?.parentEdges.map(\.isHeadPath), [true, false])
+            XCTAssertEqual(rows["other"]?.parentEdges.first?.isHeadPath, false)
+            XCTAssertEqual(rows["work"]?.parentEdges.first?.isHeadPath, true)
+            XCTAssertTrue(rows["other"]?.continuationEdges.contains(where: \.isHeadPath) == true)
+            for (current, next) in zip(ordered, ordered.dropFirst()) {
+                let row = try XCTUnwrap(rows[current.id])
+                let following = try XCTUnwrap(rows[next.id])
+                let outgoing = (row.continuationEdges + row.parentEdges).map {
+                    "\($0.toLane):\($0.colorIndex):\($0.isHeadPath)"
+                }
+                let incoming = (following.continuationEdges + following.incomingEdges).map {
+                    "\($0.fromLane):\($0.colorIndex):\($0.isHeadPath)"
+                }
+                XCTAssertEqual(Set(outgoing), Set(incoming))
+            }
+        }
+        let onDefault = RepositoryHistory(commits: ordered, headCommitID: "main",
+                                          defaultBranchPath: defaultPath, headPath: defaultPath)
+        XCTAssertEqual(onDefault.graphRows["base"]?.isHeadPath, true)
+        XCTAssertEqual(onDefault.graphRows["base"]?.parentEdges.first?.isHeadPath, true)
+        let page = RepositoryHistory(commits: Array(ordered.prefix(2)), headCommitID: "head",
+                                     defaultBranchPath: defaultPath, headPath: headPath)
+        XCTAssertTrue(page.graphRows.allSatisfy { history.graphRows[$0.key] == $0.value })
+        XCTAssertTrue(page.headGraphRows.allSatisfy { history.headGraphRows[$0.key] == $0.value })
+    }
+
+    func testHistoryDefaultBranchAndPreferenceAreSharedAcrossWorktrees() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repositoryURL = directory.appending(path: "repo")
+        try FileManager.default.createDirectory(at: repositoryURL, withIntermediateDirectories: true)
+        try initializeRepository(at: repositoryURL)
+        try write("base", to: "file", in: repositoryURL)
+        try commitAll(in: repositoryURL, message: "Base")
+        try runGit(["-C", repositoryURL.path, "branch", "trunk"])
+        try runGit(["-C", repositoryURL.path, "update-ref", "refs/remotes/origin/trunk", "HEAD"])
+        try runGit(["-C", repositoryURL.path, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"])
+        let worktreeURL = directory.appending(path: "work")
+        try runGit(["-C", repositoryURL.path, "worktree", "add", "-b", "feature", worktreeURL.path])
+        try write("feature", to: "file", in: worktreeURL)
+        try commitAll(in: worktreeURL, message: "Feature")
+        let inspector = RepositoryInspector()
+        let primary = try await inspector.inspect(at: repositoryURL)
+        let worktree = try await inspector.inspect(at: worktreeURL)
+        let primaryHistory = try await inspector.history(in: primary)
+        let history = try await inspector.history(in: worktree)
+        XCTAssertEqual(history.defaultBranchName, "trunk")
+        XCTAssertEqual(history.graphPreferenceKey, primaryHistory.graphPreferenceKey)
+        let headID = try XCTUnwrap(history.headCommitID)
+        XCTAssertEqual(history.headGraphRows[headID]?.commitLane, 0)
+        XCTAssertNotEqual(history.graphRows[headID]?.commitLane, 0)
+        // Missing remote HEAD falls back to the conventional local branch.
+        try runGit(["-C", repositoryURL.path, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"])
+        let fallback = try await inspector.history(in: worktree)
+        XCTAssertEqual(fallback.defaultBranchName, "main")
+        try runGit(["-C", worktreeURL.path, "checkout", "--detach"])
+        let detached = try await inspector.inspect(at: worktreeURL)
+        let detachedHistory = try await inspector.history(in: detached)
+        XCTAssertEqual(detachedHistory.headGraphRows[headID]?.commitLane, 0)
+        XCTAssertEqual(detachedHistory.graphPreferenceKey, history.graphPreferenceKey)
+    }
+
     func testHistoryGraphKeepsLanesUntilTheSharedAncestor() throws {
         let commits: [RepositoryHistory.Commit] = [
             ("tip", ["main", "side"]),
