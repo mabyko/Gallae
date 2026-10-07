@@ -324,6 +324,52 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(String(decoding: next.standardOutput, as: UTF8.self), "ok\n")
     }
 
+    func testCommandShutdownStopsItsHelperAndRejectsFurtherLaunches() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appending(path: "helper.pid")
+        let registry = CommandProcessRegistry()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "trap '' TERM; /bin/sleep 30 & echo $! > \"$1\"; wait", "fixture", marker.path]
+        try registry.launch(process)
+        defer { registry.shutdown(); process.waitUntilExit(); registry.finish(process) }
+
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        let helper = try XCTUnwrap(Int32(String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        registry.shutdown()
+        process.waitUntilExit()
+        let helperDeadline = Date().addingTimeInterval(2)
+        while kill(helper, 0) == 0, Date() < helperDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        XCTAssertEqual(kill(helper, 0), -1, "Quit must also stop a command's helper")
+        XCTAssertNotEqual(process.terminationStatus, 0)
+
+        let later = Process()
+        later.executableURL = URL(fileURLWithPath: "/usr/bin/touch")
+        let laterFile = root.appending(path: "later")
+        later.arguments = [laterFile.path]
+        XCTAssertThrowsError(try registry.launch(later)) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: laterFile.path))
+    }
+
+    func testCommandCompletionDoesNotLeaveBackgroundHelperRunning() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appending(path: "helper.pid")
+        let result = try CommandRunner.run(
+            ["-c", "/bin/sleep 30 & echo $! > \"$1\"", "fixture", marker.path],
+            executableURL: URL(fileURLWithPath: "/bin/sh")
+        )
+        XCTAssertEqual(result.status, 0)
+        let helper = try XCTUnwrap(Int32(String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        let deadline = Date().addingTimeInterval(2)
+        while kill(helper, 0) == 0, Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+        XCTAssertEqual(kill(helper, 0), -1, "A hook finishing must not orphan its helper")
+    }
+
     func testExplicitWriteCancellationReturnsExitStatusForRecovery() throws {
         let cancellation = GitProcessCancellation()
         cancellation.cancel()

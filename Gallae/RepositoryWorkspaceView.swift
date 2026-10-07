@@ -216,6 +216,9 @@ struct RepositoryWorkspaceView: View {
         .focusedSceneValue(\.navigatorToggle, navigatorToggleCommand)
         .onAppear(perform: startSelectAllEventMonitor)
         .onDisappear(perform: stopSelectAllEventMonitor)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            visualDiff.reset()
+        }
     }
 
     var body: some View {
