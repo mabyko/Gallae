@@ -746,6 +746,7 @@ struct RepositoryWorkspaceView: View {
                 } else {
                     let request = model.displayedDiffRequest
                     RepositoryDiffView(
+                        visualDiffRequest: .init(repository: repository, comparison: .workingTree, revision: model.repositoryRevision),
                         state: model.diffState,
                         fileURL: selectedFileURL(in: repository),
                         selectVisualizedFile: { path in
@@ -1005,7 +1006,7 @@ struct RepositoryWorkspaceView: View {
     private func changeHierarchyList(_ repository: RepositorySummary) -> some View {
         List(selection: $selectedChangeIDs) {
             OutlineGroup(
-                RepositoryChangeHierarchyNode.make(repository.changes),
+                model.changeHierarchy,
                 children: \.children
             ) { node in
                 changeHierarchyRow(node)
@@ -1119,16 +1120,7 @@ struct RepositoryWorkspaceView: View {
     ) -> some View {
         RepositoryChangeRow(change: change, showsParentPath: showsParentPath)
             .contextMenu {
-                let changeIDs = contextChangeIDs(for: change.id)
-                Button(changeIDs.count > 1 ? "Stage Selected" : "Stage") {
-                    Task { await model.stageChanges(ids: changeIDs) }
-                }
-                .disabled(model.isLoading || !model.canStageChanges(ids: changeIDs))
-
-                Button(changeIDs.count > 1 ? "Unstage Selected" : "Unstage") {
-                    Task { await model.unstageChanges(ids: changeIDs) }
-                }
-                .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
+                RepositoryChangeContextMenu(model: model, changeIDs: contextChangeIDs(for: change.id))
             }
             .tag(change.id)
             .gallaeSelectionBackground(isSelected: selectedChangeIDs.contains(change.id), isFocused: isChangeListFocused)
@@ -1173,6 +1165,25 @@ struct RepositoryWorkspaceView: View {
         let remote = String(upstream.name.dropLast(branch.count + 1))
         guard let ahead = upstream.ahead, let behind = upstream.behind else { return remote }
         return "\(remote) · ↑\(ahead) ↓\(behind)"
+    }
+}
+
+// Keep menu evaluation behind a View boundary. List enumerates every row to discover
+// identities; evaluating the selection checks there scans all changes once per row.
+private struct RepositoryChangeContextMenu: View {
+    let model: AppModel
+    let changeIDs: Set<RepositorySummary.Change.ID>
+
+    var body: some View {
+        Button(changeIDs.count > 1 ? "Stage Selected" : "Stage") {
+            Task { await model.stageChanges(ids: changeIDs) }
+        }
+        .disabled(model.isLoading || !model.canStageChanges(ids: changeIDs))
+
+        Button(changeIDs.count > 1 ? "Unstage Selected" : "Unstage") {
+            Task { await model.unstageChanges(ids: changeIDs) }
+        }
+        .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
     }
 }
 
@@ -1317,6 +1328,27 @@ struct RepositoryChangeStatusGroup: Equatable, Identifiable, Sendable {
             $0.changes.contains { $0.id == selectedChangeID }
         }) else { return [] }
         return Set(group.changes.map(\.id))
+    }
+}
+
+/// One tree per change snapshot; selection, focus, and composer edits reuse it.
+/// This is model-owned memoization and does not publish changes during view evaluation.
+@MainActor
+final class RepositoryChangeHierarchyCache {
+    private var changes: [RepositorySummary.Change]?
+    private var tree: [RepositoryChangeHierarchyNode] = []
+    private let make: ([RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode]
+
+    init(make: @escaping ([RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode] = RepositoryChangeHierarchyNode.make) {
+        self.make = make
+    }
+
+    func nodes(for changes: [RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode] {
+        if self.changes != changes {
+            tree = make(changes)
+            self.changes = changes
+        }
+        return tree
     }
 }
 

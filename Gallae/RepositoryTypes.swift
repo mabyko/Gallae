@@ -420,6 +420,18 @@ struct RepositoryCommitPatch: Equatable, Sendable {
     let commitID: String
     let fileID: String
     let content: RepositoryDiff.Section.Content
+    let textPresentation: RepositoryDiffTextPresentation?
+
+    init(commitID: String, fileID: String, content: RepositoryDiff.Section.Content) {
+        self.commitID = commitID
+        self.fileID = fileID
+        self.content = content
+        textPresentation = RepositoryDiffTextPresentation(content: content)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.commitID == rhs.commitID && lhs.fileID == rhs.fileID && lhs.content == rhs.content
+    }
 }
 
 struct RepositoryStash: Equatable, Identifiable, Sendable {
@@ -482,22 +494,59 @@ struct RepositoryDiff: Equatable, Sendable {
 
         var id: Scope { scope }
 
-        var hunks: [Hunk] {
-            guard case .text(let lines) = content else { return [] }
-            let starts = lines.indices.filter { lines[$0].kind == .hunk }
-            guard let first = starts.first else { return [] }
-            let metadata = lines[..<first].map(\.text)
+        /// Built once with the immutable diff, without materializing patch bytes for every button.
+        struct HunkIndex: Equatable, Sendable {
+            struct Entry: Equatable, Sendable {
+                let range: Range<Int>
+                let changedLineIDs: Set<Int>
+            }
+            let metadataEnd: Int
+            let orderedIDs: [Int]
+            let entries: [Int: Entry]
 
-            return starts.enumerated().map { offset, start in
-                let end = offset + 1 < starts.count ? starts[offset + 1] : lines.endIndex
-                let patch = (metadata + lines[start..<end].map(\.text)).joined(separator: "\n") + "\n"
-                return Hunk(
-                    id: lines[start].id,
-                    scope: scope,
-                    patch: Data(patch.utf8)
-                )
+            init(content: Content) {
+                guard case .text(let lines) = content else {
+                    metadataEnd = 0; orderedIDs = []; entries = [:]
+                    return
+                }
+                let starts = lines.indices.filter { lines[$0].kind == .hunk }
+                metadataEnd = starts.first ?? 0
+                orderedIDs = starts.map { lines[$0].id }
+                var entries: [Int: Entry] = [:]
+                for (offset, start) in starts.enumerated() {
+                    let end = offset + 1 < starts.count ? starts[offset + 1] : lines.endIndex
+                    let changed = Set(lines[(start + 1)..<end].compactMap {
+                        $0.kind == .addition || $0.kind == .deletion ? $0.id : nil
+                    })
+                    entries[lines[start].id] = Entry(range: start..<end, changedLineIDs: changed)
+                }
+                self.entries = entries
             }
         }
+
+        let hunkIndex: HunkIndex
+        let textPresentation: RepositoryDiffTextPresentation?
+
+        init(scope: Scope, content: Content) {
+            self.scope = scope
+            self.content = content
+            hunkIndex = HunkIndex(content: content)
+            textPresentation = RepositoryDiffTextPresentation(content: content)
+        }
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.scope == rhs.scope && lhs.content == rhs.content
+        }
+
+        /// Construct only the patch the user actually acts on.
+        func hunk(id: Int) -> Hunk? {
+            guard case .text(let lines) = content, let entry = hunkIndex.entries[id] else { return nil }
+            let metadata = lines[..<hunkIndex.metadataEnd].map(\.text)
+            let patch = (metadata + lines[entry.range].map(\.text)).joined(separator: "\n") + "\n"
+            return Hunk(id: id, scope: scope, patch: Data(patch.utf8))
+        }
+
+        var hunks: [Hunk] { hunkIndex.orderedIDs.compactMap { hunk(id: $0) } }
     }
 
     struct Line: Equatable, Identifiable, Sendable {
@@ -572,6 +621,82 @@ struct RepositoryDiff: Equatable, Sendable {
     let sections: [Section]
 }
 
+/// Immutable, font-independent row geometry owned by the loaded diff, including saved revisions.
+/// Offsets share the original line storage instead of copying every Line into both layouts.
+final class RepositoryDiffTextPresentation: Sendable {
+    struct SplitRow: Identifiable, Sendable {
+        let id: Int
+        let fullIndex: Int?
+        let oldIndex: Int?
+        let newIndex: Int?
+    }
+
+    struct VisibleLines: RandomAccessCollection, Sendable {
+        let lines: [RepositoryDiff.Line]
+        let offsets: [Int]
+        var startIndex: Int { offsets.startIndex }
+        var endIndex: Int { offsets.endIndex }
+        subscript(position: Int) -> RepositoryDiff.Line { lines[offsets[position]] }
+    }
+
+    let lines: [RepositoryDiff.Line]
+    let visibleIndices: [Int]
+    let splitRows: [SplitRow]
+    let largestLineNumber: Int
+    let canSplit: Bool
+
+    convenience init?(content: RepositoryDiff.Section.Content) {
+        guard case .text(let lines) = content else { return nil }
+        self.init(lines: lines)
+    }
+
+    var visibleLines: VisibleLines { .init(lines: lines, offsets: visibleIndices) }
+
+    init(lines: [RepositoryDiff.Line], hidesPatchHeaders: Bool = true) {
+        self.lines = lines
+        var visible: [Int] = []
+        var rows: [SplitRow] = []
+        var deletions: [Int] = []
+        var additions: [Int] = []
+        var largest = 0
+        var sawContext = false, sawAddition = false, sawDeletion = false
+        visible.reserveCapacity(lines.count)
+
+        func flushChanges() {
+            for offset in 0..<max(deletions.count, additions.count) {
+                let old = offset < deletions.count ? deletions[offset] : nil
+                let new = offset < additions.count ? additions[offset] : nil
+                rows.append(.init(id: lines[old ?? new!].id, fullIndex: nil, oldIndex: old, newIndex: new))
+            }
+            deletions.removeAll(keepingCapacity: true)
+            additions.removeAll(keepingCapacity: true)
+        }
+
+        for index in lines.indices {
+            let line = lines[index]
+            guard !hidesPatchHeaders || !line.isPatchHeader else { continue }
+            visible.append(index)
+            largest = max(largest, line.oldLineNumber ?? 0, line.newLineNumber ?? 0)
+            switch line.kind {
+            case .deletion: sawDeletion = true; deletions.append(index)
+            case .addition: sawAddition = true; additions.append(index)
+            case .context:
+                sawContext = true
+                flushChanges()
+                rows.append(.init(id: line.id, fullIndex: nil, oldIndex: index, newIndex: index))
+            case .metadata, .hunk:
+                flushChanges()
+                rows.append(.init(id: line.id, fullIndex: index, oldIndex: nil, newIndex: nil))
+            }
+        }
+        flushChanges()
+        visibleIndices = visible
+        splitRows = rows
+        largestLineNumber = largest
+        canSplit = !lines.isEmpty && (sawContext || sawAddition == sawDeletion)
+    }
+}
+
 extension RepositoryDiff.Section.Content {
     /// Counts only changed content, never patch headers or unchanged context.
     var lineChangeCounts: (added: Int, removed: Int)? {
@@ -638,12 +763,13 @@ extension RepositoryDiff.Section {
     ) -> RepositoryDiff.Hunk? {
         guard
             case .text(let lines) = content,
-            let firstHunk = lines.firstIndex(where: { $0.kind == .hunk }),
-            let start = lines.firstIndex(where: { $0.id == hunkID && $0.kind == .hunk })
+            let entry = hunkIndex.entries[hunkID]
         else {
             return nil
         }
-        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
+        let firstHunk = hunkIndex.metadataEnd
+        let start = entry.range.lowerBound
+        let end = entry.range.upperBound
         var body: [String] = []
         var oldCount = 0
         var newCount = 0

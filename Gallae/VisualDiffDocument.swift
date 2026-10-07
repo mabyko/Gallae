@@ -4,8 +4,8 @@ enum GallaeLabs {
     static let visualDiffKey = "labs.visualDiff"
 }
 
-/// A graph is an imported snapshot, not a live analysis of the selected Git diff.
-struct VisualDiffDocument: Equatable {
+/// A validated viewer document, either generated from the current comparison or imported as a snapshot.
+struct VisualDiffDocument: Equatable, Sendable {
     static let maximumBytes = 4 * 1024 * 1024
 
     struct Metadata: Decodable {
@@ -26,8 +26,9 @@ struct VisualDiffDocument: Equatable {
     let title: String
     let lenses: [String]
     let sourceDescription: String
+    let isGenerated: Bool
 
-    init(data: Data) throws {
+    init(data: Data, generatedSource: String? = nil) throws {
         guard data.count <= Self.maximumBytes else { throw ImportError.tooLarge }
         guard let json = String(data: data, encoding: .utf8) else { throw ImportError.invalid }
         let metadata: Metadata
@@ -39,7 +40,8 @@ struct VisualDiffDocument: Equatable {
         title = metadata.title
         self.lenses = lenses
         let provenance = metadata.provenance
-        sourceDescription = "\(provenance.repo.owner)/\(provenance.repo.name) · \(provenance.base.sha.prefix(8)) → \(provenance.head.sha.prefix(8))"
+        sourceDescription = generatedSource ?? "\(provenance.repo.owner)/\(provenance.repo.name) · \(provenance.base.sha.prefix(8)) → \(provenance.head.sha.prefix(8))"
+        isGenerated = generatedSource != nil
     }
 
     static func read(from url: URL) throws -> Self {

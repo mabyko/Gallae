@@ -260,6 +260,10 @@ final class AppModel {
     let library: RepositoryLibraryModel
     var screen: AppScreen = .library
     var repository: RepositorySummary?
+    @ObservationIgnored private let changeHierarchyCache = RepositoryChangeHierarchyCache()
+    var changeHierarchy: [RepositoryChangeHierarchyNode] {
+        changeHierarchyCache.nodes(for: repository?.changes ?? [])
+    }
     private(set) var lastDiscardRecovery: RepositoryDiscardRecovery?
     private var discardRecoveryGeneration = 0
     var availableDiscardRecovery: RepositoryDiscardRecovery? {
@@ -302,7 +306,20 @@ final class AppModel {
             commitPatchState = .noSelection
         }
     }
-    var historyState: RepositoryHistoryLoadState = .notLoaded
+    var historyState: RepositoryHistoryLoadState = .notLoaded {
+        didSet { historySearchCache = nil }
+    }
+    @ObservationIgnored private var historySearchCache: RepositoryHistorySearchCache?
+
+    func historySearchResults(matching query: String) -> RepositoryHistorySearchResults {
+        // Reading historyState preserves the view's Observation dependency. The private cache
+        // neither publishes during body evaluation nor compares whole commit arrays on a hit.
+        guard case .loaded(let history) = historyState else { return .empty }
+        if historySearchCache == nil {
+            historySearchCache = RepositoryHistorySearchCache(commits: history.commits)
+        }
+        return historySearchCache!.results(matching: query)
+    }
     /// Explicit filtering is independent of the reference selected in the Navigator.
     var historyScope: RepositoryHistoryScope? {
         didSet {
@@ -2919,5 +2936,36 @@ final class AppModel {
 
     private static func message(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+/// A single history snapshot's last query. Owned by AppModel, reset on every historyState assignment.
+@MainActor
+final class RepositoryHistorySearchCache {
+    private let commits: [RepositoryHistory.Commit]
+    private var query: String?
+    private var result: RepositoryHistorySearchResults = .empty
+
+    init(commits: [RepositoryHistory.Commit]) { self.commits = commits }
+
+    func results(matching query: String) -> RepositoryHistorySearchResults {
+        if self.query != query {
+            result = RepositoryHistorySearchResults(commits: commits.filter { $0.matches(search: query) })
+            self.query = query
+        }
+        return result
+    }
+}
+
+final class RepositoryHistorySearchResults: Sendable {
+    static let empty = RepositoryHistorySearchResults(commits: [])
+    let commits: [RepositoryHistory.Commit]
+    let ids: [String]
+    let positions: [String: Int]
+
+    init(commits: [RepositoryHistory.Commit]) {
+        self.commits = commits
+        ids = commits.map(\.id)
+        positions = Dictionary(ids.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
     }
 }

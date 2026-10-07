@@ -36,6 +36,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, theme.metrics.panelHorizontalPadding)
         .padding(.vertical, theme.metrics.panelVerticalPadding)
         .controlSize(.small)
@@ -92,6 +93,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
 }
 
 struct RepositoryRevisionChangesView: View {
+    let visualDiffRequest: VisualDiffRequest?
     let filesState: RepositoryCommitFilesLoadState
     @Binding var selectedFileID: String?
     let selectedFile: RepositoryCommitFile?
@@ -243,7 +245,7 @@ struct RepositoryRevisionChangesView: View {
                 }
 
                 if visualDiffEnabled && showsVisualization {
-                    VisualDiffPane(selectedPath: selectedFile?.path) { path in
+                    VisualDiffPane(request: visualDiffRequest, selectedPath: selectedFile?.path, returnToDiff: { showsVisualization = false }) { path in
                         guard case .loaded(let files) = filesState,
                               let file = files.first(where: { $0.path == path || $0.originalPath == path }) else { return false }
                         showsVisualization = false
@@ -265,7 +267,10 @@ struct RepositoryRevisionChangesView: View {
     }
 
     private var presentation: RepositoryDiffPresentation {
-        .init(content: selectedContent, preferred: layout)
+        if case .loaded(let patch) = patchState {
+            return .init(text: patch.textPresentation, preferred: layout)
+        }
+        return .init(text: nil, preferred: layout)
     }
 
     @ViewBuilder
@@ -290,19 +295,21 @@ struct RepositoryRevisionChangesView: View {
                 .accessibilityLabel("Try Again")
             }
         case .loaded(let patch):
-            revisionPatch(patch.content)
+            revisionPatch(patch)
         }
     }
 
     @ViewBuilder
-    private func revisionPatch(_ content: RepositoryDiff.Section.Content) -> some View {
+    private func revisionPatch(_ patch: RepositoryCommitPatch) -> some View {
         let layout = presentation.layout
-        switch content {
-        case .text(let lines):
+        switch patch.content {
+        case .text:
             GeometryReader { proxy in
                 ScrollView(layout == .split ? [.vertical] : [.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        RepositoryDiffLinesView(lines: lines, layout: layout)
+                        if let text = patch.textPresentation {
+                            RepositoryDiffLinesView(presentation: text, layout: layout)
+                        }
                     }
                     // The height keeps a short diff at the top. Switching layouts changes the scroll
                     // view's axes, and the rebuilt scroll view forgets `defaultScrollAnchor`, centring
@@ -429,6 +436,7 @@ private enum ConflictResolutionConfirmation {
 }
 
 struct RepositoryDiffView: View {
+    let visualDiffRequest: VisualDiffRequest?
     let state: RepositoryDiffLoadState
     let fileURL: URL?
     var selectVisualizedFile: (String) -> Bool = { _ in false }
@@ -595,7 +603,7 @@ struct RepositoryDiffView: View {
     private func diffContent(_ diff: RepositoryDiff) -> some View {
         let shown = shownScope(in: diff)
         let presentation = RepositoryDiffPresentation(
-            content: diff.sections.first { $0.scope == shown }?.content,
+            text: diff.sections.first { $0.scope == shown }?.textPresentation,
             preferred: layout
         )
         let effectiveLayout = presentation.layout
@@ -666,7 +674,11 @@ struct RepositoryDiffView: View {
                     loadExpanded: loadExpanded
                 )
             } else if visualDiffEnabled && showsVisualization {
-                VisualDiffPane(selectedPath: diff.path) { path in
+                VisualDiffPane(request: visualDiffRequest.map { request in
+                    var request = request
+                    request.comparison = shown == .staged ? .staged : .workingTree
+                    return request
+                }, selectedPath: diff.path, returnToDiff: { showsVisualization = false }) { path in
                     guard selectVisualizedFile(path) else { return false }
                     showsVisualization = false
                     return true
@@ -873,7 +885,7 @@ private struct RepositoryConflictVersionView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .text(let lines):
-            let numberWidth = diffNumberWidth(for: lines, font: typography.codeNSFont)
+            let numberWidth = diffNumberWidth(largestLineNumber: section.textPresentation?.largestLineNumber ?? 0, font: typography.codeNSFont)
             GeometryReader { proxy in
                 ScrollView([.horizontal, .vertical]) {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -974,36 +986,11 @@ struct RepositoryDiffSplitRow: Equatable, Identifiable {
     let new: RepositoryDiff.Line?
 
     static func rows(from lines: [RepositoryDiff.Line]) -> [RepositoryDiffSplitRow] {
-        var rows: [RepositoryDiffSplitRow] = []
-        var deletions: [RepositoryDiff.Line] = []
-        var additions: [RepositoryDiff.Line] = []
-
-        func flushChanges() {
-            for index in 0..<max(deletions.count, additions.count) {
-                let old = index < deletions.count ? deletions[index] : nil
-                let new = index < additions.count ? additions[index] : nil
-                rows.append(.init(id: old?.id ?? new?.id ?? -1, full: nil, old: old, new: new))
-            }
-            deletions.removeAll()
-            additions.removeAll()
+        let prepared = RepositoryDiffTextPresentation(lines: lines, hidesPatchHeaders: false)
+        return prepared.splitRows.map { row in
+            .init(id: row.id, full: row.fullIndex.map { lines[$0] },
+                  old: row.oldIndex.map { lines[$0] }, new: row.newIndex.map { lines[$0] })
         }
-
-        for line in lines {
-            switch line.kind {
-            case .deletion:
-                deletions.append(line)
-            case .addition:
-                additions.append(line)
-            case .context:
-                flushChanges()
-                rows.append(.init(id: line.id, full: nil, old: line, new: line))
-            case .metadata, .hunk:
-                flushChanges()
-                rows.append(.init(id: line.id, full: line, old: nil, new: nil))
-            }
-        }
-        flushChanges()
-        return rows
     }
 }
 
@@ -1011,6 +998,11 @@ struct RepositoryDiffSplitRow: Equatable, Identifiable {
 struct RepositoryDiffPresentation {
     let canSplit: Bool
     let layout: RepositoryDiffLayout
+
+    init(text: RepositoryDiffTextPresentation?, preferred: RepositoryDiffLayout) {
+        canSplit = text?.canSplit ?? false
+        layout = canSplit ? preferred : .unified
+    }
 
     init(content: RepositoryDiff.Section.Content?, preferred: RepositoryDiffLayout) {
         if case .text(let lines) = content {
@@ -1043,20 +1035,22 @@ private struct RepositoryDiffLayoutPicker: View {
     }
 
     var body: some View {
-        // The whole control is disabled rather than the Split segment alone: macOS ignores `disabled` on an
-        // individual segment of a segmented picker, so a lone dimmed segment stays clickable.
+        // Unsupported comparisons normally disable the picker as a whole. In Visualize it also serves as
+        // a way back to code, so keep it enabled; presentation falls back to Unified when Split is unavailable.
         Picker("Diff Layout", selection: shown) {
             ForEach(RepositoryDiffLayout.allCases) { layout in
                 Text(layout.title).tag(Optional(layout))
             }
         }
-        .disabled(!canSplit)
+        .disabled(!canSplit && !isVisualizing.wrappedValue)
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.small)
         .fixedSize()
         .help(
-            canSplit
+            isVisualizing.wrappedValue
+                ? "Return to the file diff. Files without a second version use Unified."
+                : canSplit
                 ? "Show the diff in one column, or the old and new versions side by side"
                 : "The selected content does not support a side-by-side comparison"
         )
@@ -1103,17 +1097,19 @@ private struct RepositoryDiffSectionView: View {
             }
 
             switch section.content {
-            case .text(let lines):
-                RepositoryDiffLinesView(
-                    lines: lines,
-                    layout: layout,
-                    isBusy: isBusy,
-                    hunkAction: { line in hunkAction(for: line, in: lines) },
-                    hunkSecondaryAction: { line in discardAction(for: line, in: lines) },
-                    lineChoice: { line in lineChoice(for: line) },
-                    hunkChoice: { line in hunkChoice(for: line, in: lines) },
-                    reservesChoiceColumn: choosesLines
-                )
+            case .text:
+                if let text = section.textPresentation {
+                    RepositoryDiffLinesView(
+                        presentation: text,
+                        layout: layout,
+                        isBusy: isBusy,
+                        hunkAction: { line in hunkAction(for: line) },
+                        hunkSecondaryAction: { line in discardAction(for: line) },
+                        lineChoice: { line in lineChoice(for: line) },
+                        hunkChoice: { line in hunkChoice(for: line) },
+                        reservesChoiceColumn: choosesLines
+                    )
+                }
             case .binary:
                 RepositoryDiffNotice(
                     title: "Binary File",
@@ -1178,33 +1174,37 @@ private struct RepositoryDiffSectionView: View {
     }
 
     /// The second hunk button on a working tree section: the whole hunk or the ticked lines, after asking.
-    private func discardAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+    private func discardAction(for line: RepositoryDiff.Line) -> (label: String, perform: () -> Void)? {
         guard line.kind == .hunk, section.scope == .unstaged, canStageHunks,
-              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
-        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+              let entry = section.hunkIndex.entries[line.id] else { return nil }
+        let chosen = chosenLineIDs.intersection(entry.changedLineIDs)
         guard !chosen.isEmpty else {
-            return ("Discard Hunk…", { pendingDiscard = .init(hunk: hunk, lineCount: nil) })
+            return ("Discard Hunk…", {
+                if let hunk = section.hunk(id: line.id) { pendingDiscard = .init(hunk: hunk, lineCount: nil) }
+            })
         }
         let label = chosen.count == 1 ? "Discard 1 Line…" : "Discard \(chosen.count) Lines…"
         return (label, {
-            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: .revert) {
+            if let partial = section.partialHunk(id: line.id, keeping: chosen, direction: .revert) {
                 pendingDiscard = .init(hunk: partial, lineCount: chosen.count)
             }
         })
     }
 
     /// The hunk button: the whole hunk while nothing is ticked, otherwise only the ticked lines of that hunk.
-    private func hunkAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+    private func hunkAction(for line: RepositoryDiff.Line) -> (label: String, perform: () -> Void)? {
         guard line.kind == .hunk, let hunkVerb,
-              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
-        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+              let entry = section.hunkIndex.entries[line.id] else { return nil }
+        let chosen = chosenLineIDs.intersection(entry.changedLineIDs)
         guard choosesLines, !chosen.isEmpty else {
-            return ("\(hunkVerb) Hunk", { updateHunk(hunk) })
+            return ("\(hunkVerb) Hunk", {
+                if let hunk = section.hunk(id: line.id) { updateHunk(hunk) }
+            })
         }
         let label = chosen.count == 1 ? "\(hunkVerb) 1 Line" : "\(hunkVerb) \(chosen.count) Lines"
         return (label, {
             let direction: RepositoryDiff.Section.PartialDirection = section.scope == .staged ? .revert : .apply
-            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: direction) {
+            if let partial = section.partialHunk(id: line.id, keeping: chosen, direction: direction) {
                 updateHunk(partial)
             }
         })
@@ -1215,9 +1215,9 @@ private struct RepositoryDiffSectionView: View {
         return (chosenLineIDs.contains(line.id), { toggle(line.id) })
     }
 
-    private func hunkChoice(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (isOn: Bool, toggle: () -> Void)? {
+    private func hunkChoice(for line: RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? {
         guard choosesLines, line.kind == .hunk else { return nil }
-        let ids = changeLineIDs(ofHunkStartingAt: line.id, in: lines)
+        let ids = section.hunkIndex.entries[line.id]?.changedLineIDs ?? []
         guard !ids.isEmpty else { return nil }
         let allChosen = ids.isSubset(of: chosenLineIDs)
         return (allChosen, {
@@ -1241,17 +1241,11 @@ private struct RepositoryDiffSectionView: View {
         }
         lastToggledLineID = lineID
     }
-
-    private func changeLineIDs(ofHunkStartingAt hunkID: Int, in lines: [RepositoryDiff.Line]) -> Set<Int> {
-        guard let start = lines.firstIndex(where: { $0.id == hunkID }) else { return [] }
-        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
-        return Set(lines[(start + 1)..<end].filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
-    }
 }
 
 /// Text diff lines in either layout. `hunkAction` returns a button for hunk header lines that can be staged.
 private struct RepositoryDiffLinesView: View {
-    let lines: [RepositoryDiff.Line]
+    let presentation: RepositoryDiffTextPresentation
     let layout: RepositoryDiffLayout
     var isBusy = false
     var hunkAction: (RepositoryDiff.Line) -> (label: String, perform: () -> Void)? = { _ in nil }
@@ -1266,35 +1260,36 @@ private struct RepositoryDiffLinesView: View {
     @Environment(\.gallaeTypography) private var typography
 
     var body: some View {
-        let lines = lines.filter { !$0.isPatchHeader }
-        let numberWidth = diffNumberWidth(for: lines, font: typography.codeNSFont)
+        let numberWidth = diffNumberWidth(largestLineNumber: presentation.largestLineNumber, font: typography.codeNSFont)
         switch layout {
         case .unified:
-            ForEach(lines) { line in
+            ForEach(presentation.visibleLines) { line in
                 fullWidthLine(line, numberWidth: numberWidth)
             }
         case .split:
-            ForEach(RepositoryDiffSplitRow.rows(from: lines)) { row in
-                if let full = row.full {
-                    fullWidthLine(full, numberWidth: numberWidth)
+            ForEach(presentation.splitRows) { row in
+                if let index = row.fullIndex {
+                    fullWidthLine(presentation.lines[index], numberWidth: numberWidth)
                 } else {
+                    let old = row.oldIndex.map { presentation.lines[$0] }
+                    let new = row.newIndex.map { presentation.lines[$0] }
                     HStack(alignment: .top, spacing: 0) {
                         RepositoryDiffLineView(
-                            line: row.old,
+                            line: old,
                             side: .old,
                             numberWidth: numberWidth,
-                            choice: row.old.flatMap(lineChoice),
+                            choice: old.flatMap(lineChoice),
                             reservesChoiceColumn: reservesChoiceColumn,
-                            choiceLabel: "Choose deleted line \(row.old?.oldLineNumber ?? 0)"
+                            choiceLabel: "Choose deleted line \(old?.oldLineNumber ?? 0)"
                         )
                         Divider()
                         RepositoryDiffLineView(
-                            line: row.new,
+                            line: new,
                             side: .new,
                             numberWidth: numberWidth,
-                            choice: row.new.flatMap(lineChoice),
+                            choice: new.flatMap(lineChoice),
                             reservesChoiceColumn: reservesChoiceColumn,
-                            choiceLabel: "Choose added line \(row.new?.newLineNumber ?? 0)"
+                            choiceLabel: "Choose added line \(new?.newLineNumber ?? 0)"
                         )
                     }
                 }
@@ -1359,8 +1354,11 @@ private struct RepositoryDiffLinesView: View {
 /// never truncated and a short file is not padded out to a fixed five digits. One value per diff keeps every
 /// row, and both halves of the split layout, on the same gutter.
 func diffNumberWidth(for lines: [RepositoryDiff.Line], font: NSFont) -> CGFloat {
-    let largest = lines.reduce(0) { max($0, $1.oldLineNumber ?? 0, $1.newLineNumber ?? 0) }
-    let digits = max(2, String(largest).count)
+    diffNumberWidth(largestLineNumber: lines.reduce(0) { max($0, $1.oldLineNumber ?? 0, $1.newLineNumber ?? 0) }, font: font)
+}
+
+func diffNumberWidth(largestLineNumber: Int, font: NSFont) -> CGFloat {
+    let digits = max(2, String(largestLineNumber).count)
     let digitWidth = (0...9).map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
     return (CGFloat(digits) * digitWidth).rounded(.up)
 }

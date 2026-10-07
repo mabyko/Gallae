@@ -464,6 +464,7 @@ private struct RepositoryStashDetailView: View {
                 Divider()
 
                 RepositoryRevisionChangesView(
+                    visualDiffRequest: model.repository.map { .init(repository: $0, comparison: .stash(stash), revision: model.repositoryRevision) },
                     filesState: model.stashFilesState,
                     selectedFileID: $model.selectedStashFileID,
                     selectedFile: model.selectedStashFile,

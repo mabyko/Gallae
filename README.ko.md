@@ -38,7 +38,7 @@ Branches·Remotes·Tags의 **⋯** 메뉴는 목록이 비어 있어도 사용�
 
 Appearance에서 시스템·라이트·다크 테마, 행 밀도, 앱 강조색과 History 그래프·배지 색을 고를 수 있다. 앱 강조색의 기본값은 macOS 설정을 따르는 **System**이다.
 
-**Visual Diff (실험실)**을 켜면 Changes·History·Stash의 Unified/Split 옆에 **Visualize**가 나타난다. **Settings → Labs → Visual Diff · PR Lens**를 켜고 PR Lens 그래프 JSON을 불러오거나 예시를 연다. 확대·이동하거나 파일 노드를 눌러 해당 diff로 돌아갈 수 있다. **Full Screen**으로 전체 화면을 열고 **Esc**로 복귀한다. 그래프는 로컬에서 렌더링하는 스냅샷이며, 이 실험 기능은 그래프를 자동 생성하거나 코드를 업로드하지 않는다. → [사용법과 렌더러 관리](scripts/visual-diff/README.md)
+**Visual Diff (실험실)**을 켜면 Changes·History·Stash의 Unified/Split 옆에 **Visualize**가 나타난다. **Settings → Labs → Visual Diff · PR Lens**를 켜고 Visualize를 누르면 현재 비교 범위의 변경 파일과 diff에 나타난 기호 참조 관계를 로컬에서 그래프로 만든다. JSON 파일이나 API 키를 준비할 필요가 없다. **Back to Diff**는 Split을 지원하지 않는 새 파일에서도 코드 화면으로 돌아간다. 확대·이동, 파일 노드 선택, **Full Screen → Esc**도 지원한다. 코드를 업로드하지 않으며 전체 아키텍처나 실행 흐름 분석을 대신하지 않는다. 외부 그래프 가져오기는 **More** 메뉴에 있다. → [사용법과 렌더러 관리](scripts/visual-diff/README.md)
 
 포함된 오픈소스의 저작권 고지와 라이선스 전문은 **Settings → About → Open Source Licenses…**에서 확인할 수 있다.
 

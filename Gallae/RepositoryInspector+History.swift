@@ -1,6 +1,8 @@
 import Foundation
 
 extension RepositoryInspector {
+    private static let firstParentCache = HistoryFirstParentCache()
+
     func activity(in repository: RepositorySummary) async throws -> RepositoryActivity {
         try await CommandRunner.read {
             try Self.activitySynchronously(in: repository)
@@ -142,22 +144,36 @@ extension RepositoryInspector {
                 "-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(focusReference)^{commit}"
             ])
             guard resolved.status == 0 else { throw RepositoryHistoryError.unreadable(resolved.standardError) }
-            let resolvedID = text(from: resolved.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines)
-            focusedCommitID = resolvedID
-            // Locate an older tip without reading every commit's message. Preserve the same graph ordering.
+            focusedCommitID = text(from: resolved.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func readLogFields(count: Int) throws -> [Data.SubSequence] {
+            let result = try runGit([
+                "-C", repository.rootURL.path,
+                "log", "-\(count + 1)", "--topo-order", "-z", "--no-show-signature",
+                "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
+            ] + revisions)
+            guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
+            var fields = result.standardOutput.split(separator: 0, omittingEmptySubsequences: false)
+            if fields.last?.isEmpty == true { fields.removeLast() }
+            guard fields.count.isMultiple(of: 7) else { throw RepositoryHistoryError.invalidOutput }
+            return fields
+        }
+
+        var fields = try readLogFields(count: count)
+        // The extra record only determines hasMoreCommits: a focus on that lookahead row
+        // must still expand the visible range. Most navigation targets are already visible.
+        if let focusedCommitID,
+           !stride(from: 0, to: min(count, fields.count / 7) * 7, by: 7).contains(where: {
+               String(decoding: fields[$0], as: UTF8.self) == focusedCommitID
+           }) {
             let ids = try runGit(["-C", repository.rootURL.path, "rev-list", "--topo-order"] + revisions)
             guard ids.status == 0 else { throw RepositoryHistoryError.unreadable(ids.standardError) }
-            if let index = text(from: ids.standardOutput).split(separator: "\n").firstIndex(where: { $0 == resolvedID }) {
-                count = max(count, index + 1)
+            if let index = text(from: ids.standardOutput).split(separator: "\n").firstIndex(where: { $0 == focusedCommitID }),
+               index + 1 > count {
+                count = index + 1
+                fields = try readLogFields(count: count)
             }
-        }
-        let result = try runGit([
-            "-C", repository.rootURL.path,
-            "log", "-\(count + 1)", "--topo-order", "-z", "--no-show-signature",
-            "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
-        ] + revisions)
-        guard result.status == 0 else {
-            throw RepositoryHistoryError.unreadable(result.standardError)
         }
 
         let referencesResult = try runGit([
@@ -170,17 +186,6 @@ extension RepositoryInspector {
             throw RepositoryHistoryError.unreadable(referencesResult.standardError)
         }
         let referenceSnapshot = historyReferences(referencesResult.standardOutput)
-
-        var fields = result.standardOutput.split(
-            separator: 0,
-            omittingEmptySubsequences: false
-        )
-        if fields.last?.isEmpty == true {
-            fields.removeLast()
-        }
-        guard fields.count.isMultiple(of: 7) else {
-            throw RepositoryHistoryError.invalidOutput
-        }
 
         var commits: [RepositoryHistory.Commit] = []
         commits.reserveCapacity(fields.count / 7)
@@ -239,11 +244,28 @@ extension RepositoryInspector {
             defaultBranch = (branch, id)
         }
         if defaultBranch == nil, let id = referenceSnapshot.headCommitID { defaultBranch = ("HEAD", id) }
+        // Commit IDs are immutable, but shallow boundaries, grafts and replacement refs can
+        // change their visible ancestry without changing the tip. Include those in the cache key.
+        let ancestryPaths = try runGit([
+            "-C", repository.rootURL.path, "rev-parse", "--path-format=absolute",
+            "--git-path", "shallow", "--git-path", "info/grafts"
+        ])
+        guard ancestryPaths.status == 0 else { throw RepositoryHistoryError.unreadable(ancestryPaths.standardError) }
+        let boundaries = text(from: ancestryPaths.standardOutput).split(separator: "\n").map {
+            (try? Data(contentsOf: URL(fileURLWithPath: String($0)))) ?? Data()
+        }
+        let replacementRefs = text(from: referencesResult.standardOutput).split(separator: "\n")
+            .filter { $0.contains(" refs/replace/") }.map(String.init).sorted()
         func firstParentPath(_ id: String?) throws -> Set<String> {
             guard let id else { return [] }
-            let result = try runGit(["-C", repository.rootURL.path, "rev-list", "--first-parent", id, "--"])
-            guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
-            return Set(text(from: result.standardOutput).split(separator: "\n").map(String.init))
+            let key = HistoryFirstParentCache.Key(
+                rootURL: repository.rootURL, tip: id, boundaries: boundaries, replacementRefs: replacementRefs
+            )
+            return try firstParentCache.value(for: key) {
+                let result = try runGit(["-C", repository.rootURL.path, "rev-list", "--first-parent", id, "--"])
+                guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
+                return Set(text(from: result.standardOutput).split(separator: "\n").map(String.init))
+            }
         }
         let headPath = try firstParentPath(referenceSnapshot.headCommitID)
         let defaultPath = try defaultBranch?.id == referenceSnapshot.headCommitID
@@ -379,5 +401,47 @@ extension RepositoryInspector {
             }
         }
         return (sortedReferences, headCommitID)
+    }
+}
+
+/// A bounded LRU of complete paths preserves merge/fork correctness when History loads more rows.
+/// Oversized paths are returned without retaining them for the lifetime of the app.
+final class HistoryFirstParentCache: @unchecked Sendable {
+    struct Key: Hashable {
+        let rootURL: URL
+        let tip: String
+        var boundaries: [Data] = []
+        var replacementRefs: [String] = []
+    }
+
+    private let lock = NSLock()
+    private let maximumCommitIDs: Int
+    private var entries: [(key: Key, path: Set<String>)] = []
+    private var storedCommitIDs = 0
+
+    init(maximumCommitIDs: Int = 250_000) {
+        self.maximumCommitIDs = maximumCommitIDs
+    }
+
+    func value(for key: Key, load: () throws -> Set<String>) rethrows -> Set<String> {
+        if let cached = lock.withLock({ () -> Set<String>? in
+            guard let index = entries.firstIndex(where: { $0.key == key }) else { return nil }
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.path
+        }) { return cached }
+
+        let path = try load()
+        guard path.count <= maximumCommitIDs else { return path }
+        lock.withLock {
+            // Concurrent History requests can finish the same read; retain just one copy.
+            if entries.contains(where: { $0.key == key }) { return }
+            while !entries.isEmpty, entries.count >= 8 || storedCommitIDs + path.count > maximumCommitIDs {
+                storedCommitIDs -= entries.removeFirst().path.count
+            }
+            entries.append((key, path))
+            storedCommitIDs += path.count
+        }
+        return path
     }
 }

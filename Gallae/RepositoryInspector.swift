@@ -241,12 +241,10 @@ struct RepositoryInspector: Sendable {
     }
 
     func remotes(in repository: RepositorySummary) async throws -> [RepositoryRemote] {
-        try Task.checkCancellation()
-        let remotes = try await Task.detached(priority: .userInitiated) {
-            try Self.remotesSynchronously(in: repository)
-        }.value
-        try Task.checkCancellation()
-        return remotes
+        let names = try await CommandRunner.read { try Self.remoteNamesSynchronously(in: repository) }
+        return try await Self.readRemotes(named: names) { name in
+            try Self.remoteSynchronously(named: name, in: repository)
+        }
     }
 
     func testRemoteConnection(
@@ -1389,44 +1387,56 @@ struct RepositoryInspector: Sendable {
         }
     }
 
-    private static func remotesSynchronously(
-        in repository: RepositorySummary
-    ) throws -> [RepositoryRemote] {
-        let namesResult = try runGit([
-            "-C", repository.rootURL.path,
-            "remote"
-        ])
-        guard namesResult.status == 0 else {
-            throw RepositoryRemoteError.unreadable(namesResult.standardError)
-        }
-
-        let names = text(from: namesResult.standardOutput)
-            .split(whereSeparator: \.isNewline)
-            .map(String.init)
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-
-        return try names.map { name in
-            let fetchResult = try runGit([
-                "-C", repository.rootURL.path,
-                "remote", "get-url", name
-            ])
-            let pushResult = try runGit([
-                "-C", repository.rootURL.path,
-                "remote", "get-url", "--push", name
-            ])
-            guard fetchResult.status == 0, pushResult.status == 0 else {
-                throw RepositoryRemoteError.unreadable(
-                    fetchResult.status == 0
-                        ? pushResult.standardError
-                        : fetchResult.standardError
-                )
+    /// Preserve Git's URL rewriting and first-URL semantics while bounding subprocess fan-out.
+    static func readRemotes(
+        named names: [String],
+        load: @escaping @Sendable (String) throws -> RepositoryRemote
+    ) async throws -> [RepositoryRemote] {
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: (Int, RepositoryRemote).self) { group in
+            var results = [RepositoryRemote?](repeating: nil, count: names.count)
+            var nextIndex = 0
+            func enqueue(_ index: Int) {
+                group.addTask {
+                    let remote = try await CommandRunner.read { try load(names[index]) }
+                    return (index, remote)
+                }
             }
-            return RepositoryRemote(
-                name: name,
-                fetchURL: line(from: fetchResult.standardOutput),
-                pushURL: line(from: pushResult.standardOutput)
-            )
+            while nextIndex < min(4, names.count) {
+                enqueue(nextIndex)
+                nextIndex += 1
+            }
+            while let (index, remote) = try await group.next() {
+                try Task.checkCancellation()
+                results[index] = remote
+                if nextIndex < names.count {
+                    enqueue(nextIndex)
+                    nextIndex += 1
+                }
+            }
+            try Task.checkCancellation()
+            return results.compactMap { $0 }
         }
+    }
+
+    private static func remoteNamesSynchronously(in repository: RepositorySummary) throws -> [String] {
+        let result = try runGit(["-C", repository.rootURL.path, "remote"])
+        guard result.status == 0 else { throw RepositoryRemoteError.unreadable(result.standardError) }
+        return text(from: result.standardOutput).split(whereSeparator: \Character.isNewline).map(String.init)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    private static func remoteSynchronously(named name: String, in repository: RepositorySummary) throws -> RepositoryRemote {
+        let fetchResult = try runGit(["-C", repository.rootURL.path, "remote", "get-url", name])
+        let pushResult = try runGit(["-C", repository.rootURL.path, "remote", "get-url", "--push", name])
+        guard fetchResult.status == 0, pushResult.status == 0 else {
+            throw RepositoryRemoteError.unreadable(fetchResult.status == 0 ? pushResult.standardError : fetchResult.standardError)
+        }
+        return RepositoryRemote(name: name, fetchURL: line(from: fetchResult.standardOutput), pushURL: line(from: pushResult.standardOutput))
+    }
+
+    private static func remotesSynchronously(in repository: RepositorySummary) throws -> [RepositoryRemote] {
+        try remoteNamesSynchronously(in: repository).map { try remoteSynchronously(named: $0, in: repository) }
     }
 
     private static func testRemoteConnectionSynchronously(

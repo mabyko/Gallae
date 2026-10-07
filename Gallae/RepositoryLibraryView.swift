@@ -447,7 +447,7 @@ struct RepositoryLibraryView: View {
         _ repositories: [RepositoryLocation],
         relativeTo folderURL: URL
     ) -> some View {
-        let nodes = RepositoryHierarchyNode.make(repositories, relativeTo: folderURL)
+        let nodes = model.libraryHierarchies[folderURL]?.nodes ?? []
         return List(
             selection: Binding(
                 get: { selectedHierarchyNodeID },
@@ -817,10 +817,8 @@ struct RepositoryLibraryView: View {
             let folder = model.selectedLibraryFolder
         else { return nil }
 
-        return RepositoryHierarchyNode.make(folder.repositories, relativeTo: folder.url)
-            .lazy
-            .compactMap { $0.node(matching: selectedHierarchyNodeID) }
-            .first(where: { $0.repository == nil })
+        let node = model.libraryHierarchies[folder.id]?.node(matching: selectedHierarchyNodeID)
+        return node?.repository == nil ? node : nil
     }
 
     private var isLibraryEmpty: Bool {
@@ -941,114 +939,5 @@ private struct RepositoryHierarchyFolderRow: View {
         }
         .accessibilityValue("\(node.name), folder, \(node.repositoryCount) Repositories")
         .help(node.id.path)
-    }
-}
-
-struct RepositoryHierarchyNode: Equatable, Identifiable, Sendable {
-    let id: URL
-    let name: String
-    var children: [RepositoryHierarchyNode]?
-    let repository: RepositoryLocation?
-
-    var repositoryCount: Int {
-        repository == nil
-            ? children?.reduce(0) { $0 + $1.repositoryCount } ?? 0
-            : 1
-    }
-
-    func node(matching id: URL) -> RepositoryHierarchyNode? {
-        if sameFileLocation(self.id, id) {
-            return self
-        }
-        return children?.lazy.compactMap { $0.node(matching: id) }.first
-    }
-
-    static func make(
-        _ repositories: [RepositoryLocation],
-        relativeTo rootURL: URL
-    ) -> [RepositoryHierarchyNode] {
-        let rootURL = rootURL.standardizedFileURL
-        let rootComponents = rootURL.pathComponents
-        var nodes: [RepositoryHierarchyNode] = []
-
-        for repository in repositories {
-            let repositoryComponents = repository.rootURL.standardizedFileURL.pathComponents
-            guard repositoryComponents.starts(with: rootComponents) else { continue }
-            let relativeComponents = repositoryComponents.dropFirst(rootComponents.count)
-            insert(
-                repository,
-                below: relativeComponents.dropLast(),
-                parentURL: rootURL,
-                into: &nodes
-            )
-        }
-
-        sort(&nodes)
-        return nodes
-    }
-
-    private static func insert(
-        _ repository: RepositoryLocation,
-        below components: ArraySlice<String>,
-        parentURL: URL,
-        into nodes: inout [RepositoryHierarchyNode]
-    ) {
-        guard let component = components.first else {
-            guard !nodes.contains(where: { sameFileLocation($0.id, repository.id) }) else {
-                return
-            }
-            nodes.append(.init(
-                id: repository.id,
-                name: repository.name,
-                children: nil,
-                repository: repository
-            ))
-            return
-        }
-
-        let folderURL = parentURL
-            .appending(path: component, directoryHint: .isDirectory)
-            .standardizedFileURL
-        if let index = nodes.firstIndex(where: {
-            $0.repository == nil && sameFileLocation($0.id, folderURL)
-        }) {
-            var children = nodes[index].children ?? []
-            insert(
-                repository,
-                below: components.dropFirst(),
-                parentURL: folderURL,
-                into: &children
-            )
-            nodes[index].children = children
-        } else {
-            var children: [RepositoryHierarchyNode] = []
-            insert(
-                repository,
-                below: components.dropFirst(),
-                parentURL: folderURL,
-                into: &children
-            )
-            nodes.append(.init(
-                id: folderURL,
-                name: component,
-                children: children,
-                repository: nil
-            ))
-        }
-    }
-
-    private static func sort(_ nodes: inout [RepositoryHierarchyNode]) {
-        for index in nodes.indices where nodes[index].children != nil {
-            var children = nodes[index].children ?? []
-            sort(&children)
-            nodes[index].children = children
-        }
-        nodes.sort {
-            let comparison = $0.name.localizedStandardCompare($1.name)
-            if comparison == .orderedSame {
-                return $0.repository == nil && $1.repository != nil
-            }
-            return comparison == .orderedAscending
-        }
     }
 }

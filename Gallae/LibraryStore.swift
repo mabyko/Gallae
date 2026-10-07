@@ -81,8 +81,22 @@ struct LibraryStore {
     }
 
     func removeRecentRepository(_ url: URL) {
-        removeLocation(url, forKey: Key.recentRepositories)
-        if records(forKey: Key.lastWorkspace).contains(where: { matches($0, url: url) }) {
+        removeRecentRepositories([url])
+    }
+
+    func removeRecentRepositories(_ urls: Set<URL>) {
+        guard !urls.isEmpty else { return }
+        let paths = Set(urls.map { $0.standardizedFileURL.path })
+        let saved = records(forKey: Key.recentRepositories)
+        let remaining = saved.filter { !matches($0, paths: paths) }
+        if remaining != saved {
+            if remaining.isEmpty {
+                defaults.removeObject(forKey: Key.recentRepositories)
+            } else if let data = try? PropertyListEncoder().encode(remaining) {
+                defaults.set(data, forKey: Key.recentRepositories)
+            }
+        }
+        if records(forKey: Key.lastWorkspace).contains(where: { matches($0, paths: paths) }) {
             clearLastWorkspace()
         }
     }
@@ -180,5 +194,19 @@ struct LibraryStore {
             bookmarkDataIsStale: &isStale
         )
         return resolved.map { sameFileLocation($0, standardizedURL) } == true
+    }
+
+    private func matches(_ record: BookmarkRecord, paths: Set<String>) -> Bool {
+        if paths.contains(URL(fileURLWithPath: record.lastKnownPath).standardizedFileURL.path) {
+            return true
+        }
+        // A bookmark may have followed a moved folder since lastKnownPath was saved.
+        // Resolve it once per record, rather than once for every selected repository.
+        var isStale = false
+        let resolved = try? URL(
+            resolvingBookmarkData: record.bookmark, options: [], relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+        return resolved.map { paths.contains($0.standardizedFileURL.path) } == true
     }
 }

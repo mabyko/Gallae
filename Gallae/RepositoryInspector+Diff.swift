@@ -90,12 +90,14 @@ extension RepositoryInspector {
     func diff(
         for change: RepositorySummary.Change,
         in repository: RepositorySummary,
+        scope: RepositoryDiff.Scope? = nil,
         maximumOutputBytes: Int? = maximumDisplayedDiffBytes
     ) async throws -> RepositoryDiff {
         try await CommandRunner.read {
             try Self.diffSynchronously(
                 for: change,
                 in: repository,
+                requestedScope: scope,
                 maximumOutputBytes: maximumOutputBytes
             )
         }
@@ -309,7 +311,7 @@ extension RepositoryInspector {
         // Git performs the same smudge/EOL conversion used by restore; raw index bytes are insufficient.
         let result = try runGit(["-C", rootURL.path, "cat-file", "--filters", ":\(path)"],
                                 maximumOutputBytes: RepositoryDiscardRecovery.maximumFileBytes)
-        guard result.status == 0 else { throw RepositoryDiscardRecoveryError.unreadable }
+        guard result.standardOutputExceededLimit || result.status == 0 else { throw RepositoryDiscardRecoveryError.unreadable }
         return result.standardOutputExceededLimit ? nil : result.standardOutput
     }
 
@@ -384,8 +386,8 @@ extension RepositoryInspector {
         })).map(literalPathspec)
         let result = try runGit([
             "-C", repository.rootURL.path,
-            "add", "--all", "--"
-        ] + paths)
+            "add", "--all", "--pathspec-from-file=-", "--pathspec-file-nul"
+        ], standardInput: Data(paths.flatMap { Array($0.utf8) + [0] }))
         guard result.status == 0 else {
             throw RepositoryIndexError.gitFailed(result.standardError)
         }
@@ -406,9 +408,12 @@ extension RepositoryInspector {
             [change.originalPath, change.path].compactMap(\.self)
         })).map(literalPathspec)
         let command = repository.isUnborn
-            ? ["rm", "--cached", "--force", "--ignore-unmatch", "--"]
-            : ["restore", "--staged", "--"]
-        let result = try runGit(["-C", repository.rootURL.path] + command + paths)
+            ? ["rm", "--cached", "--force", "--ignore-unmatch"]
+            : ["restore", "--staged"]
+        let result = try runGit(
+            ["-C", repository.rootURL.path] + command + ["--pathspec-from-file=-", "--pathspec-file-nul"],
+            standardInput: Data(paths.flatMap { Array($0.utf8) + [0] })
+        )
         guard result.status == 0 else {
             throw RepositoryIndexError.gitFailed(result.standardError)
         }
@@ -577,7 +582,7 @@ extension RepositoryInspector {
             arguments.append(literalPathspec(originalPath))
         }
         let result = try runGit(arguments, maximumOutputBytes: maximumOutputBytes)
-        guard result.status == 0 else {
+        guard result.standardOutputExceededLimit || result.status == 0 else {
             throw RepositoryHistoryError.unreadablePatch(result.standardError)
         }
 
@@ -609,7 +614,7 @@ extension RepositoryInspector {
             arguments.append(literalPathspec(originalPath))
         }
         var result = try runGit(arguments, maximumOutputBytes: maximumOutputBytes)
-        guard result.status == 0 else {
+        guard result.standardOutputExceededLimit || result.status == 0 else {
             throw RepositoryStashError.unreadablePatch(result.standardError)
         }
 
@@ -622,7 +627,7 @@ extension RepositoryInspector {
             if verifyResult.status == 0 {
                 arguments[arguments.firstIndex(of: stash.id)!] = untrackedRevision
                 result = try runGit(arguments, maximumOutputBytes: maximumOutputBytes)
-                guard result.status == 0 else {
+                guard result.standardOutputExceededLimit || result.status == 0 else {
                     throw RepositoryStashError.unreadablePatch(result.standardError)
                 }
             }
@@ -674,6 +679,7 @@ extension RepositoryInspector {
     private static func diffSynchronously(
         for change: RepositorySummary.Change,
         in repository: RepositorySummary,
+        requestedScope: RepositoryDiff.Scope?,
         maximumOutputBytes: Int?
     ) throws -> RepositoryDiff {
         var sections: [RepositoryDiff.Section] = []
@@ -685,7 +691,7 @@ extension RepositoryInspector {
                 maximumOutputBytes: maximumOutputBytes
             )
         } else {
-            if change.staged != nil {
+            if change.staged != nil, requestedScope == nil || requestedScope == .staged {
                 sections.append(try makeDiffSection(
                     scope: .staged,
                     change: change,
@@ -693,8 +699,8 @@ extension RepositoryInspector {
                     maximumOutputBytes: maximumOutputBytes
                 ))
             }
-            if change.unstaged != nil {
-                let scope: RepositoryDiff.Scope = change.unstaged == .untracked ? .untracked : .unstaged
+            let scope: RepositoryDiff.Scope = change.unstaged == .untracked ? .untracked : .unstaged
+            if change.unstaged != nil, requestedScope == nil || requestedScope == scope {
                 sections.append(try makeDiffSection(
                     scope: scope,
                     change: change,
@@ -751,7 +757,7 @@ extension RepositoryInspector {
         }
 
         let result = try runGit(arguments, maximumOutputBytes: maximumOutputBytes)
-        guard acceptedStatuses.contains(result.status) else {
+        guard result.standardOutputExceededLimit || acceptedStatuses.contains(result.status) else {
             throw RepositoryDiffError.gitFailed(result.standardError)
         }
 
@@ -791,7 +797,7 @@ extension RepositoryInspector {
             "-C", rootURL.path,
             "ls-files", "--stage", "-z", "--", literalPathspec(change.path)
         ])
-        guard result.status == 0 else {
+        guard result.standardOutputExceededLimit || result.status == 0 else {
             throw RepositoryDiffError.gitFailed(result.standardError)
         }
 
@@ -836,7 +842,7 @@ extension RepositoryInspector {
             ["-C", rootURL.path, "cat-file", "blob", objectID],
             maximumOutputBytes: maximumOutputBytes
         )
-        guard result.status == 0 else {
+        guard result.standardOutputExceededLimit || result.status == 0 else {
             throw RepositoryDiffError.gitFailed(result.standardError)
         }
         if result.standardOutputExceededLimit {
