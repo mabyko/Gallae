@@ -264,7 +264,8 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertTrue(capped.standardOutputExceededLimit)
         XCTAssertTrue(capped.standardOutput.isEmpty)
         XCTAssertEqual(capped.standardError, result.standardError)
-        XCTAssertEqual(capped.status, 7)
+        // A bounded read can terminate the producer before its explicit exit(7).
+        XCTAssertNotEqual(capped.status, 0)
     }
 
     func testCancellingReadStopsItsProcessAndDoesNotRunLaterCommands() async throws {

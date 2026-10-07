@@ -1,6 +1,8 @@
 import Foundation
 
 extension RepositoryInspector {
+    private static let firstParentCache = HistoryFirstParentCache()
+
     func activity(in repository: RepositorySummary) async throws -> RepositoryActivity {
         try await CommandRunner.read {
             try Self.activitySynchronously(in: repository)
@@ -239,11 +241,28 @@ extension RepositoryInspector {
             defaultBranch = (branch, id)
         }
         if defaultBranch == nil, let id = referenceSnapshot.headCommitID { defaultBranch = ("HEAD", id) }
+        // Commit IDs are immutable, but shallow boundaries, grafts and replacement refs can
+        // change their visible ancestry without changing the tip. Include those in the cache key.
+        let ancestryPaths = try runGit([
+            "-C", repository.rootURL.path, "rev-parse", "--path-format=absolute",
+            "--git-path", "shallow", "--git-path", "info/grafts"
+        ])
+        guard ancestryPaths.status == 0 else { throw RepositoryHistoryError.unreadable(ancestryPaths.standardError) }
+        let boundaries = text(from: ancestryPaths.standardOutput).split(separator: "\n").map {
+            (try? Data(contentsOf: URL(fileURLWithPath: String($0)))) ?? Data()
+        }
+        let replacementRefs = text(from: referencesResult.standardOutput).split(separator: "\n")
+            .filter { $0.contains(" refs/replace/") }.map(String.init).sorted()
         func firstParentPath(_ id: String?) throws -> Set<String> {
             guard let id else { return [] }
-            let result = try runGit(["-C", repository.rootURL.path, "rev-list", "--first-parent", id, "--"])
-            guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
-            return Set(text(from: result.standardOutput).split(separator: "\n").map(String.init))
+            let key = HistoryFirstParentCache.Key(
+                rootURL: repository.rootURL, tip: id, boundaries: boundaries, replacementRefs: replacementRefs
+            )
+            return try firstParentCache.value(for: key) {
+                let result = try runGit(["-C", repository.rootURL.path, "rev-list", "--first-parent", id, "--"])
+                guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
+                return Set(text(from: result.standardOutput).split(separator: "\n").map(String.init))
+            }
         }
         let headPath = try firstParentPath(referenceSnapshot.headCommitID)
         let defaultPath = try defaultBranch?.id == referenceSnapshot.headCommitID
@@ -379,5 +398,47 @@ extension RepositoryInspector {
             }
         }
         return (sortedReferences, headCommitID)
+    }
+}
+
+/// A bounded LRU of complete paths preserves merge/fork correctness when History loads more rows.
+/// Oversized paths are returned without retaining them for the lifetime of the app.
+final class HistoryFirstParentCache: @unchecked Sendable {
+    struct Key: Hashable {
+        let rootURL: URL
+        let tip: String
+        var boundaries: [Data] = []
+        var replacementRefs: [String] = []
+    }
+
+    private let lock = NSLock()
+    private let maximumCommitIDs: Int
+    private var entries: [(key: Key, path: Set<String>)] = []
+    private var storedCommitIDs = 0
+
+    init(maximumCommitIDs: Int = 250_000) {
+        self.maximumCommitIDs = maximumCommitIDs
+    }
+
+    func value(for key: Key, load: () throws -> Set<String>) rethrows -> Set<String> {
+        if let cached = lock.withLock({ () -> Set<String>? in
+            guard let index = entries.firstIndex(where: { $0.key == key }) else { return nil }
+            let entry = entries.remove(at: index)
+            entries.append(entry)
+            return entry.path
+        }) { return cached }
+
+        let path = try load()
+        guard path.count <= maximumCommitIDs else { return path }
+        lock.withLock {
+            // Concurrent History requests can finish the same read; retain just one copy.
+            if entries.contains(where: { $0.key == key }) { return }
+            while !entries.isEmpty, entries.count >= 8 || storedCommitIDs + path.count > maximumCommitIDs {
+                storedCommitIDs -= entries.removeFirst().path.count
+            }
+            entries.append((key, path))
+            storedCommitIDs += path.count
+        }
+        return path
     }
 }

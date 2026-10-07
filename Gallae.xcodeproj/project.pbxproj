@@ -40,6 +40,10 @@
 		110000000000000000000016 /* VisualDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000016 /* VisualDiffView.swift */; };
 		110000000000000000000017 /* VisualDiff in Resources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000017 /* VisualDiff */; };
 		110000000000000000000018 /* VisualDiffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000018 /* VisualDiffTests.swift */; };
+		110000000000000000000020 /* ChangeHierarchyPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000020 /* ChangeHierarchyPerformanceTests.swift */; };
+		110000000000000000000021 /* DiffPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000021 /* DiffPerformanceTests.swift */; };
+		110000000000000000000022 /* GitPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000022 /* GitPerformanceTests.swift */; };
+		110000000000000000000023 /* LibraryPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000023 /* LibraryPerformanceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +94,10 @@
 		120000000000000000000016 /* VisualDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffView.swift; sourceTree = "<group>"; };
 		120000000000000000000017 /* VisualDiff */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/VisualDiff; sourceTree = "<group>"; };
 		120000000000000000000018 /* VisualDiffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffTests.swift; sourceTree = "<group>"; };
+		120000000000000000000020 /* ChangeHierarchyPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeHierarchyPerformanceTests.swift; sourceTree = "<group>"; };
+		120000000000000000000021 /* DiffPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffPerformanceTests.swift; sourceTree = "<group>"; };
+		120000000000000000000022 /* GitPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPerformanceTests.swift; sourceTree = "<group>"; };
+		120000000000000000000023 /* LibraryPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPerformanceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -164,6 +172,10 @@
 			children = (
 				120000000000000000000004 /* RepositoryInspectorTests.swift */,
 				120000000000000000000018 /* VisualDiffTests.swift */,
+				120000000000000000000023 /* LibraryPerformanceTests.swift */,
+				120000000000000000000022 /* GitPerformanceTests.swift */,
+				120000000000000000000021 /* DiffPerformanceTests.swift */,
+				120000000000000000000020 /* ChangeHierarchyPerformanceTests.swift */,
 			);
 			path = GallaeTests;
 			sourceTree = "<group>";
@@ -323,6 +335,10 @@
 			files = (
 				110000000000000000000004 /* RepositoryInspectorTests.swift in Sources */,
 				110000000000000000000018 /* VisualDiffTests.swift in Sources */,
+				110000000000000000000023 /* LibraryPerformanceTests.swift in Sources */,
+				110000000000000000000022 /* GitPerformanceTests.swift in Sources */,
+				110000000000000000000021 /* DiffPerformanceTests.swift in Sources */,
+				110000000000000000000020 /* ChangeHierarchyPerformanceTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

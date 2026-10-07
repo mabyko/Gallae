@@ -482,22 +482,57 @@ struct RepositoryDiff: Equatable, Sendable {
 
         var id: Scope { scope }
 
-        var hunks: [Hunk] {
-            guard case .text(let lines) = content else { return [] }
-            let starts = lines.indices.filter { lines[$0].kind == .hunk }
-            guard let first = starts.first else { return [] }
-            let metadata = lines[..<first].map(\.text)
+        /// Built once with the immutable diff, without materializing patch bytes for every button.
+        struct HunkIndex: Equatable, Sendable {
+            struct Entry: Equatable, Sendable {
+                let range: Range<Int>
+                let changedLineIDs: Set<Int>
+            }
+            let metadataEnd: Int
+            let orderedIDs: [Int]
+            let entries: [Int: Entry]
 
-            return starts.enumerated().map { offset, start in
-                let end = offset + 1 < starts.count ? starts[offset + 1] : lines.endIndex
-                let patch = (metadata + lines[start..<end].map(\.text)).joined(separator: "\n") + "\n"
-                return Hunk(
-                    id: lines[start].id,
-                    scope: scope,
-                    patch: Data(patch.utf8)
-                )
+            init(content: Content) {
+                guard case .text(let lines) = content else {
+                    metadataEnd = 0; orderedIDs = []; entries = [:]
+                    return
+                }
+                let starts = lines.indices.filter { lines[$0].kind == .hunk }
+                metadataEnd = starts.first ?? 0
+                orderedIDs = starts.map { lines[$0].id }
+                var entries: [Int: Entry] = [:]
+                for (offset, start) in starts.enumerated() {
+                    let end = offset + 1 < starts.count ? starts[offset + 1] : lines.endIndex
+                    let changed = Set(lines[(start + 1)..<end].compactMap {
+                        $0.kind == .addition || $0.kind == .deletion ? $0.id : nil
+                    })
+                    entries[lines[start].id] = Entry(range: start..<end, changedLineIDs: changed)
+                }
+                self.entries = entries
             }
         }
+
+        let hunkIndex: HunkIndex
+
+        init(scope: Scope, content: Content) {
+            self.scope = scope
+            self.content = content
+            hunkIndex = HunkIndex(content: content)
+        }
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.scope == rhs.scope && lhs.content == rhs.content
+        }
+
+        /// Construct only the patch the user actually acts on.
+        func hunk(id: Int) -> Hunk? {
+            guard case .text(let lines) = content, let entry = hunkIndex.entries[id] else { return nil }
+            let metadata = lines[..<hunkIndex.metadataEnd].map(\.text)
+            let patch = (metadata + lines[entry.range].map(\.text)).joined(separator: "\n") + "\n"
+            return Hunk(id: id, scope: scope, patch: Data(patch.utf8))
+        }
+
+        var hunks: [Hunk] { hunkIndex.orderedIDs.compactMap { hunk(id: $0) } }
     }
 
     struct Line: Equatable, Identifiable, Sendable {
@@ -638,12 +673,13 @@ extension RepositoryDiff.Section {
     ) -> RepositoryDiff.Hunk? {
         guard
             case .text(let lines) = content,
-            let firstHunk = lines.firstIndex(where: { $0.kind == .hunk }),
-            let start = lines.firstIndex(where: { $0.id == hunkID && $0.kind == .hunk })
+            let entry = hunkIndex.entries[hunkID]
         else {
             return nil
         }
-        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
+        let firstHunk = hunkIndex.metadataEnd
+        let start = entry.range.lowerBound
+        let end = entry.range.upperBound
         var body: [String] = []
         var oldCount = 0
         var newCount = 0

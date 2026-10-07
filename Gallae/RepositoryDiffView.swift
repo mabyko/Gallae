@@ -1117,10 +1117,10 @@ private struct RepositoryDiffSectionView: View {
                     lines: lines,
                     layout: layout,
                     isBusy: isBusy,
-                    hunkAction: { line in hunkAction(for: line, in: lines) },
-                    hunkSecondaryAction: { line in discardAction(for: line, in: lines) },
+                    hunkAction: { line in hunkAction(for: line) },
+                    hunkSecondaryAction: { line in discardAction(for: line) },
                     lineChoice: { line in lineChoice(for: line) },
-                    hunkChoice: { line in hunkChoice(for: line, in: lines) },
+                    hunkChoice: { line in hunkChoice(for: line) },
                     reservesChoiceColumn: choosesLines
                 )
             case .binary:
@@ -1187,33 +1187,37 @@ private struct RepositoryDiffSectionView: View {
     }
 
     /// The second hunk button on a working tree section: the whole hunk or the ticked lines, after asking.
-    private func discardAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+    private func discardAction(for line: RepositoryDiff.Line) -> (label: String, perform: () -> Void)? {
         guard line.kind == .hunk, section.scope == .unstaged, canStageHunks,
-              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
-        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+              let entry = section.hunkIndex.entries[line.id] else { return nil }
+        let chosen = chosenLineIDs.intersection(entry.changedLineIDs)
         guard !chosen.isEmpty else {
-            return ("Discard Hunk…", { pendingDiscard = .init(hunk: hunk, lineCount: nil) })
+            return ("Discard Hunk…", {
+                if let hunk = section.hunk(id: line.id) { pendingDiscard = .init(hunk: hunk, lineCount: nil) }
+            })
         }
         let label = chosen.count == 1 ? "Discard 1 Line…" : "Discard \(chosen.count) Lines…"
         return (label, {
-            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: .revert) {
+            if let partial = section.partialHunk(id: line.id, keeping: chosen, direction: .revert) {
                 pendingDiscard = .init(hunk: partial, lineCount: chosen.count)
             }
         })
     }
 
     /// The hunk button: the whole hunk while nothing is ticked, otherwise only the ticked lines of that hunk.
-    private func hunkAction(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (label: String, perform: () -> Void)? {
+    private func hunkAction(for line: RepositoryDiff.Line) -> (label: String, perform: () -> Void)? {
         guard line.kind == .hunk, let hunkVerb,
-              let hunk = section.hunks.first(where: { $0.id == line.id }) else { return nil }
-        let chosen = chosenLineIDs.intersection(changeLineIDs(ofHunkStartingAt: line.id, in: lines))
+              let entry = section.hunkIndex.entries[line.id] else { return nil }
+        let chosen = chosenLineIDs.intersection(entry.changedLineIDs)
         guard choosesLines, !chosen.isEmpty else {
-            return ("\(hunkVerb) Hunk", { updateHunk(hunk) })
+            return ("\(hunkVerb) Hunk", {
+                if let hunk = section.hunk(id: line.id) { updateHunk(hunk) }
+            })
         }
         let label = chosen.count == 1 ? "\(hunkVerb) 1 Line" : "\(hunkVerb) \(chosen.count) Lines"
         return (label, {
             let direction: RepositoryDiff.Section.PartialDirection = section.scope == .staged ? .revert : .apply
-            if let partial = section.partialHunk(id: hunk.id, keeping: chosen, direction: direction) {
+            if let partial = section.partialHunk(id: line.id, keeping: chosen, direction: direction) {
                 updateHunk(partial)
             }
         })
@@ -1224,9 +1228,9 @@ private struct RepositoryDiffSectionView: View {
         return (chosenLineIDs.contains(line.id), { toggle(line.id) })
     }
 
-    private func hunkChoice(for line: RepositoryDiff.Line, in lines: [RepositoryDiff.Line]) -> (isOn: Bool, toggle: () -> Void)? {
+    private func hunkChoice(for line: RepositoryDiff.Line) -> (isOn: Bool, toggle: () -> Void)? {
         guard choosesLines, line.kind == .hunk else { return nil }
-        let ids = changeLineIDs(ofHunkStartingAt: line.id, in: lines)
+        let ids = section.hunkIndex.entries[line.id]?.changedLineIDs ?? []
         guard !ids.isEmpty else { return nil }
         let allChosen = ids.isSubset(of: chosenLineIDs)
         return (allChosen, {
@@ -1249,12 +1253,6 @@ private struct RepositoryDiffSectionView: View {
             chosenLineIDs.remove(lineID)
         }
         lastToggledLineID = lineID
-    }
-
-    private func changeLineIDs(ofHunkStartingAt hunkID: Int, in lines: [RepositoryDiff.Line]) -> Set<Int> {
-        guard let start = lines.firstIndex(where: { $0.id == hunkID }) else { return [] }
-        let end = lines[(start + 1)...].firstIndex { $0.kind == .hunk } ?? lines.endIndex
-        return Set(lines[(start + 1)..<end].filter { $0.kind == .addition || $0.kind == .deletion }.map(\.id))
     }
 }
 

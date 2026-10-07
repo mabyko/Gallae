@@ -260,6 +260,10 @@ final class AppModel {
     let library: RepositoryLibraryModel
     var screen: AppScreen = .library
     var repository: RepositorySummary?
+    @ObservationIgnored private let changeHierarchyCache = RepositoryChangeHierarchyCache()
+    var changeHierarchy: [RepositoryChangeHierarchyNode] {
+        changeHierarchyCache.nodes(for: repository?.changes ?? [])
+    }
     private(set) var lastDiscardRecovery: RepositoryDiscardRecovery?
     private var discardRecoveryGeneration = 0
     var availableDiscardRecovery: RepositoryDiscardRecovery? {

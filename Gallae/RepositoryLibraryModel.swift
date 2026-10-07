@@ -13,8 +13,14 @@ final class RepositoryLibraryModel {
     @ObservationIgnored private let store: LibraryStore
     @ObservationIgnored private let inspector = RepositoryInspector()
 
-    init(store: LibraryStore) {
+    init(
+        store: LibraryStore,
+        scan: @escaping @Sendable (URL) -> AsyncStream<RepositoryScanEvent> = {
+            RepositoryScanner().scan(in: $0)
+        }
+    ) {
         self.store = store
+        self.scan = scan
     }
 
     @ObservationIgnored private var scanningFolderIDs: [URL] = []
@@ -22,10 +28,28 @@ final class RepositoryLibraryModel {
     @ObservationIgnored private var scanTask: Task<Void, Never>?
 
     @ObservationIgnored private var scanGeneration = 0
+    @ObservationIgnored private var activeScanProgress: (folderID: URL, progress: LibraryScanProgress)?
 
-    @ObservationIgnored private let scanner = RepositoryScanner()
+    @ObservationIgnored private let scan: @Sendable (URL) -> AsyncStream<RepositoryScanEvent>
 
-    var libraryFolders: [RepositoryLibraryFolder] = []
+    var libraryFolders: [RepositoryLibraryFolder] = [] {
+        didSet { updateHierarchies(previousFolders: oldValue) }
+    }
+
+    private(set) var libraryHierarchies: [URL: RepositoryHierarchySnapshot] = [:]
+
+    private func updateHierarchies(previousFolders: [RepositoryLibraryFolder]) {
+        let previous = Dictionary(uniqueKeysWithValues: previousFolders.map { ($0.id, $0.repositories) })
+        let currentIDs = Set(libraryFolders.map(\.id))
+        for id in libraryHierarchies.keys where !currentIDs.contains(id) {
+            libraryHierarchies[id] = nil
+        }
+        for folder in libraryFolders where previous[folder.id] != folder.repositories {
+            libraryHierarchies[folder.id] = RepositoryHierarchySnapshot(
+                repositories: folder.repositories, relativeTo: folder.url
+            )
+        }
+    }
 
     var recentRepositories: [RepositoryLocation] = []
 
@@ -163,6 +187,10 @@ final class RepositoryLibraryModel {
 
     func cancelLibraryScan() {
         guard scanTask != nil else { return }
+        if let activeScanProgress {
+            publishScanProgress(activeScanProgress.progress, folderID: activeScanProgress.folderID)
+            self.activeScanProgress = nil
+        }
         scanGeneration += 1
         scanTask?.cancel()
         scanTask = nil
@@ -317,29 +345,35 @@ final class RepositoryLibraryModel {
     private func consumeScan(folderID: URL, generation: Int) async {
         var partialFailureCount = 0
         var rootFailureMessage: String?
-        var foundRepositories: [RepositoryLocation] = []
+        let progress = LibraryScanProgress(existing: libraryFolders.first { $0.id == folderID }?.repositories ?? [])
+        activeScanProgress = (folderID, progress)
+        var pendingPublication: Task<Void, Never>?
+        defer {
+            pendingPublication?.cancel()
+            if activeScanProgress?.progress === progress { activeScanProgress = nil }
+        }
 
-        for await event in scanner.scan(in: folderID) {
+        for await event in scan(folderID) {
             guard !Task.isCancelled, generation == scanGeneration else { return }
 
             switch event {
             case .found(let repository):
-                if !foundRepositories.contains(where: {
-                    sameFileLocation($0.id, repository.id)
-                }) {
-                    foundRepositories.append(repository)
-                }
-                updateLibraryFolder(id: folderID) { folder in
-                    guard !folder.repositories.contains(where: {
-                        sameFileLocation($0.id, repository.id)
-                    }) else { return }
-                    folder.repositories.append(repository)
-                    folder.repositories.sort {
-                        $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
+                progress.append(repository)
+                if !progress.pending.isEmpty {
+                    // Show the first result immediately, then publish at most every 100 ms,
+                    // including when a slow filesystem scan is waiting on its next result.
+                    if progress.publishedCount == 0 {
+                        pendingPublication?.cancel()
+                        pendingPublication = nil
+                        publishScanProgress(progress, folderID: folderID)
+                    } else if pendingPublication == nil {
+                        pendingPublication = Task { [weak self] in
+                            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                            guard let self, generation == self.scanGeneration else { return }
+                            self.publishScanProgress(progress, folderID: folderID)
+                            pendingPublication = nil
+                        }
                     }
-                }
-                if selectedLibraryFolderID == folderID, selectedLibraryRepositoryID == nil {
-                    selectedLibraryRepositoryID = repository.id
                 }
             case .failed(let failure):
                 partialFailureCount += 1
@@ -352,15 +386,12 @@ final class RepositoryLibraryModel {
             }
         }
 
+        pendingPublication?.cancel()
         guard !Task.isCancelled, generation == scanGeneration else { return }
-        let repositoriesBeforeReconciliation = libraryFolders
-            .first(where: { sameFileLocation($0.id, folderID) })?
-            .repositories ?? []
-        let shouldReconcile = rootFailureMessage == nil || !foundRepositories.isEmpty
-        if shouldReconcile {
-            foundRepositories.sort {
-                $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
-            }
+        let repositoriesBeforeReconciliation = libraryFolders.first { $0.id == folderID }?.repositories ?? []
+        let shouldReconcile = rootFailureMessage == nil || !progress.found.isEmpty
+        let foundRepositories = progress.found.sorted {
+            $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
         }
         updateLibraryFolder(id: folderID) { folder in
             if shouldReconcile {
@@ -373,20 +404,32 @@ final class RepositoryLibraryModel {
             }
         }
         if shouldReconcile {
-            let removedRepositories = repositoriesBeforeReconciliation.filter { repository in
-                !foundRepositories.contains {
-                    sameFileLocation($0.id, repository.id)
-                }
+            let removedRepositories = repositoriesBeforeReconciliation.filter {
+                !progress.foundPaths.contains($0.id.standardizedFileURL.path)
             }
             discardUnusedCaches(for: removedRepositories)
             if selectedLibraryFolderID.map({ sameFileLocation($0, folderID) }) == true,
-               selectedLibraryRepositoryID.map({ selectedID in
-                   !foundRepositories.contains {
-                       sameFileLocation($0.id, selectedID)
-                   }
+               selectedLibraryRepositoryID.map({
+                   !progress.foundPaths.contains($0.standardizedFileURL.path)
                }) != false {
                 selectedLibraryRepositoryID = foundRepositories.first?.id
             }
+        }
+    }
+
+    private func publishScanProgress(_ progress: LibraryScanProgress, folderID: URL) {
+        guard !progress.pending.isEmpty else { return }
+        let batch = progress.pending
+        progress.pending.removeAll(keepingCapacity: true)
+        progress.publishedCount += batch.count
+        updateLibraryFolder(id: folderID) { folder in
+            folder.repositories.append(contentsOf: batch)
+            folder.repositories.sort {
+                $0.rootURL.path.localizedStandardCompare($1.rootURL.path) == .orderedAscending
+            }
+        }
+        if selectedLibraryFolderID == folderID, selectedLibraryRepositoryID == nil {
+            selectedLibraryRepositoryID = batch.first?.id
         }
     }
 
@@ -510,5 +553,117 @@ final class RepositoryLibraryModel {
 
     private static func message(for error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+struct RepositoryHierarchyNode: Equatable, Identifiable, Sendable {
+    let id: URL
+    let name: String
+    var children: [RepositoryHierarchyNode]?
+    let repository: RepositoryLocation?
+
+    var repositoryCount: Int {
+        (repository == nil ? 0 : 1) + (children?.reduce(0) { $0 + $1.repositoryCount } ?? 0)
+    }
+
+    func node(matching id: URL) -> RepositoryHierarchyNode? {
+        if sameFileLocation(self.id, id) {
+            return self
+        }
+        return children?.lazy.compactMap { $0.node(matching: id) }.first
+    }
+
+    static func make(
+        _ repositories: [RepositoryLocation],
+        relativeTo rootURL: URL
+    ) -> [RepositoryHierarchyNode] {
+        let rootURL = rootURL.standardizedFileURL
+        let rootComponents = rootURL.pathComponents
+        let root = Builder(url: rootURL)
+        for repository in repositories {
+            let url = repository.rootURL.standardizedFileURL
+            let components = url.pathComponents
+            guard components.starts(with: rootComponents) else { continue }
+            var parent = root
+            for component in components.dropFirst(rootComponents.count).dropLast() {
+                if let existing = parent.folders[component] {
+                    parent = existing
+                } else {
+                    let folder = Builder(url: parent.url.appending(path: component, directoryHint: .isDirectory))
+                    parent.folders[component] = folder
+                    parent = folder
+                }
+            }
+            if parent.repositories[url.path] == nil { parent.repositories[url.path] = repository }
+        }
+        return root.nodes()
+    }
+
+    private final class Builder {
+        let url: URL
+        var folders: [String: Builder] = [:]
+        var repositories: [String: RepositoryLocation] = [:]
+
+        init(url: URL) { self.url = url }
+
+        func nodes() -> [RepositoryHierarchyNode] {
+            let folderPaths = Set(folders.values.map { $0.url.standardizedFileURL.path })
+            let children = folders.values.map {
+                RepositoryHierarchyNode(id: $0.url, name: $0.url.lastPathComponent,
+                                        children: $0.nodes(), repository: repositories[$0.url.standardizedFileURL.path])
+            } + repositories.filter { !folderPaths.contains($0.key) }.values.map {
+                RepositoryHierarchyNode(id: $0.id, name: $0.name, children: nil, repository: $0)
+            }
+            return children.sorted {
+                let comparison = $0.name.localizedStandardCompare($1.name)
+                if comparison == .orderedSame { return $0.repository == nil && $1.repository != nil }
+                return comparison == .orderedAscending
+            }
+        }
+    }
+}
+
+/// Derived once when a folder's repository list changes; selection and status updates reuse it.
+final class RepositoryHierarchySnapshot: Sendable {
+    let nodes: [RepositoryHierarchyNode]
+    private let nodesByPath: [String: RepositoryHierarchyNode]
+
+    init(repositories: [RepositoryLocation], relativeTo rootURL: URL) {
+        nodes = RepositoryHierarchyNode.make(repositories, relativeTo: rootURL)
+        var index: [String: RepositoryHierarchyNode] = [:]
+        func indexNodes(_ nodes: [RepositoryHierarchyNode]) {
+            for node in nodes {
+                let path = node.id.standardizedFileURL.path
+                index[path] = node
+                if let children = node.children { indexNodes(children) }
+            }
+        }
+        indexNodes(nodes)
+        nodesByPath = index
+    }
+
+    func node(matching id: URL) -> RepositoryHierarchyNode? {
+        nodesByPath[id.standardizedFileURL.path]
+    }
+}
+
+@MainActor
+private final class LibraryScanProgress {
+    var found: [RepositoryLocation] = []
+    var foundPaths: Set<String> = []
+    var pending: [RepositoryLocation] = []
+    var publishedCount: Int
+    private var publishedPaths: Set<String>
+
+    init(existing: [RepositoryLocation]) {
+        publishedPaths = Set(existing.map { $0.id.standardizedFileURL.path })
+        publishedCount = existing.count
+    }
+
+    func append(_ repository: RepositoryLocation) {
+        let path = repository.id.standardizedFileURL.path
+        guard foundPaths.insert(path).inserted else { return }
+        found.append(repository)
+        if publishedPaths.insert(path).inserted { pending.append(repository) }
     }
 }

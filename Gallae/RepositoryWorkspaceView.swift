@@ -1006,7 +1006,7 @@ struct RepositoryWorkspaceView: View {
     private func changeHierarchyList(_ repository: RepositorySummary) -> some View {
         List(selection: $selectedChangeIDs) {
             OutlineGroup(
-                RepositoryChangeHierarchyNode.make(repository.changes),
+                model.changeHierarchy,
                 children: \.children
             ) { node in
                 changeHierarchyRow(node)
@@ -1328,6 +1328,27 @@ struct RepositoryChangeStatusGroup: Equatable, Identifiable, Sendable {
             $0.changes.contains { $0.id == selectedChangeID }
         }) else { return [] }
         return Set(group.changes.map(\.id))
+    }
+}
+
+/// One tree per change snapshot; selection, focus, and composer edits reuse it.
+/// This is model-owned memoization and does not publish changes during view evaluation.
+@MainActor
+final class RepositoryChangeHierarchyCache {
+    private var changes: [RepositorySummary.Change]?
+    private var tree: [RepositoryChangeHierarchyNode] = []
+    private let make: ([RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode]
+
+    init(make: @escaping ([RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode] = RepositoryChangeHierarchyNode.make) {
+        self.make = make
+    }
+
+    func nodes(for changes: [RepositorySummary.Change]) -> [RepositoryChangeHierarchyNode] {
+        if self.changes != changes {
+            tree = make(changes)
+            self.changes = changes
+        }
+        return tree
     }
 }
 

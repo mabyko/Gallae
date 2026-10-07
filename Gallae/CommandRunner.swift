@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 enum CommandRunner {
     static let gitURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -46,6 +47,7 @@ enum CommandRunner {
         try Data().write(to: standardErrorURL)
 
         let standardOutput = try FileHandle(forWritingTo: standardOutputURL)
+        let outputPipe = maximumOutputBytes == nil ? nil : Pipe()
         let standardError = try FileHandle(forWritingTo: standardErrorURL)
         let standardInputHandle: FileHandle?
         if let standardInput {
@@ -59,13 +61,19 @@ enum CommandRunner {
             try? standardOutput.close()
             try? standardError.close()
             try? standardInputHandle?.close()
+            try? outputPipe?.fileHandleForReading.close()
+            try? outputPipe?.fileHandleForWriting.close()
         }
 
         process.executableURL = executableURL
         process.currentDirectoryURL = currentDirectoryURL
         process.arguments = arguments
         process.standardInput = standardInputHandle
-        process.standardOutput = standardOutput
+        if let outputPipe {
+            process.standardOutput = outputPipe
+        } else {
+            process.standardOutput = standardOutput
+        }
         process.standardError = standardError
 
         var environment = ProcessInfo.processInfo.environment
@@ -84,25 +92,57 @@ enum CommandRunner {
 
         cancellation?.register(process)
         defer { cancellation?.clear(process) }
+        var capturedOutput = Data()
+        var exceededLimit = false
+        if let outputPipe, let maximumOutputBytes {
+            // Drain stdout while Git runs; stderr and stdin use files so neither can block
+            // behind a full pipe. Close our writer so EOF arrives when the child exits.
+            do {
+                try outputPipe.fileHandleForWriting.close()
+                while let chunk = try outputPipe.fileHandleForReading.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                    if chunk.count > max(0, maximumOutputBytes) - capturedOutput.count {
+                        exceededLimit = true
+                        capturedOutput.removeAll(keepingCapacity: false)
+                        if process.isRunning { process.terminate() }
+                        break
+                    }
+                    capturedOutput.append(chunk)
+                }
+                try outputPipe.fileHandleForReading.close()
+                if exceededLimit { finishTerminatingLimitedRead(process) }
+            } catch {
+                if process.isRunning { process.terminate() }
+                try? outputPipe.fileHandleForReading.close()
+                finishTerminatingLimitedRead(process)
+                process.waitUntilExit()
+                if cancelsRead, cancellation?.isCancelled == true { throw CancellationError() }
+                throw error
+            }
+        }
         process.waitUntilExit()
         if cancelsRead, cancellation?.isCancelled == true { throw CancellationError() }
         try standardOutput.close()
         try standardError.close()
 
-        // ponytail: Git finishes writing to disk before the size cap is checked. Stream and
-        // terminate the process only if large-diff latency becomes measurable.
-        let outputSize = try standardOutputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        let exceededLimit = maximumOutputBytes.map { outputSize > $0 } ?? false
-
         return GitResult(
             status: process.terminationStatus,
-            standardOutput: exceededLimit ? Data() : try Data(contentsOf: standardOutputURL),
+            standardOutput: outputPipe == nil ? try Data(contentsOf: standardOutputURL) : capturedOutput,
             standardOutputExceededLimit: exceededLimit,
             standardError: String(
                 decoding: try Data(contentsOf: standardErrorURL),
                 as: UTF8.self
             ).trimmingCharacters(in: .whitespacesAndNewlines)
         )
+    }
+
+    /// Only for an owned, bounded read whose output we have already stopped accepting.
+    /// A producer that ignores SIGTERM/SIGPIPE must not strand the worker indefinitely.
+    private static func finishTerminatingLimitedRead(_ process: Process) {
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(250))
+        while process.isRunning, ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
 }
 

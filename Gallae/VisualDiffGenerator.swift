@@ -45,13 +45,14 @@ enum VisualDiffGenerator {
             head = staged ? "Index" : "Working tree"
             let changes = repository.changes.filter { !$0.isConflicted && (staged ? $0.staged != nil : $0.unstaged != nil) }
             guard changes.count <= 256 else { throw GenerationError.tooManyFiles }
-            for change in changes {
-                try Task.checkCancellation()
-                let diff = try await inspector.diff(for: change, in: repository, maximumOutputBytes: 128 * 1024)
+            files = try await collectFiles(changes) { change in
                 let scope: RepositoryDiff.Scope = staged ? .staged : (change.unstaged == .untracked ? .untracked : .unstaged)
-                guard let content = diff.sections.first(where: { $0.scope == scope })?.content else { continue }
-                files.append(.init(path: change.path, originalPath: change.originalPath,
-                                   state: (staged ? change.staged : change.unstaged)!, content: content))
+                let diff = try await inspector.diff(for: change, in: repository, scope: scope, maximumOutputBytes: 128 * 1024)
+                guard let content = diff.sections.first(where: { $0.scope == scope })?.content else {
+                    throw RepositoryDiffError.unavailable
+                }
+                return File(path: change.path, originalPath: change.originalPath,
+                            state: (staged ? change.staged : change.unstaged)!, content: content)
             }
         case .commit(let commit):
             label = "Commit \(commit.id.prefix(8))"
@@ -59,10 +60,9 @@ enum VisualDiffGenerator {
             head = commit.id
             let changes = try await inspector.files(for: commit, in: repository)
             guard changes.count <= 256 else { throw GenerationError.tooManyFiles }
-            for file in changes {
-                try Task.checkCancellation()
+            files = try await collectFiles(changes) { file in
                 let patch = try await inspector.patch(for: file, in: commit, repository: repository, maximumOutputBytes: 128 * 1024)
-                files.append(.init(path: file.path, originalPath: file.originalPath, state: file.state, content: patch.content))
+                return File(path: file.path, originalPath: file.originalPath, state: file.state, content: patch.content)
             }
         case .stash(let stash):
             label = "Stash · \(stash.reference)"
@@ -70,10 +70,9 @@ enum VisualDiffGenerator {
             head = stash.id
             let changes = try await inspector.files(for: stash, in: repository)
             guard changes.count <= 256 else { throw GenerationError.tooManyFiles }
-            for file in changes {
-                try Task.checkCancellation()
+            files = try await collectFiles(changes) { file in
                 let patch = try await inspector.patch(for: file, in: stash, repository: repository, maximumOutputBytes: 128 * 1024)
-                files.append(.init(path: file.path, originalPath: file.originalPath, state: file.state, content: patch.content))
+                return File(path: file.path, originalPath: file.originalPath, state: file.state, content: patch.content)
             }
         }
         guard !files.isEmpty else { throw GenerationError.empty }
@@ -83,6 +82,35 @@ enum VisualDiffGenerator {
             let sha = result.status == 0 ? String(decoding: result.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) : "0000000"
             return try makeDocument(files: collected, repositoryName: repository.name, title: label,
                                     base: base, head: head, fallbackSHA: sha)
+        }
+    }
+
+    /// Keep process pressure bounded and preserve input order even when reads finish out of order.
+    /// Structured child tasks propagate cancellation to each inspector read and its Git process.
+    static func collectFiles<Input: Sendable>(
+        _ inputs: [Input],
+        read: @escaping @Sendable (Input) async throws -> File
+    ) async throws -> [File] {
+        guard inputs.count <= 256 else { throw GenerationError.tooManyFiles }
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: (Int, File).self) { group in
+            var next = 0
+            var results = [File?](repeating: nil, count: inputs.count)
+            for _ in 0..<min(4, inputs.count) {
+                let index = next
+                group.addTask { try Task.checkCancellation(); return (index, try await read(inputs[index])) }
+                next += 1
+            }
+            while let (index, file) = try await group.next() {
+                try Task.checkCancellation()
+                results[index] = file
+                if next < inputs.count {
+                    let index = next
+                    group.addTask { try Task.checkCancellation(); return (index, try await read(inputs[index])) }
+                    next += 1
+                }
+            }
+            return results.compactMap { $0 }
         }
     }
 
