@@ -1120,16 +1120,7 @@ struct RepositoryWorkspaceView: View {
     ) -> some View {
         RepositoryChangeRow(change: change, showsParentPath: showsParentPath)
             .contextMenu {
-                let changeIDs = contextChangeIDs(for: change.id)
-                Button(changeIDs.count > 1 ? "Stage Selected" : "Stage") {
-                    Task { await model.stageChanges(ids: changeIDs) }
-                }
-                .disabled(model.isLoading || !model.canStageChanges(ids: changeIDs))
-
-                Button(changeIDs.count > 1 ? "Unstage Selected" : "Unstage") {
-                    Task { await model.unstageChanges(ids: changeIDs) }
-                }
-                .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
+                RepositoryChangeContextMenu(model: model, changeIDs: contextChangeIDs(for: change.id))
             }
             .tag(change.id)
             .gallaeSelectionBackground(isSelected: selectedChangeIDs.contains(change.id), isFocused: isChangeListFocused)
@@ -1174,6 +1165,25 @@ struct RepositoryWorkspaceView: View {
         let remote = String(upstream.name.dropLast(branch.count + 1))
         guard let ahead = upstream.ahead, let behind = upstream.behind else { return remote }
         return "\(remote) · ↑\(ahead) ↓\(behind)"
+    }
+}
+
+// Keep menu evaluation behind a View boundary. List enumerates every row to discover
+// identities; evaluating the selection checks there scans all changes once per row.
+private struct RepositoryChangeContextMenu: View {
+    let model: AppModel
+    let changeIDs: Set<RepositorySummary.Change.ID>
+
+    var body: some View {
+        Button(changeIDs.count > 1 ? "Stage Selected" : "Stage") {
+            Task { await model.stageChanges(ids: changeIDs) }
+        }
+        .disabled(model.isLoading || !model.canStageChanges(ids: changeIDs))
+
+        Button(changeIDs.count > 1 ? "Unstage Selected" : "Unstage") {
+            Task { await model.unstageChanges(ids: changeIDs) }
+        }
+        .disabled(model.isLoading || !model.canUnstageChanges(ids: changeIDs))
     }
 }
 
