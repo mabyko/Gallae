@@ -67,6 +67,30 @@ struct RepositoryNavigatorView: View {
             Divider()
                 .padding(.horizontal, 10)
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("References")
+                    .gallaeFont(.caption1, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    TextField("Filter", text: $filterText)
+                        .textFieldStyle(.plain)
+                        .controlSize(.small)
+                        .accessibilityLabel("Filter Worktrees, Branches, Remotes, and Tags")
+                    if !filterText.isEmpty {
+                        Button("Clear Filter", systemImage: "xmark.circle.fill") { filterText = "" }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(7)
+                .gallaeInsetPanel()
+            }
+            .padding(10)
+
             List(selection: navigatorSelection) {
                 RepositoryWorktreesSection(model: model, filter: filterText,
                                            isFocused: isReferenceListFocused,
@@ -127,13 +151,6 @@ struct RepositoryNavigatorView: View {
                 return .handled
             }
 
-            Divider()
-
-            TextField("Filter", text: $filterText)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .padding(8)
-                .accessibilityLabel("Filter Worktrees, Branches, Remotes, and Tags")
         }
         // Reduced Transparency and Increased Contrast paint the sidebar opaque instead of the system material.
         .background(theme.materials.translucentChrome || isFloating ? Color.clear : theme.colors.opaqueChrome)
@@ -292,22 +309,32 @@ struct RepositoryNavigatorView: View {
             show(section)
             isScreenListFocused = true
         } label: {
-            HStack(spacing: 8) {
-                Label(section.title, systemImage: section.systemImage)
+            HStack(spacing: 4) {
+                Image(systemName: section.systemImage)
+                    .frame(width: 16)
+                    .accessibilityHidden(true)
+                Text(section.title)
+                    .gallaeFont(.callout, weight: isSelected ? .semibold : .regular)
                     .lineLimit(1)
-                Spacer(minLength: 4)
+                    .layoutPriority(1)
+                Spacer(minLength: 0)
                 if badge > 0 {
                     Text(badge, format: .number)
                         .gallaeFont(.caption1)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize()
                         .foregroundStyle(isActive ? .white.opacity(0.85) : .secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(theme.colors.badgeBackground, in: .capsule)
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 28)
+            .frame(minHeight: 34)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: theme.metrics.panelCornerRadius)
                     .fill(isActive ? theme.colors.accent : isSelected ? Color.secondary.opacity(0.25) : .clear)
             )
             .foregroundStyle(isActive ? .white : .primary)

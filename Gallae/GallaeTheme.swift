@@ -78,9 +78,16 @@ struct GallaeTheme: Sendable {
         let diffHunkBackground: Color
         /// Opaque chrome color used for the sidebar when the system material is not shown.
         let opaqueChrome: Color
+        let panelSurface: Color
+        let panelBorder: Color
     }
 
     struct Metrics: Sendable {
+        let panelHorizontalPadding: CGFloat
+        let panelVerticalPadding: CGFloat
+        let panelSpacing: CGFloat
+        let panelCornerRadius: CGFloat
+        let revisionFileListIdealWidth: CGFloat
         let libraryFolderMinimumWidth: CGFloat
         let libraryFolderIdealWidth: CGFloat
         let libraryFolderMaximumWidth: CGFloat
@@ -145,9 +152,16 @@ struct GallaeTheme: Sendable {
                 diffAdditionBackground: .green.opacity(contrast ? 0.24 : 0.12),
                 diffDeletionBackground: .red.opacity(contrast ? 0.24 : 0.12),
                 diffHunkBackground: .secondary.opacity(contrast ? 0.20 : 0.10),
-                opaqueChrome: Color(nsColor: .windowBackgroundColor)
+                opaqueChrome: Color(nsColor: .windowBackgroundColor),
+                panelSurface: Color(nsColor: .controlBackgroundColor),
+                panelBorder: Color(nsColor: .separatorColor)
             ),
             metrics: .init(
+                panelHorizontalPadding: 14,
+                panelVerticalPadding: 8,
+                panelSpacing: 8,
+                panelCornerRadius: 8,
+                revisionFileListIdealWidth: 230,
                 libraryFolderMinimumWidth: 200,
                 libraryFolderIdealWidth: 210,
                 libraryFolderMaximumWidth: 240,
@@ -163,9 +177,9 @@ struct GallaeTheme: Sendable {
                 historyGraphInset: 10,
                 historyGraphLineWidth: 2,
                 historyGraphNodeSize: 7,
-                historyRowVerticalPadding: compactRows ? 2 : 4,
+                historyRowVerticalPadding: compactRows ? 2 : 3,
                 diffChangeBarWidth: contrast ? 3 : 0,
-                rowVerticalPadding: compactRows ? 3 : 7
+                rowVerticalPadding: compactRows ? 3 : 6
             ),
             materials: .init(response: response)
         )
@@ -174,6 +188,48 @@ struct GallaeTheme: Sendable {
 
 private struct GallaeThemeKey: EnvironmentKey {
     static let defaultValue = GallaeTheme.standard
+}
+
+/// Names a workspace pane without making its metadata compete with the content title.
+struct GallaePaneTitle: View {
+    let title: String
+    let systemImage: String
+    var count: Int? = nil
+    @Environment(\.gallaeTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Label(title, systemImage: systemImage)
+                .gallaeFont(.headline)
+                .accessibilityAddTraits(.isHeader)
+            if let count {
+                Text(count, format: .number)
+                    .gallaeFont(.caption1, weight: .medium, digits: true)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(theme.colors.badgeBackground, in: .capsule)
+            }
+        }
+    }
+}
+
+private struct GallaeInsetPanel: ViewModifier {
+    @Environment(\.gallaeTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .background(theme.colors.panelSurface, in: .rect(cornerRadius: theme.metrics.panelCornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: theme.metrics.panelCornerRadius)
+                    .strokeBorder(theme.colors.panelBorder, lineWidth: 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+    }
+}
+
+extension View {
+    func gallaeInsetPanel() -> some View { modifier(GallaeInsetPanel()) }
 }
 
 extension EnvironmentValues {
