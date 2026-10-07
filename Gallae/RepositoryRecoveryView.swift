@@ -16,8 +16,7 @@ struct RepositoryStashesView: View {
             VStack(spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Stashes")
-                            .gallaeFont(.headline)
+                        GallaePaneTitle(title: "Stashes", systemImage: "archivebox")
                         Text("Newest first · latest 100")
                             .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
@@ -37,9 +36,10 @@ struct RepositoryStashesView: View {
                     .disabled(model.repository?.changes.isEmpty != false || model.isLoading)
                     .accessibilityHint("Save the current Repository changes as a new Stash")
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+                .padding(.vertical, theme.metrics.panelVerticalPadding)
                 .listHeaderInset()
+                .background(theme.colors.opaqueChrome)
 
                 Divider()
 
@@ -111,8 +111,7 @@ struct RepositoryReflogView: View {
             VStack(spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Reflog")
-                            .gallaeFont(.headline)
+                        GallaePaneTitle(title: "Reflog", systemImage: "clock.arrow.circlepath")
                         Text("HEAD movements · latest 100")
                             .gallaeFont(.caption1)
                             .foregroundStyle(.secondary)
@@ -127,9 +126,10 @@ struct RepositoryReflogView: View {
                             .background(theme.colors.badgeBackground, in: .capsule)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+                .padding(.vertical, theme.metrics.panelVerticalPadding)
                 .listHeaderInset()
+                .background(theme.colors.opaqueChrome)
 
                 Divider()
 
@@ -266,6 +266,9 @@ private struct RepositoryReflogDetailView: View {
                         }
                     }
 
+                    .padding(14)
+                    .gallaeInsetPanel()
+
                     Text("This records where HEAD pointed after the action. Git may expire older Reflog entries during maintenance.")
                         .gallaeFont(.callout)
                         .foregroundStyle(.secondary)
@@ -400,6 +403,7 @@ private struct RepositoryStashRow: View {
 
 private struct RepositoryStashDetailView: View {
     @Bindable var model: AppModel
+    @Environment(\.gallaeTheme) private var theme
     @State private var applyingStashID: String?
     @State private var stashPendingDeletion: RepositoryStash?
 
@@ -407,10 +411,10 @@ private struct RepositoryStashDetailView: View {
     var body: some View {
         if let stash = model.selectedStash {
             VStack(spacing: 0) {
-                HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(stash.subject)
-                            .gallaeFont(.headline)
+                            .gallaeFont(.title3, weight: .semibold)
                             .textSelection(.enabled)
                         Text("\(stash.reference) · \(stash.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .gallaeFont(.caption1)
@@ -422,36 +426,40 @@ private struct RepositoryStashDetailView: View {
                             .truncationMode(.middle)
                             .textSelection(.enabled)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(theme.metrics.panelHorizontalPadding)
+                    .gallaeInsetPanel()
 
-                    Spacer()
-
-                    if applyingStashID == stash.id {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel("Applying Stash")
-                    }
-                    Button(role: .destructive) {
-                        stashPendingDeletion = stash
-                    } label: {
-                        Label("Delete…", systemImage: "trash")
-                    }
-                    .disabled(model.isLoading || applyingStashID != nil)
-                    .help("Permanently delete this Stash")
-                    .accessibilityHint("Show a confirmation before permanently deleting this Stash")
-
-                    Button("Apply", systemImage: "arrow.down.doc") {
-                        applyingStashID = stash.id
-                        Task {
-                            defer { applyingStashID = nil }
-                            await model.applyStash(stash)
+                    HStack(spacing: 8) {
+                        if applyingStashID == stash.id {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Applying Stash")
                         }
+                        Button(role: .destructive) {
+                            stashPendingDeletion = stash
+                        } label: {
+                            Label("Delete…", systemImage: "trash")
+                        }
+                        .disabled(model.isLoading || applyingStashID != nil)
+                        .help("Permanently delete this Stash")
+                        .accessibilityHint("Show a confirmation before permanently deleting this Stash")
+
+                        Button("Apply", systemImage: "arrow.down.doc") {
+                            applyingStashID = stash.id
+                            Task {
+                                defer { applyingStashID = nil }
+                                await model.applyStash(stash)
+                            }
+                        }
+                        .disabled(model.isLoading || applyingStashID != nil)
+                        .accessibilityHint("Restore this Stash’s saved changes without deleting it")
+                        Spacer(minLength: 0)
                     }
-                    .disabled(model.isLoading || applyingStashID != nil)
-                    .accessibilityHint("Restore this Stash’s saved changes without deleting it")
+                    .controlSize(.small)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+                .padding(.vertical, theme.metrics.panelVerticalPadding)
 
                 Divider()
 

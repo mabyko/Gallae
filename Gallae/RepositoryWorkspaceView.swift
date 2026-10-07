@@ -278,100 +278,24 @@ struct RepositoryWorkspaceView: View {
 
     private var repositoryHeader: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .center, spacing: 14) {
+            Group {
                 if let repository = model.repository {
-                    Menu {
-                        branchMenuItems(for: repository)
-                    } label: {
-                        Label(isWindowNarrow ? repository.head.label : "Working on: \(repository.head.label)", systemImage: repository.head.systemImage)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .gallaeFont(.callout, weight: .medium)
-                    .help("Working on: \(repository.head.label). Switch, create, or integrate local branches")
-                    .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
-                    .disabled(model.isLoading || model.isSyncing)
-
-                    if isWindowNarrow, narrowNavigatorStyle == .locationMenu {
-                        Image(systemName: "chevron.right")
-                            .gallaeFont(.caption2, weight: .semibold)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, -6)
-                            .accessibilityHidden(true)
-                        let location = RepositoryNavigatorLocation(screen: workspaceSection, scope: scope)
-                        Menu {
-                            navigatorMenuItems(includeBranches: false)
-                        } label: {
-                            Label(location.title, systemImage: location.systemImage)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 16) {
+                            workingBranchIdentity(repository).frame(minWidth: 180, alignment: .leading)
+                            Spacer(minLength: 8)
+                            workingCopyStatus(repository).fixedSize()
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .gallaeFont(.callout, weight: .medium)
-                        .help("Where you are. Choose a destination, remote, or tag")
-                        .accessibilityLabel("Location, \(location.title). Go to")
-                    }
-
-                    if let upstream = repository.upstream {
-                        Label(
-                            upstreamDisplayLabel(upstream, head: repository.head),
-                            systemImage: "arrow.up.arrow.down"
-                        )
-                            .gallaeFont(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help("Tracks \(upstream.label)")
-                            .accessibilityLabel("Tracking branch, \(upstream.label)")
-                    }
-                    if !repository.changes.isEmpty {
-                        Button {
-                            show(.changes)
-                        } label: {
-                            Label(workingTreeSummary(repository), systemImage: "pencil.line")
-                                .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 8) {
+                            workingBranchIdentity(repository)
+                            workingCopyStatus(repository)
                         }
-                        .buttonStyle(.plain)
-                        .gallaeFont(.callout)
-                        .foregroundStyle(.secondary)
-                        .help("Show Changes")
-                        .accessibilityLabel("Working tree, \(workingTreeSummary(repository)). Show Changes")
                     }
-                    if repository.isUnborn {
-                        Label("No commits yet", systemImage: "circle.dashed")
-                            .gallaeFont(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    if model.isRepositoryStale {
-                        Label("Refresh failed · showing earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                            .gallaeFont(.callout)
-                            .foregroundStyle(theme.colors.statusConflict)
-                    }
-                    if model.isCurrentWorkspaceTemporaryWorktree {
-                        Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
-                            .gallaeFont(.callout)
-                            .foregroundStyle(.secondary)
-                            .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if let fetched = model.lastFetchDate {
-                        TimelineView(.periodic(from: .now, by: 60)) { context in
-                            Text(lastFetchText(fetched, now: context.date))
-                        }
-                        .gallaeFont(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .help("Last fetch \(fetched.formatted(date: .abbreviated, time: .shortened))")
-                    }
+                    .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+                    .padding(.vertical, theme.metrics.panelVerticalPadding)
+                    .background(theme.colors.opaqueChrome)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
             .sheet(isPresented: $isCreatingBranch) {
                 CreateBranchSheet(model: model)
             }
@@ -463,6 +387,90 @@ struct RepositoryWorkspaceView: View {
                 .background(theme.colors.badgeBackground)
             }
         }
+    }
+
+    @ViewBuilder
+    private func workingBranchIdentity(_ repository: RepositorySummary) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Working branch")
+                    .gallaeFont(.caption2, weight: .medium)
+                    .foregroundStyle(.secondary)
+                Menu { branchMenuItems(for: repository) } label: {
+                    Label(repository.head.label, systemImage: repository.head.systemImage)
+                        .gallaeFont(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .menuStyle(.borderlessButton)
+                .help("Working on: \(repository.head.label). Switch, create, or integrate local branches")
+                .accessibilityLabel("HEAD, \(repository.head.label). Branch actions")
+                .disabled(model.isLoading || model.isSyncing)
+            }
+            if isWindowNarrow, narrowNavigatorStyle == .locationMenu {
+                let location = RepositoryNavigatorLocation(screen: workspaceSection, scope: scope)
+                Menu { navigatorMenuItems(includeBranches: false) } label: {
+                    Label(location.title, systemImage: location.systemImage)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .menuStyle(.borderlessButton)
+                .gallaeFont(.callout, weight: .medium)
+                .help("Where you are. Choose a destination, remote, or tag")
+                .accessibilityLabel("Location, \(location.title). Go to")
+            }
+            if let upstream = repository.upstream {
+                Label(upstreamDisplayLabel(upstream, head: repository.head), systemImage: "arrow.up.arrow.down")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help("Tracks \(upstream.label)")
+                    .accessibilityLabel("Tracking branch, \(upstream.label)")
+            }
+        }
+    }
+
+    private func workingCopyStatus(_ repository: RepositorySummary) -> some View {
+        HStack(spacing: 12) {
+            if repository.changes.isEmpty {
+                Label(repository.isUnborn ? "No commits yet" : "Working tree clean",
+                      systemImage: repository.isUnborn ? "circle.dashed" : "checkmark.circle")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button { show(.changes) } label: {
+                    Label(workingTreeSummary(repository), systemImage: "pencil.line")
+                        .gallaeFont(.caption1, weight: .medium)
+                        .lineLimit(1)
+                }
+                .controlSize(.small)
+                .help("Show Changes")
+                .accessibilityLabel("Working tree, \(workingTreeSummary(repository)). Show Changes")
+            }
+            if repository.isUnborn && !repository.changes.isEmpty {
+                Label("No commits yet", systemImage: "circle.dashed")
+                    .foregroundStyle(.secondary)
+            }
+            if model.isRepositoryStale {
+                Label("Earlier data", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                    .foregroundStyle(theme.colors.statusConflict)
+                    .help("Refresh failed · showing earlier data")
+            }
+            if model.isCurrentWorkspaceTemporaryWorktree {
+                Label("Temporary Worktree", systemImage: "folder.badge.gearshape")
+                    .help("Gallae created this Worktree for a merge and offers to remove it when the merge finishes")
+            }
+            if let fetched = model.lastFetchDate {
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    Text(lastFetchText(fetched, now: context.date))
+                }
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .help("Last fetch \(fetched.formatted(date: .abbreviated, time: .shortened))")
+            }
+        }
+        .gallaeFont(.caption1)
     }
 
     @ViewBuilder
@@ -773,34 +781,30 @@ struct RepositoryWorkspaceView: View {
 
     private func changeList(_ repository: RepositorySummary) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Changes")
-                        .gallaeFont(.headline)
+            VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
+                HStack {
+                    GallaePaneTitle(title: "Changes", systemImage: "square.and.pencil", count: repository.changes.count)
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
                     Text("Working tree")
                         .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Picker("Change View", selection: $changeViewMode) {
+                        Text("Status").tag(RepositoryChangeViewMode.status)
+                        Text("Folders").tag(RepositoryChangeViewMode.hierarchy)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .help("Switch between folder hierarchy and status groups")
                 }
-                Spacer()
-                Text(repository.changes.count, format: .number)
-                    .gallaeFont(.caption1, weight: .medium)
-                    .monospacedDigit()
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(theme.colors.badgeBackground, in: .capsule)
-                Picker("Change View", selection: $changeViewMode) {
-                    Text("Status").tag(RepositoryChangeViewMode.status)
-                    Text("Folders").tag(RepositoryChangeViewMode.hierarchy)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .fixedSize()
-                .help("Switch between folder hierarchy and status groups")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+            .padding(.vertical, theme.metrics.panelVerticalPadding)
             .listHeaderInset()
+            .background(theme.colors.opaqueChrome)
 
             Divider()
 
@@ -866,27 +870,46 @@ struct RepositoryWorkspaceView: View {
     }
 
     private func commitComposer(_ repository: RepositorySummary) -> some View {
-        VStack(spacing: 8) {
-            TextField("Commit subject", text: Binding(
-                get: { commitSubject },
-                set: {
-                    commitSubject = $0
-                    if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
-                }
-            ))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityHint("Describe the staged changes")
+        VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
+            HStack {
+                Label(isAmending ? "Amend commit" : "Create commit", systemImage: "square.and.pencil")
+                    .gallaeFont(.callout, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                Text("\(repository.changes.filter { $0.staged != nil }.count) staged")
+                    .gallaeFont(.caption1, digits: true)
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Summary").gallaeFont(.caption1, weight: .medium)
+                TextField("Commit subject", text: Binding(
+                    get: { commitSubject },
+                    set: {
+                        commitSubject = $0
+                        if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
+                    }
+                ))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Commit subject")
+                    .accessibilityHint("Describe the staged changes")
+            }
 
-            TextField("Commit body (optional)", text: Binding(
-                get: { commitBody },
-                set: {
-                    commitBody = $0
-                    if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
-                }
-            ), axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3, reservesSpace: true)
-                .accessibilityHint("Add optional details about the staged changes")
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Description · optional")
+                    .gallaeFont(.caption1, weight: .medium)
+                    .foregroundStyle(.secondary)
+                TextField("Commit body (optional)", text: Binding(
+                    get: { commitBody },
+                    set: {
+                        commitBody = $0
+                        if !isAmending { model.commitDraft = .init(subject: commitSubject, body: commitBody) }
+                    }
+                ), axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...3)
+                    .accessibilityLabel("Commit body (optional)")
+                    .accessibilityHint("Add optional details about the staged changes")
+            }
 
             Toggle("Amend last commit", isOn: $isAmending)
                 .gallaeFont(.caption1)
@@ -896,14 +919,13 @@ struct RepositoryWorkspaceView: View {
                 .accessibilityHint("Rewrites the latest commit without including unstaged changes")
 
             HStack {
-                Text("\(repository.changes.filter { $0.staged != nil }.count) staged")
-                    .gallaeFont(.caption1)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-
                 stageAllButton(repository)
 
                 Spacer()
+                Text("⌘↩")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
 
                 Button(isAmending ? "Amend" : "Commit") {
                     let subject = commitSubject
@@ -937,7 +959,9 @@ struct RepositoryWorkspaceView: View {
                 )
             }
         }
-        .padding(12)
+        .padding(theme.metrics.panelHorizontalPadding)
+        .gallaeInsetPanel()
+        .padding(theme.metrics.panelVerticalPadding)
         .onChange(of: isAmending) { _, isOn in
             if isOn {
                 guard commitSubject.isEmpty, commitBody.isEmpty else { return }

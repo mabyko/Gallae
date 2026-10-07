@@ -55,15 +55,15 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 
 - Library는 Library Folder 탐색·Repository 목록·선택 요약으로 구성한다. Workspace는 Navigator·목록·내용의 역할을 구분한다.
 - Navigator의 Changes·History·Stashes·Reflog는 목적지다. branch·remote branch·tag 한 번 클릭은 History의 해당 commit으로 이동하며 전체 그래프를 좁히지 않는다. branch 두 번 클릭은 전환이다. HEAD는 탐색 선택과 별도로 표시한다.
-- 별도 Worktree가 있는 branch의 전환은 해당 폴더를 여는 동작이다. 브랜치 더블클릭·Open Worktree·상단 브랜치 메뉴·History 행 메뉴 모두 이동 전의 History 조회 범위를 유지한다. 일반적인 다른 Repository 열기는 범위를 초기화한다. 이동 성공 후 대상 HEAD를 선택한다. 작업 위치는 Working on, 명시적으로 좁힌 조회 범위는 Filter로 구분하며 좁은 창의 작업 위치는 브랜치 이름으로 줄인다.
+- 별도 Worktree가 있는 branch의 전환은 해당 폴더를 여는 동작이다. 브랜치 더블클릭·Open Worktree·상단 브랜치 메뉴·History 행 메뉴 모두 이동 전의 History 조회 범위를 유지한다. 일반적인 다른 Repository 열기는 범위를 초기화한다. 이동 성공 후 대상 HEAD를 선택한다. 작업 위치는 Working branch, 명시적으로 좁힌 조회 범위는 Filter로 구분한다. 작업 브랜치와 작업 사본 상태는 상단에, 조회 범위와 탐색한 ref는 History에 표시한다.
 - 연결된 Worktree가 있으면 Branches 위에 접을 수 있는 Worktrees 목록을 표시한다. 접기 화살표는 Worktrees 제목 바로 오른쪽에 항상 표시하며, 맨 오른쪽의 작업 메뉴와 분리한다. 접힌 상태에서도 두 조작은 유지한다. 기본 폴더와 연결된 폴더를 나란히 나열하고 branch 또는 Detached HEAD, 현재 폴더, 잠금·누락 상태를 구분한다. 한 번 선택하면 History에서 해당 HEAD를 확인하고, 더블클릭·Return·Open Worktree는 폴더를 연다. CLI나 다른 앱에서 만든 Worktree도 같은 목록에 표시한다.
 - Branches·Worktrees의 메뉴와 상단 branch 메뉴에서 New Worktree를 만든다. 새 branch와 시작 commit 또는 사용 중이 아닌 기존 branch를 고르고, 생성할 위치와 새 폴더 이름을 지정한다. 생성 후 열기는 기본으로 켜져 있다. 기존 경로를 덮어쓰지 않으며 현재 폴더의 변경은 유지한다. 제거는 기본·현재·잠긴·누락된 Worktree를 보호하고 Git의 안전한 제거를 사용한다.
 - Branches·Remotes·Tags 헤더는 같은 스타일의 작업 메뉴를 제공하며 목록이 비어 있어도 표시한다. Remotes → Add Remote는 이름과 URL만 등록하고 Fetch·Publish하지 않는다. 기존 Publish에서 여는 Add & Publish 흐름은 유지한다. Tags → New Tag는 이름과 대상 commit(기본 HEAD)을 입력받아 로컬 lightweight tag를 생성한다. 기존 tag를 덮어쓰거나 checkout·working tree를 바꾸지 않으며 자동 push하지 않는다. commit이 없는 저장소에서는 태그 생성을 비활성화한다.
 - History의 기본 배치는 **Top and Bottom**이다. 상단에 커밋 목록, 하단에 커밋 머리·파일 목록·diff를 둔다. Appearance → History Layout에서 기존 **Side by Side**도 선택할 수 있고 저장된 선택은 유지한다.
-- Expand Review는 History 목록을 가려 검토 영역을 넓힌다. Show History로 복귀하며 선택한 커밋·파일을 유지한다. 현재 범위와 순번을 표시하고 앞뒤 커밋 이동은 현재 검색·조회 범위 안으로 제한한다.
+- 두 History 배치 모두 Commit review에서 앞뒤 커밋으로 이동한다. Top and Bottom의 Expand Review는 History 목록을 가려 검토 영역을 넓힌다. Show History로 복귀하며 선택한 커밋·파일을 유지한다. 현재 범위와 순번을 표시하고 앞뒤 커밋 이동은 현재 검색·조회 범위 안으로 제한한다.
 - History는 전체 branch·tag 이력이 기본이며, 머리 메뉴의 명시적 필터로 특정 ref의 이력만 볼 수 있다. 필터는 Clear Filter로 해제하며, 필터 밖의 ref를 선택하면 전체 History에서 보는 동작을 안내한다. 브랜치 탐색 시 텍스트 검색은 해제한다. 최초 100개를 읽고 Load Older Commits 또는 오래된 ref 탐색으로 범위를 확장한다. 로컬 branch 칩의 기본색은 파랑, 원격 branch는 청록, tag는 보라다. Appearance → History Colors의 색상표에서 그래프 시작색과 세 종류의 배지색을 각각 바꾸고 초기화할 수 있다. 배지는 아이콘 영역과 이름 사이에 옅은 세로선을 둔다. 이름은 기본 글자색으로 읽기 쉽게 표시하고 종류별 색상은 아이콘·배경·테두리에만 적용한다. HEAD 칩 대신 현재 체크아웃한 커밋의 제목과 branch·tag 칩을 굵게 표시하고, 다른 커밋의 칩은 보통 굵기로 표시한다. 현재 위치 정보는 도움말·접근성 설명에 유지한다.
 - History 검색은 이미 불러온 커밋 안에서 수행하며 검색 영역에 그 개수를 표시한다. 검색 결과가 없어도 이전 커밋이 남아 있으면 Load Older Commits로 검색어를 유지한 채 범위를 늘릴 수 있다.
-- 상하 배치의 커밋 머리에는 제목, 아바타·작성자·이메일·시각, SHA·서명 상태가 보인다. 본문 미리보기는 공백·줄바꿈을 접어 가용 폭 안에서 두 줄로 보여 준다. Details…는 원문의 줄바꿈을 보존한 전체 메시지·메타데이터·커밋 작업을 제공한다.
+- 두 History 배치 모두 선택 커밋의 제목·작성자·짧은 SHA·서명과 본문 미리보기를 요약 패널로 묶고 Rebase Plan·Revert·Reset·Cherry-Pick을 바로 제공한다. 검토 영역이 짧으면 작성자와 메시지를 압축해 diff 공간을 확보한다. Details…에서 아바타·이메일·시각, 전체 SHA·부모·서명, 원문의 줄바꿈을 보존한 메시지와 같은 작업 버튼을 확인한다.
 - 좁은 창에서는 Navigator부터 접고 창을 강제로 키우지 않는다. 접힌 Navigator에 닿는 방식은 Appearance의 Floating Navigator(기본)·Toolbar Menu·Location Menu 중에서 고른다. Floating Navigator는 툴바 버튼에 붙은 네이티브 팝오버로 열고 항목을 고르면 닫는다. 사이드바와 검색어, remote 펼침·접힘과 선택을 공유한다.
 - 현재 branch와 조회 범위를 구분한다. Git의 upstream 관계는 화면에서 Tracking으로 표시하며, 축약된 이름의 전체 값은 도움말과 접근성 이름에 남긴다.
 - 작업 트리가 깨끗한 Repository를 열면 History를 먼저 보여 준다. 사용자가 Changes로 이동하면 다음 편집 안내와 Show History를 제공한다.
@@ -82,7 +82,7 @@ Gallae는 로컬 저장소의 상태와 변경 이유를 빠르게 읽고, 안�
 - diff 머리는 파일명·폴더·현재 구획의 추가/삭제 줄 수를 보여 준다. 문맥·패치 헤더는 줄 수 집계에서 제외한다. 전체 상대 경로는 도움말과 Copy Relative Path로 제공한다.
 - 파일 식별과 조작이 한 줄에 들어가지 않으면 조작 줄을 아래로 내린다. Stage File·Unstage File은 파일 전체 동작이며 Discard Unstaged Changes는 파일 메뉴에서 기존 확인을 거친다.
 - History·Stashes의 저장된 변경 칸이 560pt보다 좁으면 파일 목록을 경로 선택 메뉴로 바꾸고, 옆에 현재 순번과 이전·다음 파일 버튼을 표시한다. 첫·마지막 파일에서는 해당 방향의 이동을 막고 선택이 없으면 두 버튼을 비활성화한다. 넓어지면 같은 선택으로 목록을 복원한다.
-- 좌우 배치와 Details의 긴 커밋 본문은 Show Full Message로 펼쳐 스크롤하고 Show Less로 접는다. 다른 커밋을 고르면 다시 접힌다.
+- Details의 긴 커밋 본문은 Show Full Message로 펼쳐 스크롤하고 Show Less로 접는다. 다른 커밋을 고르면 다시 접힌다.
 
 ### 충돌과 외부 병합 도구
 

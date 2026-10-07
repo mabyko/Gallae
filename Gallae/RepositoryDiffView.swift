@@ -28,7 +28,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                 Spacer(minLength: 0)
                 actions.fixedSize()
             }
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
                 fileIdentity
                 HStack {
                     Spacer(minLength: 0)
@@ -36,14 +36,15 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+        .padding(.vertical, theme.metrics.panelVerticalPadding)
         .controlSize(.small)
+        .background(theme.colors.opaqueChrome)
     }
 
     private var fileIdentity: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(path.split(separator: "/").last.map(String.init) ?? path)
+            Label(path.split(separator: "/").last.map(String.init) ?? path, systemImage: "doc.text")
                 .gallaeFont(.headline)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -61,6 +62,9 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                     }
                     .gallaeFont(.caption1, weight: .medium, digits: true)
                     .fixedSize()
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(theme.colors.badgeBackground, in: .capsule)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Line changes: \(counts.added) added, \(counts.removed) deleted")
                     .help("Line changes in the displayed diff")
@@ -140,7 +144,7 @@ struct RepositoryRevisionChangesView: View {
                     revisionDetail
                 }
             } else {
-                ResizableHSplit(leadingMinimum: 160, leadingIdeal: 200, leadingMaximum: 280, trailingMinimum: 400, storageKey: "revisionFiles") {
+                ResizableHSplit(leadingMinimum: 160, leadingIdeal: theme.metrics.revisionFileListIdealWidth, leadingMaximum: 320, trailingMinimum: 400, storageKey: "revisionFiles") {
                     revisionFileList(files)
                 } trailing: {
                     revisionDetail
@@ -187,23 +191,21 @@ struct RepositoryRevisionChangesView: View {
             .fixedSize()
         }
         .controlSize(.small)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+        .padding(.vertical, theme.metrics.panelVerticalPadding)
+        .background(theme.colors.opaqueChrome)
     }
 
     private func revisionFileList(_ files: [RepositoryCommitFile]) -> some View {
             VStack(spacing: 0) {
                 HStack {
-                    Text("Changed Files")
-                        .gallaeFont(.callout, weight: .semibold)
-                    Spacer()
-                    Text(files.count, format: .number)
-                        .gallaeFont(.caption1, digits: true)
-                        .foregroundStyle(.secondary)
+                    GallaePaneTitle(title: "Files", systemImage: "doc.on.doc", count: files.count)
+                    Spacer(minLength: 0)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+                .padding(.vertical, theme.metrics.panelVerticalPadding)
                 .listHeaderInset()
+                .background(theme.colors.opaqueChrome)
 
                 Divider()
 
@@ -354,8 +356,8 @@ private struct RepositoryCommitFileRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                if !file.parentPath.isEmpty {
-                    Text(file.parentPath)
+                Group {
+                    Text(file.parentPath.isEmpty ? "Repository root" : file.parentPath)
                         .gallaeFont(.caption1, monospaced: true)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -588,29 +590,7 @@ struct RepositoryDiffView: View {
                     }
 
                     if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
-                        Button("Open in Merge Tool", systemImage: "arrow.up.forward.app", action: openMergeTool)
-                            .disabled(isBusy)
-                            .help("Open this conflict using the Merge Tool selected in Settings → General")
-                        Button("Mark Resolved…") {
-                            pendingConflictResolution = .workingTree
-                        }
-                        .disabled(isBusy)
-                        .help("Stage this file’s current working tree state as resolved")
-                        .accessibilityHint("Shows a confirmation before staging the file as resolved")
-
-                        Button("Use Ours…") {
-                            pendingConflictResolution = .side(.ours)
-                        }
-                        .disabled(isBusy)
-                        .help("Resolve this file using the Ours version")
-                        .accessibilityHint("Shows a confirmation before replacing and staging this file")
-
-                        Button("Use Theirs…") {
-                            pendingConflictResolution = .side(.theirs)
-                        }
-                        .disabled(isBusy)
-                        .help("Resolve this file using the Theirs version")
-                        .accessibilityHint("Shows a confirmation before replacing and staging this file")
+                        conflictActions
                     }
 
                     if canUnstage {
@@ -756,6 +736,38 @@ struct RepositoryDiffView: View {
                     )
                 }
             }
+        }
+    }
+
+    private var conflictActions: some View {
+        let mergeTool = Button("Open in Merge Tool", systemImage: "arrow.up.forward.app", action: openMergeTool)
+            .disabled(isBusy)
+            .help("Open this conflict using the Merge Tool selected in Settings → General")
+        let markResolved = Button("Mark Resolved…") {
+            pendingConflictResolution = .workingTree
+        }
+        .disabled(isBusy)
+        .help("Stage this file’s current working tree state as resolved")
+        .accessibilityHint("Shows a confirmation before staging the file as resolved")
+        let ours = Button("Use Ours…") {
+            pendingConflictResolution = .side(.ours)
+        }
+        .disabled(isBusy)
+        .help("Resolve this file using the Ours version")
+        .accessibilityHint("Shows a confirmation before replacing and staging this file")
+        let theirs = Button("Use Theirs…") {
+            pendingConflictResolution = .side(.theirs)
+        }
+        .disabled(isBusy)
+        .help("Resolve this file using the Theirs version")
+        .accessibilityHint("Shows a confirmation before replacing and staging this file")
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { mergeTool; markResolved; ours; theirs }.fixedSize()
+            VStack(alignment: .trailing, spacing: 6) {
+                HStack(spacing: 8) { mergeTool; markResolved }.fixedSize()
+                HStack(spacing: 8) { ours; theirs }.fixedSize()
+            }
+            VStack(alignment: .trailing, spacing: 6) { mergeTool; markResolved; ours; theirs }
         }
     }
 

@@ -277,7 +277,7 @@ struct RepositoryHistorySplit<History: View, Review: View>: View {
     @ViewBuilder let history: () -> History
     @ViewBuilder let review: () -> Review
     @SceneStorage("resizableSplit.history.leadingWidth") private var historyWidth = 320.0
-    @SceneStorage("historySplit.topHeight") private var historyHeight = 260.0
+    @SceneStorage("historySplit.topHeight") private var historyHeight = 220.0
     @State private var dragStart: CGFloat?
     @FocusState private var dividerFocused: Bool
     private var isStacked: Bool { layout == .stacked }
@@ -404,7 +404,7 @@ struct RepositoryHistoryFrames {
         let leading = ResizableHSplitLayout.leadingWidth(
             preferred: stacked ? preferredHeight : preferredWidth,
             leadingMinimum: stacked ? 160 : 320, leadingMaximum: nil,
-            trailingMinimum: stacked ? 220 : 400, total: total
+            trailingMinimum: stacked ? 260 : 400, total: total
         )
         let gap = min(1, total)
         history = CGRect(x: 0, y: 0, width: stacked ? width : leading, height: stacked ? leading : height)

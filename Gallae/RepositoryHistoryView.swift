@@ -23,88 +23,7 @@ struct RepositoryHistoryView: View {
     var body: some View {
         RepositoryHistorySplit(layout: historyLayout, isReviewExpanded: isReviewExpanded) {
             VStack(spacing: 0) {
-                VStack(spacing: 7) {
-                    let identity = VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
-                            historyScopeMenu
-                            if scope != nil {
-                                Button("Clear Filter") { scope = nil }
-                                    .controlSize(.small)
-                                    .help("Show all branches and tags again")
-                            }
-                        }
-                        Text(headerSubtitle)
-                            .gallaeFont(.caption1)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(headerSubtitle)
-                    }
-                    let actions = HStack(spacing: 8) {
-                        headerTools
-                        if case .loaded(let history) = model.historyState {
-                            RepositoryHistoryGraphBasisPicker(history: history, usesHEAD: $graphUsesHEAD)
-                                .id(history.graphPreferenceKey)
-                            Text(history.commits.count, format: .number)
-                                .gallaeFont(.caption1, weight: .medium)
-                                .monospacedDigit()
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 2)
-                                .background(theme.colors.badgeBackground, in: .capsule)
-                            if !history.commits.isEmpty {
-                                Button(isSearchVisible ? "Close Search" : "Search Commit History",
-                                       systemImage: isSearchVisible ? "xmark" : "magnifyingglass") {
-                                    if isSearchVisible {
-                                        closeSearch()
-                                    } else {
-                                        isSearchVisible = true
-                                    }
-                                }
-                                .labelStyle(.iconOnly)
-                                .controlSize(.small)
-                                .help(isSearchVisible ? "Close Search" : "Search Commit History")
-                            }
-                        }
-                    }
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) {
-                            identity.frame(minWidth: 220, idealWidth: 220)
-                            Spacer(minLength: 0)
-                            actions.fixedSize()
-                        }
-                        VStack(alignment: .leading, spacing: 8) {
-                            identity
-                            HStack {
-                                Spacer(minLength: 0)
-                                actions
-                            }
-                        }
-                    }
-
-                    if let message = model.historyNavigationMessage {
-                        HStack {
-                            Text(message).foregroundStyle(.secondary)
-                            Button("Show in All History") { scope = nil }
-                        }
-                        .gallaeFont(.caption1)
-                    }
-
-                    if isSearchVisible, case .loaded(let history) = model.historyState, !history.commits.isEmpty {
-                        TextField("Search message, author, SHA, or ref", text: $searchText)
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel("Search Commit History")
-                            .focused($isSearchFocused)
-                            .onAppear { isSearchFocused = true }
-                            .onExitCommand { closeSearch() }
-                        Text("Searches the \(history.commits.count) loaded commits.")
-                            .gallaeFont(.caption1)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .listHeaderInset()
+                historyHeader
 
                 Divider()
 
@@ -113,10 +32,8 @@ struct RepositoryHistoryView: View {
             }
         } review: {
             VStack(spacing: 0) {
-                if historyLayout == .stacked {
-                    reviewControls
-                    Divider()
-                }
+                reviewControls
+                Divider()
                 RepositoryCommitDetailView(model: model, compactHeader: historyLayout == .stacked)
             }
         }
@@ -214,6 +131,101 @@ struct RepositoryHistoryView: View {
         }
     }
 
+    private var historyHeader: some View {
+        VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
+            HStack(spacing: 8) {
+                GallaePaneTitle(title: "History", systemImage: "clock.arrow.circlepath")
+                if case .loaded(let history) = model.historyState {
+                    Text("\(history.commits.count) commits")
+                        .gallaeFont(.caption1, digits: true)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if case .loaded(let history) = model.historyState, !history.commits.isEmpty {
+                    Button(isSearchVisible ? "Close Search" : "Search Commit History",
+                           systemImage: isSearchVisible ? "xmark" : "magnifyingglass") {
+                        if isSearchVisible { closeSearch() }
+                        else { isSearchVisible = true }
+                    }
+                    .labelStyle(.iconOnly)
+                    .controlSize(.small)
+                    .help(isSearchVisible ? "Close Search" : "Search Commit History")
+                }
+            }
+            HStack(spacing: 8) {
+                historyScopeMenu
+                if scope != nil {
+                    Button("Clear Filter", systemImage: "xmark.circle.fill") { scope = nil }
+                        .labelStyle(.iconOnly)
+                        .help("Show all branches and tags again")
+                }
+                Spacer(minLength: 0)
+                if case .loaded(let history) = model.historyState {
+                    RepositoryHistoryGraphBasisPicker(history: history, usesHEAD: $graphUsesHEAD)
+                        .id(history.graphPreferenceKey)
+                }
+            }
+            .controlSize(.small)
+
+            if model.historySelection != nil {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        historyTarget.frame(minWidth: 130)
+                        Spacer(minLength: 0)
+                        headerTools.fixedSize()
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        historyTarget
+                        HStack(spacing: 8) { headerTools }
+                    }
+                }
+                .controlSize(.small)
+                .padding(8)
+                .gallaeInsetPanel()
+            } else {
+                Text(headerSubtitle)
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let message = model.historyNavigationMessage {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message).foregroundStyle(.secondary)
+                    Button("Show in All History") { scope = nil }
+                }
+                .gallaeFont(.caption1)
+            }
+            if isSearchVisible, case .loaded(let history) = model.historyState, !history.commits.isEmpty {
+                TextField("Search message, author, SHA, or ref", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Search Commit History")
+                    .focused($isSearchFocused)
+                    .onAppear { isSearchFocused = true }
+                    .onExitCommand { closeSearch() }
+                Text("Searches the \(history.commits.count) loaded commits.")
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+        .padding(.vertical, theme.metrics.panelVerticalPadding)
+        .listHeaderInset()
+        .background(theme.colors.opaqueChrome)
+    }
+
+    private var historyTarget: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Selected reference")
+                .gallaeFont(.caption2, weight: .medium)
+                .foregroundStyle(.secondary)
+            Text(headerSubtitle)
+                .gallaeFont(.caption1, weight: .medium)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help(headerSubtitle)
+        }
+    }
+
     private var historyScopeMenu: some View {
         Menu {
             Toggle("All Branches & Tags", isOn: Binding(
@@ -238,8 +250,8 @@ struct RepositoryHistoryView: View {
                 }
             }
         } label: {
-            Text(scope.map { "History · Filter: \($0.name)" } ?? "History · All Branches & Tags")
-                .gallaeFont(.headline)
+            Label(scope.map { "Filter: \($0.name)" } ?? "All Branches & Tags", systemImage: "line.3.horizontal.decrease")
+                .gallaeFont(.callout, weight: .medium)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -355,13 +367,19 @@ struct RepositoryHistoryView: View {
 
     private var reviewControls: some View {
         HStack(spacing: 8) {
+            Label("Commit review", systemImage: "doc.text.magnifyingglass")
+                .gallaeFont(.caption1, weight: .semibold)
+                .lineLimit(1)
+                .accessibilityAddTraits(.isHeader)
             if isReviewExpanded {
                 Text(searchText.isEmpty ? headerTitle : "\(headerTitle) · Filtered")
-                    .gallaeFont(.caption1, weight: .medium)
+                    .gallaeFont(.caption1)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(searchText.isEmpty ? headerTitle : "\(headerTitle) · Search: \(searchText)")
             }
+            Spacer(minLength: 4)
             if let selected = model.selectedHistoryCommitID,
                let index = visibleHistoryCommitIDs.firstIndex(of: selected) {
                 Text("\(index + 1) of \(visibleHistoryCommitIDs.count)")
@@ -369,7 +387,6 @@ struct RepositoryHistoryView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize()
             }
-            Spacer(minLength: 4)
             Button("Previous Commit", systemImage: "chevron.up") { moveReview(by: -1) }
                 .labelStyle(.iconOnly)
                 .disabled(adjacentCommit(-1) == nil)
@@ -378,17 +395,20 @@ struct RepositoryHistoryView: View {
                 .labelStyle(.iconOnly)
                 .disabled(adjacentCommit(1) == nil)
                 .help("Next commit in this History view")
-            Button(isReviewExpanded ? "Show History" : "Expand Review",
-                   systemImage: isReviewExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
-                isReviewExpanded.toggle()
-                if !isReviewExpanded { historyFocused = true }
+            if historyLayout == .stacked {
+                Button(isReviewExpanded ? "Show History" : "Expand Review",
+                       systemImage: isReviewExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
+                    isReviewExpanded.toggle()
+                    if !isReviewExpanded { historyFocused = true }
+                }
+                .disabled(model.selectedHistoryCommitID == nil && !isReviewExpanded)
+                .accessibilityHint("Keep the selected commit and file when changing review size")
             }
-            .disabled(model.selectedHistoryCommitID == nil && !isReviewExpanded)
-            .accessibilityHint("Keep the selected commit and file when changing review size")
         }
         .controlSize(.small)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, theme.metrics.panelHorizontalPadding)
         .padding(.vertical, 6)
+        .background(theme.colors.opaqueChrome)
     }
 
     private func adjacentCommit(_ offset: Int) -> String? {
@@ -1113,6 +1133,7 @@ private struct RepositoryCommitDetailView: View {
     var compactHeader = false
     @State private var showsCommitDetails = false
     @Environment(\.gallaeTheme) private var theme
+    @Environment(\.gallaeTypography) private var typography
     @State private var mergeCommitPendingRevert: RepositoryHistory.Commit?
     @State private var commitPendingReset: RepositoryHistory.Commit?
     @State private var commitPendingRebasePlan: RepositoryHistory.Commit?
@@ -1125,25 +1146,26 @@ private struct RepositoryCommitDetailView: View {
     var body: some View {
         Group {
             if let commit = model.selectedHistoryCommit {
-                VStack(spacing: 0) {
-                    if compactHeader { compactCommitHeader(commit) }
-                    else { commitHeader(commit) }
-                    Divider()
-                    RepositoryRevisionChangesView(
-                        filesState: model.commitFilesState,
-                        selectedFileID: $model.selectedHistoryFileID,
-                        selectedFile: model.selectedHistoryFile,
-                        patchState: model.commitPatchState,
-                        retryFiles: { Task { await model.loadSelectedCommitFiles() } },
-                        retryPatch: { Task { await model.loadSelectedCommitPatch() } },
-                        loadExpandedPatch: {
-                            Task {
-                                await model.loadSelectedCommitPatch(
-                                    maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
-                                )
+                GeometryReader { proxy in
+                    VStack(spacing: 0) {
+                        compactCommitHeader(commit, condensed: proxy.size.height < 320 * max(1, typography.uiSize / 13))
+                        Divider()
+                        RepositoryRevisionChangesView(
+                            filesState: model.commitFilesState,
+                            selectedFileID: $model.selectedHistoryFileID,
+                            selectedFile: model.selectedHistoryFile,
+                            patchState: model.commitPatchState,
+                            retryFiles: { Task { await model.loadSelectedCommitFiles() } },
+                            retryPatch: { Task { await model.loadSelectedCommitPatch() } },
+                            loadExpandedPatch: {
+                                Task {
+                                    await model.loadSelectedCommitPatch(
+                                        maximumOutputBytes: RepositoryInspector.maximumExpandedDiffBytes
+                                    )
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
             } else {
                 ContentUnavailableView(
@@ -1194,118 +1216,192 @@ private struct RepositoryCommitDetailView: View {
         }
     }
 
-    private func compactCommitHeader(_ commit: RepositoryHistory.Commit) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 12) {
-                Text(commit.subject)
-                    .gallaeFont(.headline)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .help(commit.subject)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                Button("Details…", systemImage: "info.circle") { showsCommitDetails = true }
-                    .controlSize(.small)
-                    .help("Full message, signature, and commit actions")
-                    .popover(isPresented: $showsCommitDetails) {
-                        ScrollView { commitHeader(commit) }
-                            .frame(width: 640, height: 320)
-                    }
-            }
-            HStack(spacing: 12) {
-                commitAuthor(commit)
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(commit.id.prefix(8))
-                        .gallaeFont(.caption1, monospaced: true)
-                        .foregroundStyle(.secondary)
-                        .help(commit.id)
+    private func compactCommitHeader(_ commit: RepositoryHistory.Commit, condensed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
+            VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(commit.subject)
+                        .gallaeFont(condensed ? .headline : .title3, weight: .semibold)
+                        .lineLimit(condensed ? 1 : 2)
+                        .truncationMode(.tail)
+                        .help(commit.subject)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .textSelection(.enabled)
-                    commitSignature
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    Button("Details…", systemImage: "info.circle") { showsCommitDetails = true }
+                        .controlSize(.small)
+                        .help("Full message, SHA, parents, signature, and commit actions")
+                        .popover(isPresented: $showsCommitDetails) {
+                            ScrollView { commitHeader(commit) }
+                                .frame(width: 640, height: 400)
+                        }
+                }
+                if condensed {
+                    HStack(spacing: 8) {
+                        Text(commit.authorName)
+                            .gallaeFont(.caption1, weight: .medium)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        commitIdentifier(commit)
+                        commitSignature
+                            .lineLimit(1)
+                    }
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            commitAuthor(commit).frame(minWidth: 200)
+                            Spacer(minLength: 0)
+                            commitSummaryMetadata(commit).fixedSize()
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            commitAuthor(commit)
+                            commitSummaryMetadata(commit)
+                        }
+                    }
+                }
+                if !condensed && !commit.body.isEmpty {
+                    Text(commit.body.split(whereSeparator: \.isWhitespace).joined(separator: " "))
+                        .gallaeFont(.caption1)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(condensed ? 1 : 2)
+                        .textSelection(.enabled)
                 }
             }
-            if !commit.body.isEmpty {
-                Text(commit.body.split(whereSeparator: \.isWhitespace).joined(separator: " "))
-                    .gallaeFont(.caption1)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .textSelection(.enabled)
+            .padding(condensed ? 8 : theme.metrics.panelHorizontalPadding)
+            .gallaeInsetPanel()
+
+            commitActions(commit)
+        }
+        .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+        .padding(.vertical, theme.metrics.panelVerticalPadding)
+    }
+
+    private func commitSummaryMetadata(_ commit: RepositoryHistory.Commit) -> some View {
+        HStack(spacing: 8) {
+            commitIdentifier(commit)
+            commitSignature
+        }
+    }
+
+    private func commitIdentifier(_ commit: RepositoryHistory.Commit) -> some View {
+        Text(commit.id.prefix(8))
+            .gallaeFont(.caption1, monospaced: true)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(theme.colors.badgeBackground, in: .rect(cornerRadius: 4))
+            .help(commit.id)
+            .textSelection(.enabled)
+    }
+
+    private func commitActions(_ commit: RepositoryHistory.Commit) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                rebaseAction(commit)
+                revertAction(commit)
+                resetAction(commit)
+                cherryPickAction(commit)
+            }
+            .fixedSize()
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) { rebaseAction(commit); revertAction(commit) }
+                HStack(spacing: 8) { resetAction(commit); cherryPickAction(commit) }
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            VStack(alignment: .leading, spacing: 6) {
+                rebaseAction(commit)
+                revertAction(commit)
+                resetAction(commit)
+                cherryPickAction(commit)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .controlSize(.small)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Commit actions")
+    }
+
+    @ViewBuilder
+    private func rebaseAction(_ commit: RepositoryHistory.Commit) -> some View {
+        let rebasePlanUnavailableReason = rebasePlanUnavailableReason
+        Button("Rebase Plan…", systemImage: "list.number") {
+            commitPendingRebasePlan = commit
+        }
+        .disabled(model.isLoading || rebasePlanUnavailableReason != nil)
+        .help(
+            rebasePlanUnavailableReason
+                ?? "Preview the default pick plan from this commit through HEAD"
+        )
+        .accessibilityLabel("Preview Interactive Rebase plan from \(commit.subject)")
+        .accessibilityHint(
+            rebasePlanUnavailableReason
+                ?? "Shows a read-only plan without changing the Repository"
+        )
+    }
+
+    @ViewBuilder
+    private func revertAction(_ commit: RepositoryHistory.Commit) -> some View {
+        let revertUnavailableReason = historyWriteUnavailableReason
+        Button("Revert", systemImage: "arrow.uturn.backward") {
+            if commit.parentIDs.count > 1 {
+                mergeCommitPendingRevert = commit
+            } else {
+                Task { await model.revertCommit(commit) }
+            }
+        }
+        .disabled(model.isLoading || revertUnavailableReason != nil)
+        .help(
+            revertUnavailableReason
+                ?? "Create a new commit that reverses this commit on the current branch"
+        )
+        .accessibilityHint(
+            revertUnavailableReason
+                ?? "Creates a new commit and keeps the selected commit in History"
+        )
+    }
+
+    @ViewBuilder
+    private func resetAction(_ commit: RepositoryHistory.Commit) -> some View {
+        let resetUnavailableReason = resetUnavailableReason(for: commit)
+        Button(role: .destructive) {
+            commitPendingReset = commit
+        } label: {
+            Label("Reset…", systemImage: "arrow.counterclockwise")
+        }
+        .disabled(model.isLoading || resetUnavailableReason != nil)
+        .help(
+            resetUnavailableReason
+                ?? "Move the current branch to this commit and keep working files"
+        )
+        .accessibilityLabel("Reset current branch to \(commit.subject)")
+        .accessibilityHint(
+            resetUnavailableReason
+                ?? "Choose whether reset changes stay staged or unstaged"
+        )
+    }
+
+    @ViewBuilder
+    private func cherryPickAction(_ commit: RepositoryHistory.Commit) -> some View {
+        let cherryPickUnavailableReason = cherryPickUnavailableReason(for: commit)
+        Button("Cherry-Pick…", systemImage: "arrow.turn.down.right") {
+            guard let repository = model.repository,
+                  case .loaded(let history) = model.historyState,
+                  let headCommitID = history.headCommitID else { return }
+            pendingCherryPick = (commit, repository, headCommitID)
+        }
+        .controlSize(.small)
+        .disabled(model.isLoading || model.isSyncing || cherryPickUnavailableReason != nil)
+        .help(cherryPickUnavailableReason ?? "Apply this commit’s changes to the current branch as a new commit")
+        .accessibilityLabel("Cherry-pick \(commit.subject) onto the current branch")
     }
 
     private func commitHeader(_ commit: RepositoryHistory.Commit) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                commitAuthor(commit)
-
-                Spacer(minLength: 12)
-
-            HStack(spacing: 8) {
-                let rebasePlanUnavailableReason = rebasePlanUnavailableReason
-                Button("Rebase Plan…", systemImage: "list.number") {
-                    commitPendingRebasePlan = commit
-                }
-                .disabled(model.isLoading || rebasePlanUnavailableReason != nil)
-                .help(
-                    rebasePlanUnavailableReason
-                        ?? "Preview the default pick plan from this commit through HEAD"
-                )
-                .accessibilityLabel("Preview Interactive Rebase plan from \(commit.subject)")
-                .accessibilityHint(
-                    rebasePlanUnavailableReason
-                        ?? "Shows a read-only plan without changing the Repository"
-                )
-
-                let revertUnavailableReason = historyWriteUnavailableReason
-                Button("Revert", systemImage: "arrow.uturn.backward") {
-                    if commit.parentIDs.count > 1 {
-                        mergeCommitPendingRevert = commit
-                    } else {
-                        Task { await model.revertCommit(commit) }
-                    }
-                }
-                .disabled(model.isLoading || revertUnavailableReason != nil)
-                .help(
-                    revertUnavailableReason
-                        ?? "Create a new commit that reverses this commit on the current branch"
-                )
-                .accessibilityHint(
-                    revertUnavailableReason
-                        ?? "Creates a new commit and keeps the selected commit in History"
-                )
-
-                let resetUnavailableReason = resetUnavailableReason(for: commit)
-                Button(role: .destructive) {
-                    commitPendingReset = commit
-                } label: {
-                    Label("Reset…", systemImage: "arrow.counterclockwise")
-                }
-                .disabled(model.isLoading || resetUnavailableReason != nil)
-                .help(
-                    resetUnavailableReason
-                        ?? "Move the current branch to this commit and keep working files"
-                )
-                .accessibilityLabel("Reset current branch to \(commit.subject)")
-                .accessibilityHint(
-                    resetUnavailableReason
-                        ?? "Choose whether reset changes stay staged or unstaged"
-                )
-            }
-            .fixedSize()
-            // ponytail: regular-size buttons plus the author badge exceed the 400pt detail minimum by a few points.
-            .controlSize(.small)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(commit.subject)
-                    .gallaeFont(.headline)
-                    .textSelection(.enabled)
-
+        VStack(alignment: .leading, spacing: 12) {
+            GallaePaneTitle(title: "Commit details", systemImage: "info.circle")
+            Text(commit.subject)
+                .gallaeFont(.title3, weight: .semibold)
+                .textSelection(.enabled)
+            commitAuthor(commit)
+            VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) {
                 if !commit.body.isEmpty {
                     if showsFullMessage {
                         ScrollView {
@@ -1348,22 +1444,12 @@ private struct RepositoryCommitDetailView: View {
 
                 commitSignature
 
-                let cherryPickUnavailableReason = cherryPickUnavailableReason(for: commit)
-                Button("Cherry-Pick…", systemImage: "arrow.turn.down.right") {
-                    guard let repository = model.repository,
-                          case .loaded(let history) = model.historyState,
-                          let headCommitID = history.headCommitID else { return }
-                    pendingCherryPick = (commit, repository, headCommitID)
-                }
-                .controlSize(.small)
-                .disabled(model.isLoading || model.isSyncing || cherryPickUnavailableReason != nil)
-                .help(cherryPickUnavailableReason ?? "Apply this commit’s changes to the current branch as a new commit")
-                .accessibilityLabel("Cherry-pick \(commit.subject) onto the current branch")
             }
+            Divider()
+            commitActions(commit)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(theme.metrics.panelHorizontalPadding)
     }
 
     private func commitAuthor(_ commit: RepositoryHistory.Commit) -> some View {

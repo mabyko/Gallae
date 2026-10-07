@@ -96,16 +96,16 @@ struct RepositoryLibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Library")
-                        .gallaeFont(.headline)
+                    GallaePaneTitle(title: "Library", systemImage: "books.vertical")
                     Text("Recent and folders")
                         .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+            .padding(.vertical, theme.metrics.panelVerticalPadding)
+            .background(theme.colors.opaqueChrome)
 
             Divider()
 
@@ -274,8 +274,10 @@ struct RepositoryLibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(model.selectedLibrarySource == .recent ? "Recent Repositories" : "Repositories")
-                        .gallaeFont(.headline)
+                    GallaePaneTitle(
+                        title: model.selectedLibrarySource == .recent ? "Recent Repositories" : "Repositories",
+                        systemImage: "arrow.triangle.branch"
+                    )
                     if let folder = model.selectedLibraryFolder {
                         Text(folder.url.path)
                             .gallaeFont(.caption1, monospaced: true)
@@ -297,8 +299,9 @@ struct RepositoryLibraryView: View {
                 Text(model.displayedLibraryRepositories.count, format: .number)
                     .foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+            .padding(.vertical, theme.metrics.panelVerticalPadding)
+            .background(theme.colors.opaqueChrome)
 
             Divider()
             repositoryListContent
@@ -556,20 +559,21 @@ struct RepositoryLibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(
-                        selectedRecentRepositoryIDs.count > 1
+                    GallaePaneTitle(
+                        title: selectedRecentRepositoryIDs.count > 1
                             ? "Repositories"
-                            : selectedHierarchyFolder == nil ? "Repository" : "Folder"
+                            : selectedHierarchyFolder == nil ? "Repository" : "Folder",
+                        systemImage: selectedHierarchyFolder == nil ? "info.circle" : "folder"
                     )
-                        .gallaeFont(.headline)
                     Text("Selection summary")
                         .gallaeFont(.caption1)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, theme.metrics.panelHorizontalPadding)
+            .padding(.vertical, theme.metrics.panelVerticalPadding)
+            .background(theme.colors.opaqueChrome)
 
             Divider()
 
@@ -683,6 +687,8 @@ struct RepositoryLibraryView: View {
                         LabeledContent("Tracking", value: upstream.label)
                     }
                 }
+                .padding(12)
+                .gallaeInsetPanel()
 
                 Divider()
                 activityContent(for: repository.id)

@@ -4,7 +4,7 @@
 
 ## 목적
 
-Gallae의 화면 구조와 Git 동작을 건드리지 않고 색, 재질, 간격, 타이포그래피와 컨트롤 표현을 바꿀 수 있게 한다. Theme와 Appearance Mode는 제품 개념이고, Prototype Variant는 디자인 비교용 장치다.
+Gallae의 Git 동작과 기존 기능을 유지하면서 탐색, 검토, 작성의 화면 구조와 시각 위계를 일관되게 개선한다. 색, 재질, 간격, 타이포그래피와 컨트롤 표현은 같은 테마 규칙을 따른다. Theme와 Appearance Mode는 제품 개념이고, Prototype Variant는 디자인 비교용 장치다.
 
 | 개념 | 의미 | 현재 값 |
 | --- | --- | --- |
@@ -71,9 +71,19 @@ Feature view에는 임의의 RGB 값이나 화면별 간격 상수를 넣지 않
 
 ## 툴바 묶음과 History 헤더
 
+Workspace는 B 시안의 검토 중심 구조를 따른다. History·Changes·파일·diff 헤더는 공통 제목·아이콘·개수 표현을 사용하고, 작업 대상과 보조 도구를 별도 줄에 배치한다. 공통 패널 여백은 좌우 14pt·위아래 8pt, 내부 간격은 8pt, 인셋 패널 모서리는 8pt다. 인셋 패널은 시스템 `controlBackgroundColor`와 `separatorColor`를 사용한다. 글꼴 설정·강조색·재질·Git 의미 색은 유지한다. 기본 행의 세로 여백은 6pt, 넓은 History 행은 3pt이며 Compact Rows의 3pt·2pt 값은 유지한다. 변경 파일 목록 기본 폭은 230pt·최대 폭은 320pt이며 저장한 폭과 좁은 영역의 파일 선택 메뉴·앞뒤 이동을 유지한다.
+
+작업 브랜치와 작업 사본 상태는 Workspace 상단에 구분해 표시한다. Navigator는 Workspace·Recovery 화면 탐색과 References 탐색을 분리하며 참조 필터를 참조 목록 위에 둔다. 같은 사이드바를 Floating Navigator에서도 사용한다. 키보드 이동, 검색어, remote 접힘, 스크롤 위치와 선택 보존은 유지한다.
+
+History 제목과 조회 범위 메뉴, 선택 ref의 이름·종류·대상별 작업을 분리한다. Graph View Settings와 검색을 유지하며 선택 ref의 작업 줄은 좁은 폭에서 다음 줄로 내려간다. 두 History Layout 모두 Commit review 막대에서 이전·다음 커밋으로 이동한다. Expand Review는 Top and Bottom에 유지한다. 상하 목록의 초기 높이는 220pt이며 저장한 높이는 창 안에 맞춰 유지한다. 검토 영역은 공간이 허용하는 한 최소 260pt를 확보해 작은 창에서도 diff를 읽을 수 있게 한다. UI 기본 크기에서 320pt보다 짧은 검토 영역에서는 작성자·메시지를 압축해 diff 공간을 남긴다. UI 글꼴이 커지면 압축 기준도 그 비율로 늘린다. 압축된 요약은 작성자·짧은 SHA·서명을 표시하며 이메일·시각·본문은 Details에서 확인한다. 선택 커밋은 제목·작성자·짧은 SHA·서명·본문 미리보기를 한 인셋 패널에 묶고 Rebase Plan·Revert·Reset·Cherry-Pick은 그 아래에 직접 노출한다. 작업 버튼은 폭에 따라 줄을 나눈다. Details에는 전체 메시지와 펼치기, 전체 SHA·부모 SHA·서명과 같은 작업 버튼을 유지한다.
+
+Changes는 파일 목록 제목과 Status·Folders 선택을 분리한다. 커밋 작성은 Create commit / Amend commit 패널로 묶고 Summary·Description의 고정 레이블, staged 개수, Amend, Stage All, Commit과 ⌘↩ 안내를 표시한다. 본문은 두 줄에서 시작해 세 줄까지 늘어난 뒤 필드 안에서 스크롤한다. 초안과 Amend 사전 입력, Git 작업·확인·비활성 조건은 그대로 유지한다. diff는 파일 이름·경로·추가/삭제 개수와 레이아웃·파일 작업을 구분하며 충돌 작업 버튼도 좁은 폭에서 줄을 나눈다. Library·Stashes·Reflog도 공통 패널 제목과 중립적인 메타데이터 패널을 따른다.
+
+B의 디자인은 History Layout과 별개다. Top and Bottom과 C에 해당하는 기존 Side by Side 모두 같은 컴포넌트를 사용하고 `historyLayout`의 저장값을 유지한다. 시안 이름을 새로운 설정 항목으로 추가하거나 개인 선택을 강제로 덮어쓰지 않는다.
+
 상단 툴바는 탐색(Navigator·Library) 다음에 동기화(Fetch·Pull·Push), 통합(Merge / Rebase), 새로고침(Refresh) 순서로 놓는다. Refresh는 맨 끝에 홀로 둔다. macOS 26 이상에서는 `ToolbarItem`·`ToolbarItemGroup`을 그대로 두고 각 항목에 `.sharedBackgroundVisibility(.hidden)`을 붙여 항상 보이는 유리 캡슐을 없앤 뒤, 버튼과 Fetch 메뉴 뒤에 `toolbarBezel()`로 무광 bezel을 그린다. bezel은 `controlColor`를 30% 불투명도로 옅게 채우고 `.separator` 1pt 테두리를 두른 모서리 8pt 둥근 사각형이며, 컨트롤 프레임보다 위아래 2pt씩 안쪽에 그린다. 유리·그림자 없이 콘텐츠 패널의 조용한 버튼보다 한 단계 더 가볍다. 툴바의 `.buttonStyle(.bordered)`는 macOS 26 툴바 안에서 아무것도 그리지 않아 쓰지 않는다. 장식 사각형은 background에만 있어 클릭을 가로채지 않고 접근성 트리에도 오르지 않는다. 두 색은 시스템 의미 색이므로 Light·Dark와 Increase Contrast에 따라 바뀐다. hover·누름·키보드 포커스·비활성·메뉴·overflow는 시스템 그대로다. 묶음 사이의 `ToolbarSpacer(.fixed)`가 동기화·통합·새로고침을 간격으로 구분한다. Library 화면의 Choose Folder도 같은 처리를 받는다. 창 단위 `toolbarBackgroundVisibility`는 Reduced Transparency의 불투명 툴바 배경을 맡는 별개 설정이며 버튼 캡슐과 무관하다. 좁은 창에서 시스템이 만드는 overflow(») 버튼의 유리 원형은 공개 API로 바꿀 수 없다. SwiftUI의 `toolbarOverflowMenu`는 macOS에서 사용할 수 없고 `NSToolbar`에도 overflow 모양 속성이 없으므로 시스템 모습을 그대로 둔다. macOS 15에서는 같은 순서로 두되 Pull·Push만 한 개짜리 `ControlGroup`과 `ToolbarDivider`로 묶고, Merge / Rebase와 Refresh는 각각 `ToolbarItem`으로 둔다. 두 경로는 같은 버튼 정의를 공유하므로 이름·단축키·도움말·접근성 이름은 OS에 따라 달라지지 않는다.
 
-History 헤더는 조회 범위와 선택 대상을 두 줄로 구분한다. 첫 줄은 조회 범위 메뉴(`History · All Branches & Tags` 또는 `History · Filter: <ref>`)이며, 필터가 있을 때만 옆에 작은 Clear Filter 버튼이 붙는다. 둘째 줄은 Navigator에서 고른 ref의 이름과 종류(`feature/x · Local branch`, `v1.2 · Tag`)로, 옆의 Switch·Check Out·Fetch가 무엇을 대상으로 하는지 밝힌다. 작업 브랜치는 그 위의 Working on 메뉴가 맡고, HEAD인 선택은 `· HEAD`를 덧붙여 구분한다. 조회 범위·대상과 작업이 한 줄에 들어가지 않으면 `ViewThatFits`로 작업 줄을 아래로 내린다. Remote를 선택하면 Fetch는 바로 보이고, Fetch & Prune·Edit…는 Remote Actions 메뉴에 묶는다. 대상의 전체 설명은 도움말에도 남긴다. 상하 배치의 검토 막대는 Expand Review로 목록이 가려졌을 때만 범위 이름을 반복하고, 평소에는 순번과 이동·확장 버튼만 둔다.
+History의 조회 범위 메뉴는 `All Branches & Tags` 또는 `Filter: <ref>`를 표시하며 필터가 있을 때 Clear Filter를 제공한다. 선택 ref 패널에는 `<ref> · Local branch / Remote / Tag`와 대상별 Switch·Check Out·Fetch를 표시하고 HEAD에 `· HEAD`를 붙인다. Remote의 Fetch & Prune·Edit…는 Remote Actions 메뉴에 유지한다. 조회 범위와 작업 브랜치는 서로 다른 개념이며 범위 변경은 checkout을 실행하지 않는다. Expand Review로 목록이 가려졌을 때만 검토 막대에 범위를 반복한다.
 
 좁은 창의 Floating Navigator는 툴바 Navigator 버튼에 붙은 네이티브 팝오버다. 사이드바와 같은 Navigator를 사용하고 검색어, remote 펼침·접힘과 선택을 공유한다. 폭은 마지막 사이드바 폭(기본 220pt, 최대 320pt)을 따르며 높이는 본문 공간 안에서 최대 560pt로 제한한다. 창 폭이 마지막 Navigator 폭 + 728pt보다 작으면 사이드바를 접고 팝오버로 탐색하며 창을 키우지 않는다. 같은 항목을 다시 선택해도 닫힌다. 팝오버의 연결 위치·등장과 퇴장·바깥 클릭·키보드 포커스는 시스템에 맡기며 별도 모션 시스템을 만들지 않는다. 포커스 이동·복귀와 Reduce Motion 응답은 macOS 앱에서 검증한다.
 
