@@ -746,6 +746,7 @@ struct RepositoryWorkspaceView: View {
                 } else {
                     let request = model.displayedDiffRequest
                     RepositoryDiffView(
+                        visualDiffRequest: .init(repository: repository, comparison: .workingTree, revision: model.repositoryRevision),
                         state: model.diffState,
                         fileURL: selectedFileURL(in: repository),
                         selectVisualizedFile: { path in

@@ -12,8 +12,12 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
     var lens = "architecture"
     var errorMessage: String?
     var statusMessage: String?
+    private(set) var generationError: String?
+    @ObservationIgnored private var generatedRequest: VisualDiffRequest?
     @ObservationIgnored var selectFile: (String) -> Bool = { _ in false }
+    @ObservationIgnored var returnToDiff: () -> Void = {}
     @ObservationIgnored private var webView: WKWebView?
+    @ObservationIgnored private var escapeMonitor: Any?
     @ObservationIgnored private var isReady = false
     @ObservationIgnored private var pendingDocument: VisualDiffDocument?
     @ObservationIgnored private var renderedLens = "architecture"
@@ -50,12 +54,44 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
     func load(_ url: URL) {
         do {
             pendingDocument = try VisualDiffDocument.read(from: url)
+            generatedRequest = nil
+            generationError = nil
             lens = pendingDocument?.lenses.first ?? "architecture"
             isLoading = true
             statusMessage = nil
             ensureWebView()
             renderPendingDocument()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    func generate(_ request: VisualDiffRequest, force: Bool = false) async {
+        if !force, generatedRequest == request, document?.isGenerated == true { return }
+        generation += 1
+        let current = generation
+        document = nil
+        pendingDocument = nil
+        generatedRequest = nil
+        generationError = nil
+        statusMessage = nil
+        isLoading = true
+        do {
+            let graph = try await VisualDiffGenerator.generate(request)
+            try Task.checkCancellation()
+            guard generation == current else { return }
+            generatedRequest = request
+            pendingDocument = graph
+            lens = "architecture"
+            ensureWebView()
+            renderPendingDocument()
+        } catch {
+            guard generation == current, !Task.isCancelled else { return }
+            isLoading = false
+            generationError = error.localizedDescription
+        }
+    }
+
+    func escape() {
+        if isFullScreen { exitFullScreen() } else { returnToDiff() }
     }
 
     func reset() {
@@ -66,6 +102,9 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
         isLoading = false
         errorMessage = nil
         statusMessage = nil
+        generationError = nil
+        generatedRequest = nil
+        removeEscapeMonitor()
         webView?.stopLoading()
         webView?.navigationDelegate = nil
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "visualDiff")
@@ -76,6 +115,19 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
 
     func attach(to host: NSView) {
         embeddedHost = host
+        if escapeMonitor == nil {
+            // A native full-screen transition can leave focus outside the SwiftUI/WebKit responder chain.
+            // Handle Esc only in this viewer's windows, leaving sheets and other app windows alone.
+            escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.keyCode == 53,
+                      event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+                      let window = event.window,
+                      window === self.embeddedHost?.window || window === self.fullScreenWindow,
+                      window.attachedSheet == nil, NSApp.modalWindow == nil else { return event }
+                self.escape()
+                return nil
+            }
+        }
         ensureWebView()
         if !isFullScreen, let webView { install(webView, in: host) }
     }
@@ -83,8 +135,14 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
     func detach(from host: NSView) {
         guard embeddedHost === host else { return }
         exitFullScreen()
+        removeEscapeMonitor()
         embeddedHost = nil
         if !isFullScreen { webView?.removeFromSuperview() }
+    }
+
+    private func removeEscapeMonitor() {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        escapeMonitor = nil
     }
 
     func update(theme: GallaeTheme, dark: Bool, path: String?, reduceMotion: Bool) {
@@ -140,7 +198,11 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
             case .failure(let error):
                 self.pendingDocument = nil
                 self.lens = self.renderedLens
-                self.errorMessage = "This graph could not be rendered. \(error.localizedDescription)"
+                let message = "This graph could not be rendered. \(error.localizedDescription)"
+                if candidate.isGenerated, self.document == nil {
+                    self.generatedRequest = nil
+                    self.generationError = message
+                } else { self.errorMessage = message }
             }
         }
     }
@@ -160,7 +222,7 @@ final class VisualDiffSession: NSObject, WKNavigationDelegate, NSWindowDelegate 
         case "ready":
             isReady = true
             renderPendingDocument()
-        case "escape": exitFullScreen()
+        case "escape": escape()
         case "file":
             guard let path = body["path"] else { return }
             if !selectFile(path) { statusMessage = "\(path) is not in this review’s changed files." }
@@ -274,9 +336,9 @@ private final class VisualDiffBridge: NSObject, WKScriptMessageHandler {
 struct VisualDiffButton: View {
     @Binding var isPresented: Bool
     var body: some View {
-        Button("Visualize", systemImage: "point.3.connected.trianglepath.dotted") { isPresented.toggle() }
+        Button(isPresented ? "Back to Diff" : "Visualize", systemImage: isPresented ? "doc.text" : "point.3.connected.trianglepath.dotted") { isPresented.toggle() }
             .tint(isPresented ? .accentColor : nil)
-            .help("View an imported PR Lens diagram of the change")
+            .help(isPresented ? "Return to the file diff" : "Generate a diagram from the current comparison")
             .accessibilityValue(isPresented ? "On" : "Off")
     }
 }
@@ -287,8 +349,16 @@ struct VisualDiffPane: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var fullScreenButtonFocused: Bool
+    @State private var refresh = 0
+    let request: VisualDiffRequest?
     let selectedPath: String?
+    let returnToDiff: () -> Void
     let selectFile: (String) -> Bool
+
+    private struct GenerationTask: Equatable {
+        let request: VisualDiffRequest?
+        let refresh: Int
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -296,28 +366,30 @@ struct VisualDiffPane: View {
                 ViewThatFits(in: .horizontal) {
                     HStack { graphIdentity(document); Spacer(); controls(document) }
                     VStack(alignment: .leading, spacing: theme.metrics.panelSpacing) { graphIdentity(document); controls(document) }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, theme.metrics.panelHorizontalPadding)
                 .padding(.vertical, theme.metrics.panelVerticalPadding)
                 .background(theme.colors.opaqueChrome)
                 Divider()
             }
             if session.document != nil || session.isLoading {
-                VisualDiffWebHost(session: session, theme: theme, dark: colorScheme == .dark, path: selectedPath, reduceMotion: reduceMotion, selectFile: selectFile)
+                VisualDiffWebHost(session: session, theme: theme, dark: colorScheme == .dark, path: selectedPath, reduceMotion: reduceMotion, selectFile: selectFile, returnToDiff: returnToDiff)
                     .overlay {
                         if session.isFullScreen {
                             ContentUnavailableView { Label("Viewing in Full Screen", systemImage: "arrow.up.left.and.arrow.down.right") }
                             actions: { Button("Return to Diff", action: session.exitFullScreen) }
-                        } else if session.isLoading { ProgressView("Loading Diagram…") }
+                        } else if session.isLoading { ProgressView("Visualizing Changes…") }
                     }
             } else {
                 ContentUnavailableView {
-                    Label("Visualize Changes", systemImage: "point.3.connected.trianglepath.dotted")
+                    Label("Couldn’t Visualize Changes", systemImage: "point.3.connected.trianglepath.dotted")
                 } description: {
-                    Text("Import a PR Lens graph to explore the change visually. Graphs are snapshots and are rendered locally.")
+                    Text(session.generationError ?? "Choose a comparison to visualize its changed files.")
                 } actions: {
-                    Button("Import Graph…", action: session.importGraph).buttonStyle(.borderedProminent)
-                    Button("Show Example", action: session.loadExample)
+                    Button("Try Again") { refresh += 1 }.disabled(request == nil)
+                    Button("Back to Diff", action: returnToDiff)
                 }
             }
             if let message = session.statusMessage {
@@ -325,9 +397,14 @@ struct VisualDiffPane: View {
                     .padding(theme.metrics.panelVerticalPadding)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .controlSize(.small)
-        .onAppear { session.selectFile = selectFile }
-        .onDisappear { session.selectFile = { _ in false }; session.exitFullScreen() }
+        .task(id: GenerationTask(request: request, refresh: refresh)) {
+            if let request { await session.generate(request, force: refresh > 0) }
+        }
+        .onAppear { session.selectFile = selectFile; session.returnToDiff = returnToDiff }
+        .onDisappear { session.selectFile = { _ in false }; session.returnToDiff = {}; session.exitFullScreen() }
+        .onExitCommand(perform: session.escape)
         .onChange(of: session.isFullScreen) { _, isFullScreen in
             if !isFullScreen { fullScreenButtonFocused = true }
         }
@@ -339,7 +416,7 @@ struct VisualDiffPane: View {
     private func graphIdentity(_ document: VisualDiffDocument) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(document.title).gallaeFont(.headline).lineLimit(1)
-            Text("Imported snapshot · \(document.sourceDescription)")
+            Text("\(document.isGenerated ? "Local diff" : "Imported snapshot") · \(document.sourceDescription)")
                 .gallaeFont(.caption1).foregroundStyle(.secondary).lineLimit(1).help(document.sourceDescription)
         }
     }
@@ -353,7 +430,14 @@ struct VisualDiffPane: View {
                     }
                 }.labelsHidden().fixedSize()
             }
-            Button("Import Graph…", action: session.importGraph)
+            Button("Refresh", systemImage: "arrow.clockwise") { refresh += 1 }
+                .disabled(session.isLoading)
+                .help("Regenerate the diagram from this comparison")
+            Menu {
+                Button("Import Graph…", action: session.importGraph)
+                Button("Show Example", action: session.loadExample)
+            } label: { Label("More", systemImage: "ellipsis") }
+                .labelStyle(.iconOnly).menuStyle(.borderlessButton).fixedSize()
             Button("Full Screen", systemImage: "arrow.up.left.and.arrow.down.right", action: session.enterFullScreen)
                 .focused($fullScreenButtonFocused)
                 .help("Open the diagram in full screen. Press Esc to return here.")
@@ -368,9 +452,9 @@ private struct VisualDiffFullScreenHeader: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
-                Text(session.document?.title ?? "Visualize Changes").gallaeFont(.headline)
-                Text("Imported snapshot · \(session.document?.sourceDescription ?? "")")
-                    .gallaeFont(.caption1).foregroundStyle(.secondary)
+                Text(session.document?.title ?? "Visualize Changes").gallaeFont(.headline).lineLimit(1)
+                Text("\(session.document?.isGenerated == true ? "Local diff" : "Imported snapshot") · \(session.document?.sourceDescription ?? "")")
+                    .gallaeFont(.caption1).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             Button("Exit Full Screen", systemImage: "arrow.down.right.and.arrow.up.left", action: session.exitFullScreen)
@@ -389,6 +473,7 @@ private struct VisualDiffWebHost: NSViewRepresentable {
     let path: String?
     let reduceMotion: Bool
     let selectFile: (String) -> Bool
+    let returnToDiff: () -> Void
     func makeCoordinator() -> VisualDiffSession { session }
     func makeNSView(context: Context) -> NSView {
         let host = NSView()
@@ -397,6 +482,7 @@ private struct VisualDiffWebHost: NSViewRepresentable {
     }
     func updateNSView(_ host: NSView, context: Context) {
         session.selectFile = selectFile
+        session.returnToDiff = returnToDiff
         session.attach(to: host)
         session.update(theme: theme, dark: dark, path: path, reduceMotion: reduceMotion)
     }
@@ -410,9 +496,9 @@ struct GallaeLabsSettings: View {
             Section("Experimental Features") {
                 Toggle("Visual Diff · PR Lens", isOn: $visualDiffEnabled)
                     .accessibilityHint("Adds Visualize to the Diff toolbar")
-                Text("Explore imported PR Lens graphs in Diff. Includes architecture and data-flow views, zoom, file navigation, and full screen with Esc to return.")
+                Text("Generate a diagram from the current Changes, History, or Stash comparison. Includes zoom, file navigation, and full screen with Esc to return.")
                     .gallaeFont(.caption1).foregroundStyle(.secondary)
-                Text("Graphs render locally. This experiment does not analyze or upload your code; generate a graph with your coding agent or PR Lens, then import its JSON.")
+                Text("Changed files and symbol references found in diff context are analyzed locally. No API key or JSON file is needed, and code is not uploaded. Importing PR Lens graphs remains available under More.")
                     .gallaeFont(.caption1).foregroundStyle(.secondary)
             }
         }

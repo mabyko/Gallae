@@ -36,6 +36,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.horizontal, theme.metrics.panelHorizontalPadding)
         .padding(.vertical, theme.metrics.panelVerticalPadding)
         .controlSize(.small)
@@ -92,6 +93,7 @@ private struct RepositoryDiffHeader<Actions: View>: View {
 }
 
 struct RepositoryRevisionChangesView: View {
+    let visualDiffRequest: VisualDiffRequest?
     let filesState: RepositoryCommitFilesLoadState
     @Binding var selectedFileID: String?
     let selectedFile: RepositoryCommitFile?
@@ -243,7 +245,7 @@ struct RepositoryRevisionChangesView: View {
                 }
 
                 if visualDiffEnabled && showsVisualization {
-                    VisualDiffPane(selectedPath: selectedFile?.path) { path in
+                    VisualDiffPane(request: visualDiffRequest, selectedPath: selectedFile?.path, returnToDiff: { showsVisualization = false }) { path in
                         guard case .loaded(let files) = filesState,
                               let file = files.first(where: { $0.path == path || $0.originalPath == path }) else { return false }
                         showsVisualization = false
@@ -429,6 +431,7 @@ private enum ConflictResolutionConfirmation {
 }
 
 struct RepositoryDiffView: View {
+    let visualDiffRequest: VisualDiffRequest?
     let state: RepositoryDiffLoadState
     let fileURL: URL?
     var selectVisualizedFile: (String) -> Bool = { _ in false }
@@ -666,7 +669,11 @@ struct RepositoryDiffView: View {
                     loadExpanded: loadExpanded
                 )
             } else if visualDiffEnabled && showsVisualization {
-                VisualDiffPane(selectedPath: diff.path) { path in
+                VisualDiffPane(request: visualDiffRequest.map { request in
+                    var request = request
+                    request.comparison = shown == .staged ? .staged : .workingTree
+                    return request
+                }, selectedPath: diff.path, returnToDiff: { showsVisualization = false }) { path in
                     guard selectVisualizedFile(path) else { return false }
                     showsVisualization = false
                     return true
@@ -1043,20 +1050,22 @@ private struct RepositoryDiffLayoutPicker: View {
     }
 
     var body: some View {
-        // The whole control is disabled rather than the Split segment alone: macOS ignores `disabled` on an
-        // individual segment of a segmented picker, so a lone dimmed segment stays clickable.
+        // Unsupported comparisons normally disable the picker as a whole. In Visualize it also serves as
+        // a way back to code, so keep it enabled; presentation falls back to Unified when Split is unavailable.
         Picker("Diff Layout", selection: shown) {
             ForEach(RepositoryDiffLayout.allCases) { layout in
                 Text(layout.title).tag(Optional(layout))
             }
         }
-        .disabled(!canSplit)
+        .disabled(!canSplit && !isVisualizing.wrappedValue)
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.small)
         .fixedSize()
         .help(
-            canSplit
+            isVisualizing.wrappedValue
+                ? "Return to the file diff. Files without a second version use Unified."
+                : canSplit
                 ? "Show the diff in one column, or the old and new versions side by side"
                 : "The selected content does not support a side-by-side comparison"
         )

@@ -38,7 +38,7 @@ The **⋯** menus beside Branches, Remotes, and Tags remain available when their
 
 Appearance settings include system/light/dark themes, row density, the app accent color, and History graph and badge colors. The app accent defaults to **System**, following your macOS setting.
 
-**Visual Diff (Labs)** adds **Visualize** beside Unified/Split in Changes, History, and stash review. Enable **Settings → Labs → Visual Diff · PR Lens**, then import a PR Lens graph JSON or open the example. Pan, zoom, click a file node to return to its diff, or choose **Full Screen** and press **Esc** to return. Graphs render locally and remain imported snapshots; this experiment does not generate graphs or upload code. See [Visual Diff usage and renderer maintenance](scripts/visual-diff/README.md).
+**Visual Diff (Labs)** adds **Visualize** beside Unified/Split in Changes, History, and Stash review. Enable **Settings → Labs → Visual Diff · PR Lens** and click Visualize to generate a local diagram of the current comparison's changed files and symbol references in diff context. No JSON file or API key is required. **Back to Diff** returns to code, including files without Split support. Pan, zoom, click a file card, or use **Full Screen** and **Esc** to return. Code is not uploaded; this is a change overview rather than complete architecture or runtime analysis. External graphs remain available under **More**. See [Visual Diff usage and renderer maintenance](scripts/visual-diff/README.md).
 
 View the included copyright notices and full licenses in **Settings → About → Open Source Licenses…**.
 

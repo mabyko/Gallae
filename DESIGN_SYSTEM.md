@@ -79,7 +79,7 @@ History 제목과 조회 범위 메뉴, 선택 ref의 이름·종류·대상별 
 
 Changes는 파일 목록 제목과 Status·Folders 선택을 분리한다. 커밋 작성은 Create commit / Amend commit 패널로 묶고 Summary·Description의 고정 레이블, staged 개수, Amend, Stage All, Commit과 ⌘↩ 안내를 표시한다. 본문은 두 줄에서 시작해 세 줄까지 늘어난 뒤 필드 안에서 스크롤한다. 초안과 Amend 사전 입력, Git 작업·확인·비활성 조건은 그대로 유지한다. diff는 파일 이름·경로·추가/삭제 개수와 레이아웃·파일 작업을 구분하며 충돌 작업 버튼도 좁은 폭에서 줄을 나눈다. Library·Stashes·Reflog도 공통 패널 제목과 중립적인 메타데이터 패널을 따른다.
 
-실험실의 Visual Diff는 기존 파일 diff 헤더의 Unified·Split 옆에 Visualize를 추가한다. 시각화 중에는 Unified·Split의 선택을 해제하고, 어느 쪽을 누르든 코드 diff로 복귀한다. 그래프 제목·저장소·base/head와 Imported snapshot 표시를 별도 헤더에 둔다. Import Graph·Full Screen은 폭에 따라 다음 줄로 내려간다. 그래프는 Light·Dark를 따르고 선택한 파일 노드를 테두리로 강조한다. 전체 화면에는 제목과 Exit Full Screen을 표시하고 Esc로 원래 검토 영역에 복귀하며 확대·이동 상태를 유지한다. 파일 노드는 현재 검토 목록의 파일만 선택한다. 예시는 Example로 표시하며 현재 변경 분석처럼 보이지 않게 한다. Labs 기본값은 꺼짐이며 끄면 가져온 그래프와 전체 화면을 정리한다.
+실험실의 Visual Diff는 파일 diff 헤더의 Unified·Split 옆에 Visualize를 추가한다. 클릭하면 현재 Changes·History·Stash 비교에서 변경 파일과 diff 기호 참조 관계를 로컬 그래프로 생성한다. 시각화 중에는 Visualize 버튼을 Back to Diff로 바꾸며, 새 파일처럼 Split이 없는 경우에도 복귀할 수 있다. Unified·Split으로도 복귀하며 지원하지 않는 Split은 Unified로 표시한다. 파일 헤더와 그래프 헤더는 내용 높이에 맞추고 그래프가 남은 공간을 채운다. Local diff 표시와 실제 비교 범위·파일 수를 그래프 헤더에 둔다. 외부 가져오기는 More로 이동하며 Imported snapshot으로 구분한다. Refresh는 현재 비교를 다시 생성한다. 그래프는 Light·Dark를 따르고 선택한 파일 노드를 강조한다. 전체 화면에는 Exit Full Screen을 표시하며 Esc는 확대·이동 상태를 유지한 채 원래 시각화 영역으로 복귀한다. 내장 그래프의 Esc와 파일 노드 선택은 코드 diff로 돌아간다. Labs 기본값은 꺼짐이며 끄면 그래프와 전체 화면을 정리한다.
 
 B의 디자인은 History Layout과 별개다. Top and Bottom과 C에 해당하는 기존 Side by Side 모두 같은 컴포넌트를 사용하고 `historyLayout`의 저장값을 유지한다. 시안 이름을 새로운 설정 항목으로 추가하거나 개인 선택을 강제로 덮어쓰지 않는다.
 

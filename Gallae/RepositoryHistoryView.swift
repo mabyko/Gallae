@@ -1151,6 +1151,7 @@ private struct RepositoryCommitDetailView: View {
                         compactCommitHeader(commit, condensed: proxy.size.height < 320 * max(1, typography.uiSize / 13))
                         Divider()
                         RepositoryRevisionChangesView(
+                            visualDiffRequest: model.repository.map { .init(repository: $0, comparison: .commit(commit), revision: model.repositoryRevision) },
                             filesState: model.commitFilesState,
                             selectedFileID: $model.selectedHistoryFileID,
                             selectedFile: model.selectedHistoryFile,
