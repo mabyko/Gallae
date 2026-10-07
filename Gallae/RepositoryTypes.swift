@@ -420,6 +420,18 @@ struct RepositoryCommitPatch: Equatable, Sendable {
     let commitID: String
     let fileID: String
     let content: RepositoryDiff.Section.Content
+    let textPresentation: RepositoryDiffTextPresentation?
+
+    init(commitID: String, fileID: String, content: RepositoryDiff.Section.Content) {
+        self.commitID = commitID
+        self.fileID = fileID
+        self.content = content
+        textPresentation = RepositoryDiffTextPresentation(content: content)
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.commitID == rhs.commitID && lhs.fileID == rhs.fileID && lhs.content == rhs.content
+    }
 }
 
 struct RepositoryStash: Equatable, Identifiable, Sendable {
@@ -513,11 +525,13 @@ struct RepositoryDiff: Equatable, Sendable {
         }
 
         let hunkIndex: HunkIndex
+        let textPresentation: RepositoryDiffTextPresentation?
 
         init(scope: Scope, content: Content) {
             self.scope = scope
             self.content = content
             hunkIndex = HunkIndex(content: content)
+            textPresentation = RepositoryDiffTextPresentation(content: content)
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -605,6 +619,82 @@ struct RepositoryDiff: Equatable, Sendable {
     let path: String
     let originalPath: String?
     let sections: [Section]
+}
+
+/// Immutable, font-independent row geometry owned by the loaded diff, including saved revisions.
+/// Offsets share the original line storage instead of copying every Line into both layouts.
+final class RepositoryDiffTextPresentation: Sendable {
+    struct SplitRow: Identifiable, Sendable {
+        let id: Int
+        let fullIndex: Int?
+        let oldIndex: Int?
+        let newIndex: Int?
+    }
+
+    struct VisibleLines: RandomAccessCollection, Sendable {
+        let lines: [RepositoryDiff.Line]
+        let offsets: [Int]
+        var startIndex: Int { offsets.startIndex }
+        var endIndex: Int { offsets.endIndex }
+        subscript(position: Int) -> RepositoryDiff.Line { lines[offsets[position]] }
+    }
+
+    let lines: [RepositoryDiff.Line]
+    let visibleIndices: [Int]
+    let splitRows: [SplitRow]
+    let largestLineNumber: Int
+    let canSplit: Bool
+
+    convenience init?(content: RepositoryDiff.Section.Content) {
+        guard case .text(let lines) = content else { return nil }
+        self.init(lines: lines)
+    }
+
+    var visibleLines: VisibleLines { .init(lines: lines, offsets: visibleIndices) }
+
+    init(lines: [RepositoryDiff.Line], hidesPatchHeaders: Bool = true) {
+        self.lines = lines
+        var visible: [Int] = []
+        var rows: [SplitRow] = []
+        var deletions: [Int] = []
+        var additions: [Int] = []
+        var largest = 0
+        var sawContext = false, sawAddition = false, sawDeletion = false
+        visible.reserveCapacity(lines.count)
+
+        func flushChanges() {
+            for offset in 0..<max(deletions.count, additions.count) {
+                let old = offset < deletions.count ? deletions[offset] : nil
+                let new = offset < additions.count ? additions[offset] : nil
+                rows.append(.init(id: lines[old ?? new!].id, fullIndex: nil, oldIndex: old, newIndex: new))
+            }
+            deletions.removeAll(keepingCapacity: true)
+            additions.removeAll(keepingCapacity: true)
+        }
+
+        for index in lines.indices {
+            let line = lines[index]
+            guard !hidesPatchHeaders || !line.isPatchHeader else { continue }
+            visible.append(index)
+            largest = max(largest, line.oldLineNumber ?? 0, line.newLineNumber ?? 0)
+            switch line.kind {
+            case .deletion: sawDeletion = true; deletions.append(index)
+            case .addition: sawAddition = true; additions.append(index)
+            case .context:
+                sawContext = true
+                flushChanges()
+                rows.append(.init(id: line.id, fullIndex: nil, oldIndex: index, newIndex: index))
+            case .metadata, .hunk:
+                flushChanges()
+                rows.append(.init(id: line.id, fullIndex: index, oldIndex: nil, newIndex: nil))
+            }
+        }
+        flushChanges()
+        visibleIndices = visible
+        splitRows = rows
+        largestLineNumber = largest
+        canSplit = !lines.isEmpty && (sawContext || sawAddition == sawDeletion)
+    }
 }
 
 extension RepositoryDiff.Section.Content {

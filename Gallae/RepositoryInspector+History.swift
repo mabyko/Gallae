@@ -144,22 +144,36 @@ extension RepositoryInspector {
                 "-C", repository.rootURL.path, "rev-parse", "--verify", "--end-of-options", "\(focusReference)^{commit}"
             ])
             guard resolved.status == 0 else { throw RepositoryHistoryError.unreadable(resolved.standardError) }
-            let resolvedID = text(from: resolved.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines)
-            focusedCommitID = resolvedID
-            // Locate an older tip without reading every commit's message. Preserve the same graph ordering.
+            focusedCommitID = text(from: resolved.standardOutput).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func readLogFields(count: Int) throws -> [Data.SubSequence] {
+            let result = try runGit([
+                "-C", repository.rootURL.path,
+                "log", "-\(count + 1)", "--topo-order", "-z", "--no-show-signature",
+                "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
+            ] + revisions)
+            guard result.status == 0 else { throw RepositoryHistoryError.unreadable(result.standardError) }
+            var fields = result.standardOutput.split(separator: 0, omittingEmptySubsequences: false)
+            if fields.last?.isEmpty == true { fields.removeLast() }
+            guard fields.count.isMultiple(of: 7) else { throw RepositoryHistoryError.invalidOutput }
+            return fields
+        }
+
+        var fields = try readLogFields(count: count)
+        // The extra record only determines hasMoreCommits: a focus on that lookahead row
+        // must still expand the visible range. Most navigation targets are already visible.
+        if let focusedCommitID,
+           !stride(from: 0, to: min(count, fields.count / 7) * 7, by: 7).contains(where: {
+               String(decoding: fields[$0], as: UTF8.self) == focusedCommitID
+           }) {
             let ids = try runGit(["-C", repository.rootURL.path, "rev-list", "--topo-order"] + revisions)
             guard ids.status == 0 else { throw RepositoryHistoryError.unreadable(ids.standardError) }
-            if let index = text(from: ids.standardOutput).split(separator: "\n").firstIndex(where: { $0 == resolvedID }) {
-                count = max(count, index + 1)
+            if let index = text(from: ids.standardOutput).split(separator: "\n").firstIndex(where: { $0 == focusedCommitID }),
+               index + 1 > count {
+                count = index + 1
+                fields = try readLogFields(count: count)
             }
-        }
-        let result = try runGit([
-            "-C", repository.rootURL.path,
-            "log", "-\(count + 1)", "--topo-order", "-z", "--no-show-signature",
-            "--format=%H%x00%P%x00%an%x00%ae%x00%ct%x00%s%x00%b"
-        ] + revisions)
-        guard result.status == 0 else {
-            throw RepositoryHistoryError.unreadable(result.standardError)
         }
 
         let referencesResult = try runGit([
@@ -172,17 +186,6 @@ extension RepositoryInspector {
             throw RepositoryHistoryError.unreadable(referencesResult.standardError)
         }
         let referenceSnapshot = historyReferences(referencesResult.standardOutput)
-
-        var fields = result.standardOutput.split(
-            separator: 0,
-            omittingEmptySubsequences: false
-        )
-        if fields.last?.isEmpty == true {
-            fields.removeLast()
-        }
-        guard fields.count.isMultiple(of: 7) else {
-            throw RepositoryHistoryError.invalidOutput
-        }
 
         var commits: [RepositoryHistory.Commit] = []
         commits.reserveCapacity(fields.count / 7)

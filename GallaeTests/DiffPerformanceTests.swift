@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Gallae
 
 final class DiffPerformanceTests: XCTestCase {
@@ -48,6 +49,169 @@ final class DiffPerformanceTests: XCTestCase {
             XCTAssertTrue(section.hunks.isEmpty)
             XCTAssertNil(section.hunk(id: 0))
         }
+    }
+
+    func testPreparedRowsRetainPairingIDsAndVisibleMetadata() throws {
+        let prepared = try XCTUnwrap(section().textPresentation)
+        XCTAssertEqual(prepared.visibleLines.map(\.id), [19, 22, 25, 28, 31, 34, 37, 40])
+        XCTAssertEqual(Array(prepared.visibleLines.indices), Array(0..<8))
+        XCTAssertEqual(prepared.visibleLines.indices.map { prepared.visibleLines[$0].id }, [19, 22, 25, 28, 31, 34, 37, 40])
+        XCTAssertEqual(prepared.splitRows.map(\.id), [19, 22, 28, 31, 34, 40])
+        let pair = prepared.splitRows[1]
+        XCTAssertEqual(prepared.lines[try XCTUnwrap(pair.oldIndex)].text, "-old")
+        XCTAssertEqual(prepared.lines[try XCTUnwrap(pair.newIndex)].text, "+new")
+        XCTAssertEqual(prepared.lines[try XCTUnwrap(prepared.splitRows.last?.fullIndex)].text,
+                       "\\ No newline at end of file")
+    }
+
+    func testPreparedRowsAreSharedAcrossSnapshotsAndLayoutChoices() throws {
+        let section = section()
+        let copy = section
+        let prepared = try XCTUnwrap(section.textPresentation)
+        XCTAssertTrue(prepared === copy.textPresentation)
+        XCTAssertEqual(RepositoryDiffPresentation(text: prepared, preferred: .unified).layout, .unified)
+        XCTAssertEqual(RepositoryDiffPresentation(text: prepared, preferred: .split).layout, .split)
+        // Line selection lives in the view; both layouts read the same immutable geometry.
+        XCTAssertTrue(prepared === section.textPresentation)
+        let patch = RepositoryCommitPatch(commitID: "commit", fileID: "file", content: section.content)
+        let patchCopy = patch
+        XCTAssertTrue(patch.textPresentation === patchCopy.textPresentation)
+        XCTAssertEqual(patch.textPresentation?.visibleLines.map(\.id), prepared.visibleLines.map(\.id))
+    }
+
+    func testSameLengthRefreshReplacesPreparedWorkingTreeAndRevisionContent() throws {
+        let oldLine = RepositoryDiff.Line(id: 12, kind: .addition, oldLineNumber: nil, newLineNumber: 9, text: "+old")
+        let newLine = RepositoryDiff.Line(id: 12, kind: .addition, oldLineNumber: nil, newLineNumber: 999, text: "+new")
+        let old = RepositoryDiff.Section(scope: .unstaged, content: .text([oldLine]))
+        let new = RepositoryDiff.Section(scope: .unstaged, content: .text([newLine]))
+        XCTAssertFalse(old.textPresentation === new.textPresentation)
+        XCTAssertEqual(new.textPresentation?.visibleLines.first?.text, "+new")
+        XCTAssertEqual(new.textPresentation?.largestLineNumber, 999)
+        XCTAssertEqual(RepositoryDiffPresentation(text: new.textPresentation, preferred: .split).layout, .unified)
+        let oldPatch = RepositoryCommitPatch(commitID: "same", fileID: "same", content: old.content)
+        let newPatch = RepositoryCommitPatch(commitID: "same", fileID: "same", content: new.content)
+        XCTAssertFalse(oldPatch.textPresentation === newPatch.textPresentation)
+        XCTAssertEqual(newPatch.textPresentation?.visibleLines.first?.text, "+new")
+        XCTAssertEqual(newPatch.textPresentation?.largestLineNumber, 999)
+    }
+
+    func testPreparedGeometryKeepsBothUnmatchedSidesAndFontIndependentNumbers() {
+        let lines: [RepositoryDiff.Line] = [
+            .init(id: 10, kind: .deletion, oldLineNumber: 100, newLineNumber: nil, text: "-one"),
+            .init(id: 20, kind: .deletion, oldLineNumber: 101, newLineNumber: nil, text: "-two"),
+            .init(id: 30, kind: .addition, oldLineNumber: nil, newLineNumber: 900, text: "+new")
+        ]
+        let prepared = RepositoryDiffTextPresentation(lines: lines)
+        XCTAssertEqual(prepared.splitRows.map(\.id), [10, 20])
+        XCTAssertEqual(prepared.splitRows[0].newIndex, 2)
+        XCTAssertNil(prepared.splitRows[1].newIndex)
+        XCTAssertEqual(prepared.largestLineNumber, 900)
+        XCTAssertTrue(prepared.canSplit)
+        let small = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        let large = NSFont.monospacedSystemFont(ofSize: 20, weight: .regular)
+        XCTAssertEqual(diffNumberWidth(largestLineNumber: prepared.largestLineNumber, font: small),
+                       diffNumberWidth(for: lines, font: small))
+        XCTAssertGreaterThan(diffNumberWidth(largestLineNumber: prepared.largestLineNumber, font: large),
+                             diffNumberWidth(largestLineNumber: prepared.largestLineNumber, font: small))
+    }
+
+    func testGeneratedDataOnlyGraphHasNoReferencesAndRetainsCounts() throws {
+        let files: [VisualDiffGenerator.File] = [
+            .init(path: "config.json", originalPath: nil, state: .modified, content: .text([
+                .init(id: 0, kind: .deletion, oldLineNumber: 1, newLineNumber: nil, text: "-{\"enabled\": false}"),
+                .init(id: 1, kind: .addition, oldLineNumber: nil, newLineNumber: 1, text: "+{\"enabled\": true}")
+            ]))
+        ]
+        let document = try VisualDiffGenerator.makeDocument(files: files, repositoryName: "fixture", title: "Changes",
+                                                            base: "Index", head: "Working tree", fallbackSHA: "1111111")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(document.json.utf8)) as? [String: Any])
+        XCTAssertEqual((json["edges"] as? [Any])?.count, 0)
+        XCTAssertEqual((json["nodes"] as? [Any])?.count, 1)
+        let stats = try XCTUnwrap(json["stats"] as? [String: Int])
+        XCTAssertEqual(stats["additions"], 1)
+        XCTAssertEqual(stats["deletions"], 1)
+    }
+
+    func testExactly512ReferencesDoesNotClaimTruncation() throws {
+        let fixture = referenceLimitFixture(edgeCount: 512)
+        let document = try referenceLimitDocument(files: fixture.files)
+        let graph = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(document.json.utf8)) as? [String: Any])
+        let edges = try XCTUnwrap(graph["edges"] as? [[String: Any]])
+        XCTAssertEqual(edges.count, 512)
+        XCTAssertEqual(edges.map { edgeIdentity($0) }, fixture.expectedEdges)
+        XCTAssertFalse(document.sourceDescription.contains("Showing first 512 references"))
+        try assertReferenceLimitNodesAndStats(graph, edgeCount: 512)
+    }
+
+    func test513ReferencesKeepsExpectedPrefixAndAllFileMetadata() throws {
+        let fixture = referenceLimitFixture(edgeCount: 513)
+        let document = try referenceLimitDocument(files: fixture.files)
+        let graph = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(document.json.utf8)) as? [String: Any])
+        let edges = try XCTUnwrap(graph["edges"] as? [[String: Any]])
+        XCTAssertEqual(edges.count, 512)
+        XCTAssertEqual(edges.map { edgeIdentity($0) }, Array(fixture.expectedEdges.prefix(512)))
+        XCTAssertTrue(document.sourceDescription.contains("Showing first 512 references"))
+        try assertReferenceLimitNodesAndStats(graph, edgeCount: 513)
+    }
+
+    func testReferenceGenerationHonorsAlreadyCancelledTask() async {
+        let files = referenceLimitFixture(edgeCount: 513).files
+        let generation = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try VisualDiffGenerator.makeDocument(files: files, repositoryName: "fixture", title: "Changes",
+                                                        base: "Index", head: "Working tree", fallbackSHA: "1111111")
+        }
+        do {
+            _ = try await generation.value
+            XCTFail("Expected cancellation before graph generation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
+    private func referenceLimitFixture(edgeCount: Int) -> (files: [VisualDiffGenerator.File], expectedEdges: [[String: String]]) {
+        var bodies = (0..<25).map { index in
+            [RepositoryDiff.Line(id: 0, kind: .context, oldLineNumber: 1, newLineNumber: 1,
+                                 text: " struct Symbol\(index) {}")]
+        }
+        var expected: [[String: String]] = []
+        for from in 0..<25 {
+            for to in 0..<25 where from != to && expected.count < edgeCount {
+                let ordinal = expected.count
+                let kind: RepositoryDiff.Line.Kind = ordinal % 3 == 0 ? .addition : (ordinal % 3 == 1 ? .deletion : .context)
+                let prefix = kind == .addition ? "+" : (kind == .deletion ? "-" : " ")
+                bodies[from].append(.init(id: bodies[from].count, kind: kind, oldLineNumber: nil, newLineNumber: nil,
+                                          text: "\(prefix)use(Symbol\(to))"))
+                expected.append(["id": "ref\(from)-\(to)", "from": "file\(from)", "to": "file\(to)",
+                                 "delta": ordinal % 3 == 0 ? "added" : (ordinal % 3 == 1 ? "removed" : "unchanged")])
+            }
+        }
+        // This file comes after the edge limit is encountered. Its node and counts must remain.
+        bodies[24].append(.init(id: 1, kind: .addition, oldLineNumber: nil, newLineNumber: 2, text: "+let tail = 2"))
+        bodies[24].append(.init(id: 2, kind: .deletion, oldLineNumber: 2, newLineNumber: nil, text: "-let tail = 1"))
+        return (bodies.enumerated().map { index, lines in
+            .init(path: String(format: "file%02d.swift", index), originalPath: nil, state: .modified, content: .text(lines))
+        }, expected)
+    }
+
+    private func referenceLimitDocument(files: [VisualDiffGenerator.File]) throws -> VisualDiffDocument {
+        try VisualDiffGenerator.makeDocument(files: files, repositoryName: "fixture", title: "Changes",
+                                             base: "Index", head: "Working tree", fallbackSHA: "1111111")
+    }
+
+    private func edgeIdentity(_ edge: [String: Any]) -> [String: String] {
+        edge.compactMapValues { $0 as? String }.filter { ["id", "from", "to", "delta"].contains($0.key) }
+    }
+
+    private func assertReferenceLimitNodesAndStats(_ graph: [String: Any], edgeCount: Int) throws {
+        let nodes = try XCTUnwrap(graph["nodes"] as? [[String: Any]])
+        XCTAssertEqual(nodes.count, 25)
+        XCTAssertEqual(nodes.last?["label"] as? String, "file24.swift")
+        XCTAssertEqual(nodes.last?["badges"] as? [String], ["+1 −1"])
+        let stats = try XCTUnwrap(graph["stats"] as? [String: Int])
+        XCTAssertEqual(stats["filesChanged"], 25)
+        XCTAssertEqual(stats["additions"], (0..<edgeCount).filter { $0 % 3 == 0 }.count + 1)
+        XCTAssertEqual(stats["deletions"], (0..<edgeCount).filter { $0 % 3 == 1 }.count + 1)
     }
 
     func testVisualCollectionIsBoundedAndPreservesInputOrder() async throws {

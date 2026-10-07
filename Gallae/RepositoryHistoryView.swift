@@ -381,7 +381,7 @@ struct RepositoryHistoryView: View {
             }
             Spacer(minLength: 4)
             if let selected = model.selectedHistoryCommitID,
-               let index = visibleHistoryCommitIDs.firstIndex(of: selected) {
+               let index = searchResults.positions[selected] {
                 Text("\(index + 1) of \(visibleHistoryCommitIDs.count)")
                     .gallaeFont(.caption1, digits: true)
                     .foregroundStyle(.secondary)
@@ -412,7 +412,11 @@ struct RepositoryHistoryView: View {
     }
 
     private func adjacentCommit(_ offset: Int) -> String? {
-        RepositoryHistoryNavigation.adjacent(to: model.selectedHistoryCommitID, offset: offset, in: visibleHistoryCommitIDs)
+        guard let selected = model.selectedHistoryCommitID,
+              let index = searchResults.positions[selected], offset == -1 || offset == 1 else { return nil }
+        let ids = visibleHistoryCommitIDs
+        let target = index + offset
+        return ids.indices.contains(target) ? ids[target] : nil
     }
 
     private func moveReview(by offset: Int) {
@@ -421,12 +425,11 @@ struct RepositoryHistoryView: View {
     }
 
     private var visibleHistoryCommitIDs: [String] {
-        guard case .loaded(let history) = model.historyState else { return [] }
-        return visibleCommits(in: history).map(\.id)
+        searchResults.ids
     }
 
-    private func visibleCommits(in history: RepositoryHistory) -> [RepositoryHistory.Commit] {
-        history.commits.filter { $0.matches(search: searchText) }
+    private var searchResults: RepositoryHistorySearchResults {
+        model.historySearchResults(matching: searchText)
     }
 
     @ViewBuilder
@@ -453,7 +456,7 @@ struct RepositoryHistoryView: View {
                 description: Text("Create the first commit to start this Repository’s history.")
             )
         case .loaded(let history):
-            let commits = visibleCommits(in: history)
+            let commits = searchResults.commits
             if commits.isEmpty {
                 ContentUnavailableView {
                     Label("No Matching Commits", systemImage: "magnifyingglass")

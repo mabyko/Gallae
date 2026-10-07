@@ -2,6 +2,76 @@ import XCTest
 @testable import Gallae
 
 final class LibraryPerformanceTests: XCTestCase {
+    @MainActor
+    func testBatchRecentRemovalPreservesOrderSelectionAndSharedLibraryCache() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let store = LibraryStore(defaults: fixture.defaults)
+        let repositories = fixture.repositories(["Retained", "Shared", "Removed"])
+        for repository in repositories {
+            try FileManager.default.createDirectory(at: repository.rootURL, withIntermediateDirectories: true)
+            try store.rememberOpenedRepository(repository.rootURL)
+        }
+        let model = fixture.model
+        model.recentRepositories = store.restoreRecentRepositories().map { .init(rootURL: $0.url) }
+        model.libraryFolders = [.init(url: fixture.root, repositories: [repositories[1]])]
+        model.selectLibrarySource(.recent)
+        model.recordFailure("shared cache", at: model.recentRepositories[1].id)
+        let removedID = model.recentRepositories[0].id
+        model.recordFailure("removed cache", at: removedID)
+        let sharedID = model.recentRepositories[1].id
+        model.removeRecentRepositories([
+            sharedID,
+            fixture.root.appending(path: "Placeholder/../Removed")
+        ])
+        XCTAssertEqual(model.recentRepositories.map(\.name), ["Retained"])
+        XCTAssertEqual(model.selectedLibraryRepositoryID?.lastPathComponent, "Retained")
+        XCTAssertEqual(store.restoreRecentRepositories().map { $0.url.lastPathComponent }, ["Retained"])
+        XCTAssertNil(store.restoreLastWorkspace())
+        XCTAssertEqual(model.libraryRepositorySummaryErrors[sharedID], "shared cache")
+        XCTAssertNil(model.libraryRepositorySummaryErrors[removedID])
+        model.removeRecentRepositories(Set(model.recentRepositories.map(\.id)))
+        XCTAssertEqual(model.selectedLibrarySource, .folder(fixture.root))
+        XCTAssertEqual(model.selectedLibraryRepositoryID?.lastPathComponent, "Shared")
+        XCTAssertEqual(model.libraryRepositorySummaryErrors[sharedID], "shared cache")
+    }
+
+    @MainActor
+    func testBatchRecentRemovalKeepsUnselectedWorkspaceAndEmptyBatchIsNoOp() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        let store = LibraryStore(defaults: fixture.defaults)
+        let repositories = fixture.repositories(["Other", "Workspace"])
+        for repository in repositories {
+            try FileManager.default.createDirectory(at: repository.rootURL, withIntermediateDirectories: true)
+            try store.rememberOpenedRepository(repository.rootURL)
+        }
+        let before = fixture.defaults.data(forKey: "recentRepositoryBookmarks.v1")
+        store.removeRecentRepositories([])
+        XCTAssertEqual(fixture.defaults.data(forKey: "recentRepositoryBookmarks.v1"), before)
+        store.removeRecentRepositories([repositories[0].rootURL])
+        XCTAssertEqual(store.restoreLastWorkspace()?.url.lastPathComponent, "Workspace")
+        XCTAssertEqual(store.restoreRecentRepositories().map { $0.url.lastPathComponent }, ["Workspace"])
+    }
+
+    @MainActor
+    func testBatchRecentRemovalMatchesResolvedBookmarkWhenSavedPathIsStale() throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanUp() }
+        struct SavedRecord: Encodable { let bookmark: Data; let lastKnownPath: String }
+        // A valid bookmark with an older saved path is the state left by a moved directory.
+        let data = try PropertyListEncoder().encode([SavedRecord(
+            bookmark: fixture.root.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil),
+            lastKnownPath: fixture.root.appending(path: "OldLocation").path
+        )])
+        fixture.defaults.set(data, forKey: "recentRepositoryBookmarks.v1")
+        fixture.defaults.set(data, forKey: "lastWorkspaceBookmark.v1")
+        let store = LibraryStore(defaults: fixture.defaults)
+        store.removeRecentRepositories([fixture.root])
+        XCTAssertTrue(store.restoreRecentRepositories().isEmpty)
+        XCTAssertNil(store.restoreLastWorkspace())
+    }
+
     func testHierarchyDeduplicatesNormalizedPathsAndIndexesNestedFolders() {
         let root = URL(fileURLWithPath: "/tmp/Library")
         let repositories = ["Group/Team/Beta", "Alpha", "Group/Team/../Team/Beta", "Repo10", "Repo2"]

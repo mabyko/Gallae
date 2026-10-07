@@ -44,6 +44,7 @@
 		110000000000000000000021 /* DiffPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000021 /* DiffPerformanceTests.swift */; };
 		110000000000000000000022 /* GitPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000022 /* GitPerformanceTests.swift */; };
 		110000000000000000000023 /* LibraryPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000023 /* LibraryPerformanceTests.swift */; };
+		110000000000000000000024 /* HistorySearchPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000024 /* HistorySearchPerformanceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +99,7 @@
 		120000000000000000000021 /* DiffPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffPerformanceTests.swift; sourceTree = "<group>"; };
 		120000000000000000000022 /* GitPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitPerformanceTests.swift; sourceTree = "<group>"; };
 		120000000000000000000023 /* LibraryPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryPerformanceTests.swift; sourceTree = "<group>"; };
+		120000000000000000000024 /* HistorySearchPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistorySearchPerformanceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -173,6 +175,7 @@
 				120000000000000000000004 /* RepositoryInspectorTests.swift */,
 				120000000000000000000018 /* VisualDiffTests.swift */,
 				120000000000000000000023 /* LibraryPerformanceTests.swift */,
+				120000000000000000000024 /* HistorySearchPerformanceTests.swift */,
 				120000000000000000000022 /* GitPerformanceTests.swift */,
 				120000000000000000000021 /* DiffPerformanceTests.swift */,
 				120000000000000000000020 /* ChangeHierarchyPerformanceTests.swift */,
@@ -336,6 +339,7 @@
 				110000000000000000000004 /* RepositoryInspectorTests.swift in Sources */,
 				110000000000000000000018 /* VisualDiffTests.swift in Sources */,
 				110000000000000000000023 /* LibraryPerformanceTests.swift in Sources */,
+				110000000000000000000024 /* HistorySearchPerformanceTests.swift in Sources */,
 				110000000000000000000022 /* GitPerformanceTests.swift in Sources */,
 				110000000000000000000021 /* DiffPerformanceTests.swift in Sources */,
 				110000000000000000000020 /* ChangeHierarchyPerformanceTests.swift in Sources */,

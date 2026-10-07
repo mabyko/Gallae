@@ -174,23 +174,25 @@ enum VisualDiffGenerator {
         }
         let unique = owners.compactMapValues { $0.count == 1 ? $0.first : nil }
         func references(_ text: String, from index: Int) -> Set<Int> {
+            guard !unique.isEmpty else { return [] }
             let tokens = text.components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_$")).inverted)
             return Set(tokens.compactMap { unique[$0] }.filter { $0 != index })
         }
         var edges: [[String: Any]] = []
         var referencesLimited = false
-        for index in files.indices {
+        referenceFiles: for index in files.indices {
             try Task.checkCancellation()
             let old = references(before[index], from: index)
             let new = references(after[index], from: index)
             for target in old.union(new).sorted() {
-                guard edges.count < 512 else { referencesLimited = true; break }
+                guard edges.count < 512 else { referencesLimited = true; break referenceFiles }
                 let change = !old.contains(target) ? "added" : (!new.contains(target) ? "removed" : "unchanged")
                 edges.append(["id": "ref\(index)-\(target)", "from": "file\(index)", "to": "file\(target)",
                               "kind": "dependency", "delta": change, "label": "references",
                               "emphasis": "normal", "animated": false, "files": []])
             }
         }
+        try Task.checkCancellation()
         let summary = "Generated locally from this comparison. Connections are symbol references found in diff context; they are not runtime or data-flow analysis."
         let graph: [String: Any] = [
             "schemaVersion": "0.2.0", "kind": "graph", "title": label(title), "summary": summary,

@@ -278,20 +278,23 @@ final class RepositoryLibraryModel {
 
     func removeRecentRepositories(_ urls: Set<URL>) {
         guard !urls.isEmpty else { return }
-        for url in urls {
-            store.removeRecentRepository(url)
+        let paths = Set(urls.map { $0.standardizedFileURL.path })
+        store.removeRecentRepositories(urls)
+        var removedRepositories: [RepositoryLocation] = []
+        var remainingRepositories: [RepositoryLocation] = []
+        for repository in recentRepositories {
+            if paths.contains(repository.id.standardizedFileURL.path) {
+                removedRepositories.append(repository)
+            } else {
+                remainingRepositories.append(repository)
+            }
         }
-        let removedRepositories = recentRepositories.filter { repository in
-            urls.contains { sameFileLocation($0, repository.id) }
-        }
-        recentRepositories.removeAll { repository in
-            urls.contains { sameFileLocation($0, repository.id) }
-        }
+        recentRepositories = remainingRepositories
         discardUnusedCaches(for: removedRepositories)
         if selectedLibrarySource == .recent,
            selectedLibraryRepositoryID == nil
             || selectedLibraryRepositoryID.map({ selectedID in
-                urls.contains { sameFileLocation($0, selectedID) }
+                paths.contains(selectedID.standardizedFileURL.path)
             }) == true {
             selectedLibraryRepositoryID = recentRepositories.first?.id
         }
@@ -456,7 +459,12 @@ final class RepositoryLibraryModel {
     }
 
     private func discardUnusedCaches(for repositories: [RepositoryLocation]) {
-        for repository in repositories where !containsLibraryRepository(at: repository.id) {
+        guard !repositories.isEmpty else { return }
+        let retainedPaths = Set(
+            (recentRepositories + libraryFolders.flatMap(\.repositories))
+                .map { $0.id.standardizedFileURL.path }
+        )
+        for repository in repositories where !retainedPaths.contains(repository.id.standardizedFileURL.path) {
             libraryRepositorySummaries[repository.id] = nil
             libraryRepositorySummaryErrors[repository.id] = nil
             loadingLibraryRepositorySummaries.remove(repository.id)
