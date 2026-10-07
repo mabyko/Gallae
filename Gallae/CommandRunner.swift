@@ -84,11 +84,14 @@ enum CommandRunner {
         process.environment = environment
 
         do {
-            try process.run()
+            try CommandProcessRegistry.shared.launch(process)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             if executableURL == gitURL { throw RepositoryInspectionError.gitUnavailable }
             throw error
         }
+        defer { CommandProcessRegistry.shared.finish(process) }
 
         cancellation?.register(process)
         defer { cancellation?.clear(process) }
@@ -103,7 +106,7 @@ enum CommandRunner {
                     if chunk.count > max(0, maximumOutputBytes) - capturedOutput.count {
                         exceededLimit = true
                         capturedOutput.removeAll(keepingCapacity: false)
-                        if process.isRunning { process.terminate() }
+                        if process.isRunning { CommandProcessRegistry.shared.cancel(process) }
                         break
                     }
                     capturedOutput.append(chunk)
@@ -111,7 +114,7 @@ enum CommandRunner {
                 try outputPipe.fileHandleForReading.close()
                 if exceededLimit { finishTerminatingLimitedRead(process) }
             } catch {
-                if process.isRunning { process.terminate() }
+                if process.isRunning { CommandProcessRegistry.shared.cancel(process) }
                 try? outputPipe.fileHandleForReading.close()
                 finishTerminatingLimitedRead(process)
                 process.waitUntilExit()
@@ -169,7 +172,7 @@ final class GitProcessCancellation: @unchecked Sendable {
             return false
         }
         if shouldTerminate, process.isRunning {
-            process.terminate()
+            CommandProcessRegistry.shared.cancel(process)
         }
     }
 
@@ -178,8 +181,8 @@ final class GitProcessCancellation: @unchecked Sendable {
             cancelled = true
             return process
         }
-        if runningProcess?.isRunning == true {
-            runningProcess?.terminate()
+        if let runningProcess, runningProcess.isRunning {
+            CommandProcessRegistry.shared.cancel(runningProcess)
         }
     }
 

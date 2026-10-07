@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		110000000000000000000025 /* AppLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000025 /* AppLifecycle.swift */; };
 		110000000000000000000019 /* VisualDiffGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000019 /* VisualDiffGenerator.swift */; };
 		110000000000000000000001 /* GallaeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000001 /* GallaeApp.swift */; };
 		110000000000000000000002 /* AppView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000002 /* AppView.swift */; };
@@ -58,6 +59,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		120000000000000000000025 /* AppLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycle.swift; sourceTree = "<group>"; };
 		120000000000000000000019 /* VisualDiffGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffGenerator.swift; sourceTree = "<group>"; };
 		120000000000000000000001 /* GallaeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GallaeApp.swift; sourceTree = "<group>"; };
 		120000000000000000000002 /* AppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppView.swift; sourceTree = "<group>"; };
@@ -139,6 +141,7 @@
 				D2039E72B384D1E8D7029A8A /* RepositoryInspector+Diff.swift */,
 				1A98483D43874ED562589A46 /* RepositoryErrors.swift */,
 				0FFFAEDD087A363960423C03 /* CommandRunner.swift */,
+				120000000000000000000025 /* AppLifecycle.swift */,
 				53A404902F3BDA31AA724A07 /* RepositoryRecoveryView.swift */,
 				BD7B28AC93FA42FCFDDB4D09 /* RepositoryNavigatorView.swift */,
 				6BD29DFED6028923B6D939D9 /* RepositoryNavigation.swift */,
@@ -306,6 +309,7 @@
 				7BB3D928F7F4172CDF1F65D8 /* RepositoryInspector+Diff.swift in Sources */,
 				B88AC58B07B9CC31D8F7F0A8 /* RepositoryErrors.swift in Sources */,
 				7B5CE7D4F5C85DA47C8EEB85 /* CommandRunner.swift in Sources */,
+				110000000000000000000025 /* AppLifecycle.swift in Sources */,
 				441CE22BA96BE7F395E0BEDE /* RepositoryRecoveryView.swift in Sources */,
 				5C809EC519D29BF4BF918D27 /* RepositoryNavigatorView.swift in Sources */,
 				2863B3BF0704FAF28045C4FD /* RepositoryNavigation.swift in Sources */,

@@ -847,6 +847,7 @@ private struct GallaeSettingsView: View {
 
 @main
 struct GallaeApp: App {
+    @NSApplicationDelegateAdaptor(GallaeAppDelegate.self) private var appDelegate
     @AppStorage(GallaeAppearanceSettings.accentColorKey) private var accentColor = "system"
 
     private var customAccentColor: Color? { GallaeHistoryColor(rawValue: accentColor)?.color }
