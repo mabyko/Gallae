@@ -1,0 +1,116 @@
+{
+  "schemaVersion": "0.2.0",
+  "kind": "graph",
+  "title": "Example: Gallae UI theme",
+  "lenses": [
+    "architecture"
+  ],
+  "provenance": {
+    "repo": {
+      "owner": "example",
+      "name": "gallae",
+      "host": "github.com"
+    },
+    "base": {
+      "sha": "1111111"
+    },
+    "head": {
+      "sha": "2222222"
+    }
+  },
+  "lanes": [
+    {
+      "id": "theme",
+      "label": "Shared theme"
+    },
+    {
+      "id": "review",
+      "label": "Review views"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "theme",
+      "label": "GallaeTheme",
+      "kind": "package",
+      "delta": "modified",
+      "lane": "theme",
+      "subtitle": "Colors / fonts / spacing",
+      "files": [
+        {
+          "path": "Gallae/GallaeTheme.swift"
+        }
+      ],
+      "badges": []
+    },
+    {
+      "id": "diff",
+      "label": "RepositoryDiffView",
+      "kind": "ui",
+      "delta": "modified",
+      "lane": "review",
+      "subtitle": "File and hunk review",
+      "files": [
+        {
+          "path": "Gallae/RepositoryDiffView.swift"
+        }
+      ],
+      "badges": []
+    },
+    {
+      "id": "history",
+      "label": "RepositoryHistoryView",
+      "kind": "ui",
+      "delta": "modified",
+      "lane": "review",
+      "subtitle": "Commit review",
+      "files": [
+        {
+          "path": "Gallae/RepositoryHistoryView.swift"
+        }
+      ],
+      "badges": []
+    },
+    {
+      "id": "design",
+      "label": "DESIGN_SYSTEM.md",
+      "kind": "package",
+      "delta": "modified",
+      "lane": "theme",
+      "subtitle": "Shared UI rules",
+      "files": [
+        {
+          "path": "DESIGN_SYSTEM.md"
+        }
+      ],
+      "badges": []
+    }
+  ],
+  "edges": [
+    {
+      "id": "theme-diff",
+      "from": "theme",
+      "to": "diff",
+      "kind": "dependency",
+      "delta": "modified",
+      "label": "theme",
+      "emphasis": "hero",
+      "animated": true,
+      "files": []
+    },
+    {
+      "id": "theme-history",
+      "from": "theme",
+      "to": "history",
+      "kind": "dependency",
+      "delta": "modified",
+      "label": "theme",
+      "emphasis": "normal",
+      "animated": false,
+      "files": []
+    }
+  ],
+  "flows": [],
+  "views": [],
+  "summary": "Example graph for trying the local PR Lens viewer. This is not an analysis of your current changes."
+}

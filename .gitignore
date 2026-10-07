@@ -4,6 +4,7 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 /.serena/
+/scripts/visual-diff/node_modules/
 
 # Per-developer bundle identifier and signing team.
 Config/Local.xcconfig

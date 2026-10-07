@@ -38,6 +38,10 @@ Branches·Remotes·Tags의 **⋯** 메뉴는 목록이 비어 있어도 사용�
 
 Appearance에서 시스템·라이트·다크 테마, 행 밀도, 앱 강조색과 History 그래프·배지 색을 고를 수 있다. 앱 강조색의 기본값은 macOS 설정을 따르는 **System**이다.
 
+**Visual Diff (실험실)**을 켜면 Changes·History·Stash의 Unified/Split 옆에 **Visualize**가 나타난다. **Settings → Labs → Visual Diff · PR Lens**를 켜고 PR Lens 그래프 JSON을 불러오거나 예시를 연다. 확대·이동하거나 파일 노드를 눌러 해당 diff로 돌아갈 수 있다. **Full Screen**으로 전체 화면을 열고 **Esc**로 복귀한다. 그래프는 로컬에서 렌더링하는 스냅샷이며, 이 실험 기능은 그래프를 자동 생성하거나 코드를 업로드하지 않는다. → [사용법과 렌더러 관리](scripts/visual-diff/README.md)
+
+포함된 오픈소스의 저작권 고지와 라이선스 전문은 **Settings → About → Open Source Licenses…**에서 확인할 수 있다.
+
 ## 외부 앱 연동
 
 branch의 우클릭 메뉴, History 커밋 우클릭 메뉴의 로컬 branch 하위 메뉴 또는 상단 작업 위치 메뉴에서 **Open in**을 선택한다. 현재 branch는 현재 작업 폴더를, 다른 Worktree에서 체크아웃한 branch는 해당 폴더를 연다. 폴더가 없는 branch에서는 비활성화하며, 외부 앱을 여는 것으로 checkout이 바뀌지는 않는다.

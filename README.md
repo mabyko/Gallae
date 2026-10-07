@@ -38,6 +38,10 @@ The **⋯** menus beside Branches, Remotes, and Tags remain available when their
 
 Appearance settings include system/light/dark themes, row density, the app accent color, and History graph and badge colors. The app accent defaults to **System**, following your macOS setting.
 
+**Visual Diff (Labs)** adds **Visualize** beside Unified/Split in Changes, History, and stash review. Enable **Settings → Labs → Visual Diff · PR Lens**, then import a PR Lens graph JSON or open the example. Pan, zoom, click a file node to return to its diff, or choose **Full Screen** and press **Esc** to return. Graphs render locally and remain imported snapshots; this experiment does not generate graphs or upload code. See [Visual Diff usage and renderer maintenance](scripts/visual-diff/README.md).
+
+View the included copyright notices and full licenses in **Settings → About → Open Source Licenses…**.
+
 ## External applications
 
 Choose **Open in** from a branch’s context menu, a History commit’s local branch submenu, or the current working location menu at the top of the workspace. The current branch opens the current working folder; a branch checked out in another worktree opens that folder. Actions are disabled for branches without a checked-out folder. Opening an external app does not change your checkout.

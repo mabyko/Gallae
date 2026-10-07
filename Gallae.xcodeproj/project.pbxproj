@@ -35,6 +35,10 @@
 		65A6E2EB6303F3E5221D4BE8 /* RepositoryInspector+History.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749EF0DEC73FAE0C9D442B23 /* RepositoryInspector+History.swift */; };
 		884E18412063CF963F544175 /* RepositoryInspector+Worktrees.swift in Sources */ = {isa = PBXBuildFile; fileRef = 909FDBE1A1ABFC0BA1F3CD44 /* RepositoryInspector+Worktrees.swift */; };
 		4FDADBF2138B593824A427FA /* RepositoryTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55C22129483913AB039AB7BD /* RepositoryTypes.swift */; };
+		110000000000000000000015 /* VisualDiffDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000015 /* VisualDiffDocument.swift */; };
+		110000000000000000000016 /* VisualDiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000016 /* VisualDiffView.swift */; };
+		110000000000000000000017 /* VisualDiff in Resources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000017 /* VisualDiff */; };
+		110000000000000000000018 /* VisualDiffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 120000000000000000000018 /* VisualDiffTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +84,10 @@
 		749EF0DEC73FAE0C9D442B23 /* RepositoryInspector+History.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+History.swift"; sourceTree = "<group>"; };
 		909FDBE1A1ABFC0BA1F3CD44 /* RepositoryInspector+Worktrees.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RepositoryInspector+Worktrees.swift"; sourceTree = "<group>"; };
 		55C22129483913AB039AB7BD /* RepositoryTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryTypes.swift; sourceTree = "<group>"; };
+		120000000000000000000015 /* VisualDiffDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffDocument.swift; sourceTree = "<group>"; };
+		120000000000000000000016 /* VisualDiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffView.swift; sourceTree = "<group>"; };
+		120000000000000000000017 /* VisualDiff */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources/VisualDiff; sourceTree = "<group>"; };
+		120000000000000000000018 /* VisualDiffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisualDiffTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -131,6 +139,9 @@
 				120000000000000000000001 /* GallaeApp.swift */,
 				120000000000000000000002 /* AppView.swift */,
 				120000000000000000000012 /* RepositoryDiffView.swift */,
+				120000000000000000000017 /* VisualDiff */,
+				120000000000000000000016 /* VisualDiffView.swift */,
+				120000000000000000000015 /* VisualDiffDocument.swift */,
 				120000000000000000000013 /* ExternalApplications.swift */,
 				120000000000000000000014 /* RepositoryWorktreesView.swift */,
 				120000000000000000000011 /* WorkspaceLayout.swift */,
@@ -149,6 +160,7 @@
 			isa = PBXGroup;
 			children = (
 				120000000000000000000004 /* RepositoryInspectorTests.swift */,
+				120000000000000000000018 /* VisualDiffTests.swift */,
 			);
 			path = GallaeTests;
 			sourceTree = "<group>";
@@ -252,6 +264,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				11000000000000000000000A /* Assets.xcassets in Resources */,
+				110000000000000000000017 /* VisualDiff in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -285,6 +298,8 @@
 				110000000000000000000001 /* GallaeApp.swift in Sources */,
 				110000000000000000000002 /* AppView.swift in Sources */,
 				110000000000000000000012 /* RepositoryDiffView.swift in Sources */,
+				110000000000000000000016 /* VisualDiffView.swift in Sources */,
+				110000000000000000000015 /* VisualDiffDocument.swift in Sources */,
 				110000000000000000000013 /* ExternalApplications.swift in Sources */,
 				110000000000000000000014 /* RepositoryWorktreesView.swift in Sources */,
 				110000000000000000000011 /* WorkspaceLayout.swift in Sources */,
@@ -303,6 +318,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				110000000000000000000004 /* RepositoryInspectorTests.swift in Sources */,
+				110000000000000000000018 /* VisualDiffTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

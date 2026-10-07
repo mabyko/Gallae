@@ -430,6 +430,70 @@ enum GallaeAppearanceSettings {
     }
 }
 
+private struct GallaeAboutSettings: View {
+    @State private var showsLicenses = false
+
+    private var version: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        return build.map { "\(version) (\($0))" } ?? version
+    }
+
+    var body: some View {
+        Form {
+            Section("Gallae") {
+                Text("Git for macOS.")
+                    .foregroundStyle(.secondary)
+                LabeledContent("Version", value: version)
+                    .textSelection(.enabled)
+            }
+            Section("Open Source") {
+                Text("Gallae includes PR Lens and Zod. View their copyright notices and license terms below.")
+                    .gallaeFont(.caption1).foregroundStyle(.secondary)
+                Button("Open Source Licenses…") { showsLicenses = true }
+                    .accessibilityHint("Read the full licenses for third-party software included with Gallae")
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(isPresented: $showsLicenses) { GallaeLicensesView() }
+    }
+}
+
+private struct GallaeLicensesView: View {
+    @Environment(\.dismiss) private var dismiss
+    private let notices: String? = {
+        guard let url = Bundle.main.url(forResource: "LICENSES", withExtension: "txt", subdirectory: "VisualDiff") else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Open Source Licenses").gallaeFont(.title2, weight: .semibold)
+            Text("Third-party software included with Gallae.")
+                .gallaeFont(.caption1).foregroundStyle(.secondary)
+            Divider()
+            if let notices {
+                ScrollView {
+                    Text(notices)
+                        .gallaeFont(.body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.trailing, 12)
+                }
+            } else {
+                ContentUnavailableView("Licenses Unavailable", systemImage: "doc.text", description: Text("The license notices could not be read from this app. Please reinstall Gallae."))
+            }
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 540, height: 520)
+    }
+}
+
 private struct GallaeSettingsView: View {
     @Environment(\.gallaeTheme) private var theme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -463,6 +527,12 @@ private struct GallaeSettingsView: View {
             }
             Tab("Command Line", systemImage: "terminal") {
                 commandLineSettings
+            }
+            Tab("Labs", systemImage: "flask") {
+                GallaeLabsSettings()
+            }
+            Tab("About", systemImage: "info.circle") {
+                GallaeAboutSettings()
             }
         }
         .frame(width: 540)
