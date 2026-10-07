@@ -1,0 +1,16 @@
+{
+  "name": "gallae-visual-diff",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.js",
+    "test": "node --test viewer.test.js"
+  },
+  "dependencies": {
+    "@coldtea/pr-lens-renderer": "0.3.2",
+    "@coldtea/pr-lens-schema": "0.7.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

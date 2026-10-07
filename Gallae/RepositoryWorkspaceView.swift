@@ -9,6 +9,8 @@ private enum RepositoryChangeViewMode: Int {
 }
 
 struct RepositoryWorkspaceView: View {
+    @State private var visualDiff = VisualDiffSession()
+    @AppStorage(GallaeLabs.visualDiffKey) private var visualDiffEnabled = false
     @Bindable var model: AppModel
     @Environment(\.gallaeTheme) private var theme
     @Environment(\.windowWidth) private var windowWidth
@@ -136,6 +138,7 @@ struct RepositoryWorkspaceView: View {
     private var workspaceContent: some View {
         workspaceLayout
         .onChange(of: model.repository?.rootURL, initial: true) {
+            visualDiff.reset()
             navigatorFilterText = ""
             navigatorCollapsedRemotes = []
             navigatorScrollOffset = 0
@@ -217,6 +220,10 @@ struct RepositoryWorkspaceView: View {
 
     var body: some View {
         workspaceContent
+        .environment(visualDiff)
+        .onChange(of: visualDiffEnabled) { _, enabled in
+            if !enabled { visualDiff.reset() }
+        }
         .confirmationDialog(
             "Remove Temporary Worktree?",
             isPresented: Binding(
@@ -741,6 +748,11 @@ struct RepositoryWorkspaceView: View {
                     RepositoryDiffView(
                         state: model.diffState,
                         fileURL: selectedFileURL(in: repository),
+                        selectVisualizedFile: { path in
+                            guard let change = repository.changes.first(where: { $0.path == path || $0.originalPath == path }) else { return false }
+                            model.selectedChangeID = change.id
+                            return true
+                        },
                         canStage: model.canStageSelectedChange,
                         canUnstage: model.canUnstageSelectedChange,
                         canDiscard: model.canDiscardSelectedChange,

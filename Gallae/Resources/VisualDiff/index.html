@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'">
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+  #viewport { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; }
+  #viewport.dragging { cursor: grabbing; }
+  #world { position: absolute; transform-origin: 0 0; }
+  #world svg { display: block; }
+  .node { position: absolute; border: 0; background: transparent; border-radius: 8px; cursor: pointer; }
+  .node:hover, .node:focus-visible { outline: 3px solid #4c9aff; outline-offset: 2px; }
+  .node.selected { outline: 3px solid #4c9aff; outline-offset: 2px; }
+  #controls { position: absolute; bottom: 12px; right: 12px; display: flex; gap: 4px; padding: 4px; background: Canvas; border: 1px solid GrayText; border-radius: 8px; }
+  #controls button { font: 13px system-ui; color: CanvasText; background: transparent; border: 0; border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+  #controls button:focus-visible { outline: 2px solid #4c9aff; }
+</style>
+<div id="viewport" tabindex="0" aria-label="Change diagram. Drag to pan, use the zoom controls to zoom."><div id="world"></div></div>
+<div id="controls" aria-label="Diagram zoom">
+  <button id="zoom-out" aria-label="Zoom out">−</button>
+  <button id="fit" aria-label="Fit diagram">Fit</button>
+  <button id="zoom-in" aria-label="Zoom in">+</button>
+</div>
+<script src="viewer.js" defer></script>
+</html>

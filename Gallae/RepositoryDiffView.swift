@@ -99,6 +99,8 @@ struct RepositoryRevisionChangesView: View {
     let retryFiles: () -> Void
     let retryPatch: () -> Void
     let loadExpandedPatch: () -> Void
+    @AppStorage(GallaeLabs.visualDiffKey) private var visualDiffEnabled = false
+    @State private var showsVisualization = false
     @AppStorage(RepositoryDiffLayout.storageKey) private var layout = RepositoryDiffLayout.unified
     @FocusState private var isFileListFocused: Bool
     @Environment(\.gallaeTheme) private var theme
@@ -231,13 +233,29 @@ struct RepositoryRevisionChangesView: View {
             VStack(spacing: 0) {
                 if let file = selectedFile {
                     RepositoryDiffHeader(path: file.path, originalPath: file.originalPath, content: selectedContent) {
-                        RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
+                        HStack(spacing: theme.metrics.panelSpacing) {
+                            RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout, isVisualizing: $showsVisualization)
+                            if visualDiffEnabled { VisualDiffButton(isPresented: $showsVisualization) }
+                        }
                     }
 
                     Divider()
                 }
 
-                revisionPatchContent
+                if visualDiffEnabled && showsVisualization {
+                    VisualDiffPane(selectedPath: selectedFile?.path) { path in
+                        guard case .loaded(let files) = filesState,
+                              let file = files.first(where: { $0.path == path || $0.originalPath == path }) else { return false }
+                        showsVisualization = false
+                        selectedFileID = file.id
+                        return true
+                    }
+                } else {
+                    revisionPatchContent
+                }
+            }
+            .onChange(of: visualDiffEnabled) { _, enabled in
+                if !enabled { showsVisualization = false }
             }
     }
 
@@ -413,6 +431,9 @@ private enum ConflictResolutionConfirmation {
 struct RepositoryDiffView: View {
     let state: RepositoryDiffLoadState
     let fileURL: URL?
+    var selectVisualizedFile: (String) -> Bool = { _ in false }
+    @AppStorage(GallaeLabs.visualDiffKey) private var visualDiffEnabled = false
+    @State private var showsVisualization = false
     let canStage: Bool
     let canUnstage: Bool
     let canDiscard: Bool
@@ -586,7 +607,8 @@ struct RepositoryDiffView: View {
             ) {
                 HStack(spacing: 8) {
                     if !diff.sections.allSatisfy(\.scope.isConflictVersion) {
-                        RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout)
+                        RepositoryDiffLayoutPicker(presentation: presentation, preferred: $layout, isVisualizing: $showsVisualization)
+                        if visualDiffEnabled { VisualDiffButton(isPresented: $showsVisualization) }
                     }
 
                     if canResolveConflict, diff.sections.allSatisfy(\.scope.isConflictVersion) {
@@ -643,6 +665,12 @@ struct RepositoryDiffView: View {
                     sections: diff.sections,
                     loadExpanded: loadExpanded
                 )
+            } else if visualDiffEnabled && showsVisualization {
+                VisualDiffPane(selectedPath: diff.path) { path in
+                    guard selectVisualizedFile(path) else { return false }
+                    showsVisualization = false
+                    return true
+                }
             } else {
                 if let other = otherScope(in: diff, than: shown) {
                     scopeSwitcher(in: diff, shown: shown, other: other)
@@ -684,6 +712,9 @@ struct RepositoryDiffView: View {
                     .defaultScrollAnchor(.topLeading, for: .alignment)
                 }
             }
+        }
+        .onChange(of: visualDiffEnabled) { _, enabled in
+            if !enabled { showsVisualization = false }
         }
         .alert("Discard Unstaged Changes?", isPresented: $isConfirmingDiscard) {
             Button("Discard Changes", role: .destructive) {
@@ -997,13 +1028,18 @@ private struct RepositoryDiffLayoutPicker: View {
     /// control would claim a layout the diff is not in.
     let presentation: RepositoryDiffPresentation
     @Binding var preferred: RepositoryDiffLayout
+    var isVisualizing: Binding<Bool> = .constant(false)
 
     private var canSplit: Bool { presentation.canSplit }
 
     /// Reads Unified while Split is unavailable so the control never highlights a layout the diff is not in,
     /// and writes through so the remembered choice survives a file that cannot be split.
-    private var shown: Binding<RepositoryDiffLayout> {
-        Binding(get: { presentation.layout }, set: { preferred = $0 })
+    private var shown: Binding<RepositoryDiffLayout?> {
+        Binding(get: { isVisualizing.wrappedValue ? nil : presentation.layout }, set: { layout in
+            guard let layout else { return }
+            isVisualizing.wrappedValue = false
+            preferred = layout
+        })
     }
 
     var body: some View {
@@ -1011,7 +1047,7 @@ private struct RepositoryDiffLayoutPicker: View {
         // individual segment of a segmented picker, so a lone dimmed segment stays clickable.
         Picker("Diff Layout", selection: shown) {
             ForEach(RepositoryDiffLayout.allCases) { layout in
-                Text(layout.title).tag(layout)
+                Text(layout.title).tag(Optional(layout))
             }
         }
         .disabled(!canSplit)
