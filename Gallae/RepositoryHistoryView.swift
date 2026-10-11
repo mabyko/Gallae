@@ -767,12 +767,11 @@ private struct RepositoryHistoryRow: View {
 
     private func referenceChip(_ reference: RepositoryHistory.Reference) -> some View {
         let isCurrentBranch = isHEAD && reference.kind == .branch && reference.name == currentBranchName
-        let referenceColor: Color = switch reference.kind {
+        let color: Color = switch reference.kind {
         case .branch: theme.colors.historyLocalBranch
         case .remoteBranch: theme.colors.historyRemoteBranch
         case .tag: theme.colors.historyTag
         }
-        let color = isCurrentBranch ? theme.colors.historyHeadPath : referenceColor
         let highContrast = theme.materials.response == .increasedContrast
         return HStack(spacing: 0) {
             Image(systemName: reference.kind.systemImage)
@@ -1081,7 +1080,7 @@ private struct RepositoryHistoryGraphView: View {
             }
 
             // Draw the whole highlighted route above other lanes, including at crossings.
-            for (color, width) in [(separator, 8.0), (routeColor, 5.0), (Color.blue, 2.5)] {
+            for (color, width) in [(separator, 8.0), (routeColor, 5.0)] {
                 for path in highlightedPaths {
                     context.stroke(path, with: .color(color),
                                    style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))

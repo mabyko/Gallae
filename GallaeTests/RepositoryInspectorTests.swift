@@ -4918,6 +4918,15 @@ final class RepositoryInspectorTests: XCTestCase {
         XCTAssertEqual(customized.colors.historyTag, GallaeHistoryColor.indigo.color)
     }
 
+    func testHeadPathUsesConfiguredGraphStartingColor() {
+        for response in [GallaeMaterialResponse.standard, .reducedTransparency, .increasedContrast] {
+            for color in GallaeHistoryColor.allCases {
+                let theme = GallaeTheme.resolve(response: response, compactRows: false, graphColor: color)
+                XCTAssertEqual(theme.colors.historyHeadPath, color.color, "HEAD path must follow \(color) in \(response)")
+            }
+        }
+    }
+
     func testFiltersHistoryByMessageAuthorAndSHA() {
         let commit = RepositoryHistory.Commit(
             id: "abc123def456",
