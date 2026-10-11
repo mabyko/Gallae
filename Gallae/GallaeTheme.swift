@@ -59,14 +59,8 @@ struct GallaeTheme: Sendable {
         let historyRemoteBranch: Color
         let historyTag: Color
         let historyGraphLanes: [Color]
-        /// Current work uses one recognizable color across graph lanes and its HEAD badge.
-        var historyHeadPath: Color {
-            Color(nsColor: NSColor(name: nil) { appearance in
-                appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-                    ? NSColor(srgbRed: 0.57, green: 0.80, blue: 1, alpha: 1)
-                    : NSColor(srgbRed: 0.12, green: 0.39, blue: 0.67, alpha: 1)
-            })
-        }
+        /// Current work follows the configured graph starting color, even when it changes lanes.
+        var historyHeadPath: Color { historyGraphLanes[0] }
         let authorBadgeColors: [Color]
         let diffText: Color
         let diffMetadataText: Color
